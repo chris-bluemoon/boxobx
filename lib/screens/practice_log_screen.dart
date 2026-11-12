@@ -41,7 +41,13 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
   @override
   void initState() {
     super.initState();
-    _laps = widget.laps;
+    // widget.laps comes from PracticeLapLogger.laps, which returns
+    // List.unmodifiable(...) -- assigning it directly here (rather than
+    // copying into a genuinely mutable List) meant _deleteLap's
+    // _laps.removeWhere(...) below threw an UnsupportedError at
+    // runtime and silently failed, so swiping/long-pressing/tapping
+    // the delete button never actually removed the row from view.
+    _laps = List.of(widget.laps);
   }
 
   Future<void> _logTireWear(PracticeLapRecord lap) async {
