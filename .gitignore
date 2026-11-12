@@ -1,0 +1,59 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Secrets
+.env
+
+# Generated test artifacts (see test_scripts/README.md)
+test_scripts/gunther_output.wav
+build/ios/iphonesimulator/
+
+# Python virtualenv for the laptop OCR relay (laptop_ocr/) -- local,
+# machine-specific, and large (EasyOCR/torch deps); never committed.
+laptop_ocr/venv/
+laptop_ocr/__pycache__/
+laptop_ocr/*.pyc
+laptop_ocr/.pytest_cache/

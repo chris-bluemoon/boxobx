@@ -1,0 +1,12 @@
+# Loose version ranges rather than exact pins -- exact pins
+# (opencv-python==4.10.0.84, numpy==1.26.4) caused pip's resolver to
+# backtrack through dozens of releases on newer Python versions (e.g.
+# 3.13/3.14) that don't have prebuilt wheels for those exact pins yet.
+opencv-python>=4.10,<5
+easyocr>=1.7,<2
+numpy>=1.26,<3
+
+# scipy is used only by minimap_tracker.py (cKDTree for track-spline
+# point projection, linear_sum_assignment for Hungarian-algorithm
+# frame-to-frame car/blob association) -- not required by ocr_relay.py.
+scipy>=1.11,<2

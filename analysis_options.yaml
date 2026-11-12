@@ -1,0 +1,10 @@
+include: package:flutter_lints/flutter.yaml
+
+# test_scripts/ contains standalone CLI diagnostic tools (run via `dart
+# run`, not `flutter test`) that intentionally use print() for console
+# output -- that's the entire point of a CLI script. Excluding the
+# directory from analysis keeps `flutter analyze` meaningful/clean for
+# actual production code under lib/ and ios/.
+analyzer:
+  exclude:
+    - test_scripts/**

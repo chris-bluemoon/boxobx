@@ -1,0 +1,1252 @@
+{
+  "tracks": [
+    {
+      "name": "24 Heures du Mans Racing Circuit",
+      "trackLengthMeters": 13550.0,
+      "sector1Boundary": {
+        "minX": 710.0,
+        "maxX": 740.0,
+        "minZ": -279.0,
+        "maxZ": -249.0
+      },
+      "sector2Boundary": {
+        "minX": 73.0,
+        "maxX": 103.0,
+        "minZ": 2329.0,
+        "maxZ": 2359.0
+      }
+    },
+    {
+      "name": "24 Heures du Mans Racing Circuit No Chicane",
+      "trackLengthMeters": 13494.0,
+      "sector1Boundary": {
+        "minX": 718.0,
+        "maxX": 748.0,
+        "minZ": -251.0,
+        "maxZ": -221.0
+      },
+      "sector2Boundary": {
+        "minX": 76.0,
+        "maxX": 106.0,
+        "minZ": 2330.0,
+        "maxZ": 2360.0
+      }
+    },
+    {
+      "name": "Alsace - Test Course",
+      "trackLengthMeters": 2082.0,
+      "sector1Boundary": {
+        "minX": 241.0,
+        "maxX": 271.0,
+        "minZ": 15.0,
+        "maxZ": 45.0
+      },
+      "sector2Boundary": {
+        "minX": 105.0,
+        "maxX": 135.0,
+        "minZ": 514.0,
+        "maxZ": 544.0
+      }
+    },
+    {
+      "name": "Alsace - Village",
+      "trackLengthMeters": 5345.0,
+      "sector1Boundary": {
+        "minX": 623.0,
+        "maxX": 653.0,
+        "minZ": 45.0,
+        "maxZ": 75.0
+      },
+      "sector2Boundary": {
+        "minX": -20.0,
+        "maxX": 10.0,
+        "minZ": 377.0,
+        "maxZ": 407.0
+      }
+    },
+    {
+      "name": "Autodrome Lago Maggiore - Centre",
+      "trackLengthMeters": 1972.0,
+      "sector1Boundary": {
+        "minX": 285.0,
+        "maxX": 315.0,
+        "minZ": -132.0,
+        "maxZ": -102.0
+      },
+      "sector2Boundary": {
+        "minX": -192.0,
+        "maxX": -162.0,
+        "minZ": 288.0,
+        "maxZ": 318.0
+      }
+    },
+    {
+      "name": "Autodrome Lago Maggiore - East",
+      "trackLengthMeters": 3582.0,
+      "sector1Boundary": {
+        "minX": 722.0,
+        "maxX": 752.0,
+        "minZ": -40.0,
+        "maxZ": -10.0
+      },
+      "sector2Boundary": {
+        "minX": 210.0,
+        "maxX": 240.0,
+        "minZ": -29.0,
+        "maxZ": 1.0
+      }
+    },
+    {
+      "name": "Autodrome Lago Maggiore - East End",
+      "trackLengthMeters": 1883.0,
+      "sector1Boundary": {
+        "minX": 382.0,
+        "maxX": 412.0,
+        "minZ": -192.0,
+        "maxZ": -162.0
+      },
+      "sector2Boundary": {
+        "minX": 773.0,
+        "maxX": 803.0,
+        "minZ": 51.0,
+        "maxZ": 81.0
+      }
+    },
+    {
+      "name": "Autodrome Lago Maggiore - Full Course",
+      "trackLengthMeters": 5717.0,
+      "sector1Boundary": {
+        "minX": 619.0,
+        "maxX": 649.0,
+        "minZ": 89.0,
+        "maxZ": 119.0
+      },
+      "sector2Boundary": {
+        "minX": -636.0,
+        "maxX": -606.0,
+        "minZ": 248.0,
+        "maxZ": 278.0
+      }
+    },
+    {
+      "name": "Autodrome Lago Maggiore - West",
+      "trackLengthMeters": 4107.0,
+      "sector1Boundary": {
+        "minX": -249.0,
+        "maxX": -219.0,
+        "minZ": 309.0,
+        "maxZ": 339.0
+      },
+      "sector2Boundary": {
+        "minX": -584.0,
+        "maxX": -554.0,
+        "minZ": -268.0,
+        "maxZ": -238.0
+      }
+    },
+    {
+      "name": "Autodrome Lago Maggiore - West End",
+      "trackLengthMeters": 2373.0,
+      "sector1Boundary": {
+        "minX": -489.0,
+        "maxX": -459.0,
+        "minZ": 8.0,
+        "maxZ": 38.0
+      },
+      "sector2Boundary": {
+        "minX": -715.0,
+        "maxX": -685.0,
+        "minZ": 490.0,
+        "maxZ": 520.0
+      }
+    },
+    {
+      "name": "Autodromo Nazionale Monza",
+      "trackLengthMeters": 5756.0,
+      "sector1Boundary": {
+        "minX": 67.0,
+        "maxX": 97.0,
+        "minZ": -1133.0,
+        "maxZ": -1103.0
+      },
+      "sector2Boundary": {
+        "minX": -77.0,
+        "maxX": -47.0,
+        "minZ": -378.0,
+        "maxZ": -348.0
+      }
+    },
+    {
+      "name": "Autodromo Nazionale Monza No Chicane",
+      "trackLengthMeters": 5722.0,
+      "sector1Boundary": {
+        "minX": 95.0,
+        "maxX": 125.0,
+        "minZ": -1133.0,
+        "maxZ": -1103.0
+      },
+      "sector2Boundary": {
+        "minX": -86.0,
+        "maxX": -56.0,
+        "minZ": -371.0,
+        "maxZ": -341.0
+      }
+    },
+    {
+      "name": "Autopolis International Racing Course",
+      "trackLengthMeters": 4606.0,
+      "sector1Boundary": {
+        "minX": -186.0,
+        "maxX": -156.0,
+        "minZ": 505.0,
+        "maxZ": 535.0
+      },
+      "sector2Boundary": {
+        "minX": -499.0,
+        "maxX": -469.0,
+        "minZ": 281.0,
+        "maxZ": 311.0
+      }
+    },
+    {
+      "name": "Aut\u00f3dromo de Interlagos",
+      "trackLengthMeters": 4219.0,
+      "sector1Boundary": {
+        "minX": 190.0,
+        "maxX": 220.0,
+        "minZ": -254.0,
+        "maxZ": -224.0
+      },
+      "sector2Boundary": {
+        "minX": -236.0,
+        "maxX": -206.0,
+        "minZ": -297.0,
+        "maxZ": -267.0
+      }
+    },
+    {
+      "name": "BB Raceway",
+      "trackLengthMeters": 1691.0,
+      "sector1Boundary": {
+        "minX": 242.0,
+        "maxX": 272.0,
+        "minZ": -133.0,
+        "maxZ": -103.0
+      },
+      "sector2Boundary": {
+        "minX": -276.0,
+        "maxX": -246.0,
+        "minZ": -94.0,
+        "maxZ": -64.0
+      }
+    },
+    {
+      "name": "Blue Moon Bay Speedway",
+      "trackLengthMeters": 3236.0,
+      "sector1Boundary": {
+        "minX": 292.0,
+        "maxX": 322.0,
+        "minZ": 28.0,
+        "maxZ": 58.0
+      },
+      "sector2Boundary": {
+        "minX": -614.0,
+        "maxX": -584.0,
+        "minZ": -75.0,
+        "maxZ": -45.0
+      }
+    },
+    {
+      "name": "Blue Moon Bay Speedway - Infield A",
+      "trackLengthMeters": 3324.0,
+      "sector1Boundary": {
+        "minX": 90.0,
+        "maxX": 120.0,
+        "minZ": 55.0,
+        "maxZ": 85.0
+      },
+      "sector2Boundary": {
+        "minX": -513.0,
+        "maxX": -483.0,
+        "minZ": 26.0,
+        "maxZ": 56.0
+      }
+    },
+    {
+      "name": "Blue Moon Bay Speedway - Infield B",
+      "trackLengthMeters": 2864.0,
+      "sector1Boundary": {
+        "minX": 233.0,
+        "maxX": 263.0,
+        "minZ": -6.0,
+        "maxZ": 24.0
+      },
+      "sector2Boundary": {
+        "minX": -677.0,
+        "maxX": -647.0,
+        "minZ": 30.0,
+        "maxZ": 60.0
+      }
+    },
+    {
+      "name": "Brands Hatch Grand Prix Circuit",
+      "trackLengthMeters": 3890.0,
+      "sector1Boundary": {
+        "minX": -275.0,
+        "maxX": -245.0,
+        "minZ": -173.0,
+        "maxZ": -143.0
+      },
+      "sector2Boundary": {
+        "minX": 74.0,
+        "maxX": 104.0,
+        "minZ": 415.0,
+        "maxZ": 445.0
+      }
+    },
+    {
+      "name": "Brands Hatch Indy Circuit",
+      "trackLengthMeters": 1919.0,
+      "sector1Boundary": {
+        "minX": 77.0,
+        "maxX": 107.0,
+        "minZ": -170.0,
+        "maxZ": -140.0
+      },
+      "sector2Boundary": {
+        "minX": -297.0,
+        "maxX": -267.0,
+        "minZ": -181.0,
+        "maxZ": -151.0
+      }
+    },
+    {
+      "name": "Circuit Gilles-Villeneuve",
+      "trackLengthMeters": 4313.0,
+      "sector1Boundary": {
+        "minX": -319.0,
+        "maxX": -289.0,
+        "minZ": 206.0,
+        "maxZ": 236.0
+      },
+      "sector2Boundary": {
+        "minX": -72.0,
+        "maxX": -42.0,
+        "minZ": -785.0,
+        "maxZ": -755.0
+      }
+    },
+    {
+      "name": "Circuit de Barcelona-Catalunya GP Layout",
+      "trackLengthMeters": 4580.0,
+      "sector1Boundary": {
+        "minX": -518.0,
+        "maxX": -488.0,
+        "minZ": 300.0,
+        "maxZ": 330.0
+      },
+      "sector2Boundary": {
+        "minX": -130.0,
+        "maxX": -100.0,
+        "minZ": -136.0,
+        "maxZ": -106.0
+      }
+    },
+    {
+      "name": "Circuit de Barcelona-Catalunya GP Layout No Chicane",
+      "trackLengthMeters": 4567.0,
+      "sector1Boundary": {
+        "minX": -528.0,
+        "maxX": -498.0,
+        "minZ": 318.0,
+        "maxZ": 348.0
+      },
+      "sector2Boundary": {
+        "minX": -148.0,
+        "maxX": -118.0,
+        "minZ": -127.0,
+        "maxZ": -97.0
+      }
+    },
+    {
+      "name": "Circuit de Barcelona-Catalunya National Layout",
+      "trackLengthMeters": 2790.0,
+      "sector1Boundary": {
+        "minX": -241.0,
+        "maxX": -211.0,
+        "minZ": 135.0,
+        "maxZ": 165.0
+      },
+      "sector2Boundary": {
+        "minX": 36.0,
+        "maxX": 66.0,
+        "minZ": -326.0,
+        "maxZ": -296.0
+      }
+    },
+    {
+      "name": "Circuit de Sainte-Croix - A",
+      "trackLengthMeters": 9401.0,
+      "sector1Boundary": {
+        "minX": 787.0,
+        "maxX": 817.0,
+        "minZ": -858.0,
+        "maxZ": -828.0
+      },
+      "sector2Boundary": {
+        "minX": 522.0,
+        "maxX": 552.0,
+        "minZ": 289.0,
+        "maxZ": 319.0
+      }
+    },
+    {
+      "name": "Circuit de Sainte-Croix - B",
+      "trackLengthMeters": 6992.0,
+      "sector1Boundary": {
+        "minX": 641.0,
+        "maxX": 671.0,
+        "minZ": 165.0,
+        "maxZ": 195.0
+      },
+      "sector2Boundary": {
+        "minX": -627.0,
+        "maxX": -597.0,
+        "minZ": 1101.0,
+        "maxZ": 1131.0
+      }
+    },
+    {
+      "name": "Circuit de Sainte-Croix - C",
+      "trackLengthMeters": 10760.0,
+      "sector1Boundary": {
+        "minX": 54.0,
+        "maxX": 84.0,
+        "minZ": -889.0,
+        "maxZ": -859.0
+      },
+      "sector2Boundary": {
+        "minX": -502.0,
+        "maxX": -472.0,
+        "minZ": 1185.0,
+        "maxZ": 1215.0
+      }
+    },
+    {
+      "name": "Circuit de Spa-Francorchamps",
+      "trackLengthMeters": 6938.0,
+      "sector1Boundary": {
+        "minX": 480.0,
+        "maxX": 510.0,
+        "minZ": 615.0,
+        "maxZ": 645.0
+      },
+      "sector2Boundary": {
+        "minX": -433.0,
+        "maxX": -403.0,
+        "minZ": 779.0,
+        "maxZ": 809.0
+      }
+    },
+    {
+      "name": "Colorado Springs - Lake",
+      "trackLengthMeters": 2932.0,
+      "sector1Boundary": {
+        "minX": 286.0,
+        "maxX": 316.0,
+        "minZ": -17.0,
+        "maxZ": 13.0
+      },
+      "sector2Boundary": {
+        "minX": -460.0,
+        "maxX": -430.0,
+        "minZ": 55.0,
+        "maxZ": 85.0
+      }
+    },
+    {
+      "name": "Daytona Road Course",
+      "trackLengthMeters": 5702.0,
+      "sector1Boundary": {
+        "minX": -431.0,
+        "maxX": -401.0,
+        "minZ": 447.0,
+        "maxZ": 477.0
+      },
+      "sector2Boundary": {
+        "minX": 296.0,
+        "maxX": 326.0,
+        "minZ": 70.0,
+        "maxZ": 100.0
+      }
+    },
+    {
+      "name": "Daytona Tri-Oval",
+      "trackLengthMeters": 3986.0,
+      "sector1Boundary": {
+        "minX": -175.0,
+        "maxX": -145.0,
+        "minZ": 660.0,
+        "maxZ": 690.0
+      },
+      "sector2Boundary": {
+        "minX": 582.0,
+        "maxX": 612.0,
+        "minZ": -416.0,
+        "maxZ": -386.0
+      }
+    },
+    {
+      "name": "Deep Forest Raceway",
+      "trackLengthMeters": 4191.0,
+      "sector1Boundary": {
+        "minX": -41.0,
+        "maxX": -11.0,
+        "minZ": 11.0,
+        "maxZ": 41.0
+      },
+      "sector2Boundary": {
+        "minX": 562.0,
+        "maxX": 592.0,
+        "minZ": 178.0,
+        "maxZ": 208.0
+      }
+    },
+    {
+      "name": "Dragon Trail - Gardens",
+      "trackLengthMeters": 4294.0,
+      "sector1Boundary": {
+        "minX": -895.0,
+        "maxX": -865.0,
+        "minZ": 197.0,
+        "maxZ": 227.0
+      },
+      "sector2Boundary": {
+        "minX": -667.0,
+        "maxX": -637.0,
+        "minZ": -361.0,
+        "maxZ": -331.0
+      }
+    },
+    {
+      "name": "Dragon Trail - Seaside",
+      "trackLengthMeters": 5151.0,
+      "sector1Boundary": {
+        "minX": 409.0,
+        "maxX": 439.0,
+        "minZ": -616.0,
+        "maxZ": -586.0
+      },
+      "sector2Boundary": {
+        "minX": 616.0,
+        "maxX": 646.0,
+        "minZ": 520.0,
+        "maxZ": 550.0
+      }
+    },
+    {
+      "name": "Eiger Nordwand",
+      "trackLengthMeters": 2359.0,
+      "sector1Boundary": {
+        "minX": -206.0,
+        "maxX": -176.0,
+        "minZ": 131.0,
+        "maxZ": 161.0
+      },
+      "sector2Boundary": {
+        "minX": -334.0,
+        "maxX": -304.0,
+        "minZ": 16.0,
+        "maxZ": 46.0
+      }
+    },
+    {
+      "name": "Fishermans Ranch",
+      "trackLengthMeters": 6699.0,
+      "sector1Boundary": {
+        "minX": 445.0,
+        "maxX": 475.0,
+        "minZ": -420.0,
+        "maxZ": -390.0
+      },
+      "sector2Boundary": {
+        "minX": -682.0,
+        "maxX": -652.0,
+        "minZ": -405.0,
+        "maxZ": -375.0
+      }
+    },
+    {
+      "name": "Fuji International Speedway",
+      "trackLengthMeters": 4499.0,
+      "sector1Boundary": {
+        "minX": 404.0,
+        "maxX": 434.0,
+        "minZ": -23.0,
+        "maxZ": 7.0
+      },
+      "sector2Boundary": {
+        "minX": -436.0,
+        "maxX": -406.0,
+        "minZ": 547.0,
+        "maxZ": 577.0
+      }
+    },
+    {
+      "name": "Goodwood Motor Circuit",
+      "trackLengthMeters": 3810.0,
+      "sector1Boundary": {
+        "minX": -431.0,
+        "maxX": -401.0,
+        "minZ": 203.0,
+        "maxZ": 233.0
+      },
+      "sector2Boundary": {
+        "minX": -314.0,
+        "maxX": -284.0,
+        "minZ": -529.0,
+        "maxZ": -499.0
+      }
+    },
+    {
+      "name": "Grand Valley - Highway 1",
+      "trackLengthMeters": 5020.0,
+      "sector1Boundary": {
+        "minX": -495.0,
+        "maxX": -465.0,
+        "minZ": 775.0,
+        "maxZ": 805.0
+      },
+      "sector2Boundary": {
+        "minX": -481.0,
+        "maxX": -451.0,
+        "minZ": -171.0,
+        "maxZ": -141.0
+      }
+    },
+    {
+      "name": "Grand Valley - South",
+      "trackLengthMeters": 3033.0,
+      "sector1Boundary": {
+        "minX": -258.0,
+        "maxX": -228.0,
+        "minZ": 986.0,
+        "maxZ": 1016.0
+      },
+      "sector2Boundary": {
+        "minX": -27.0,
+        "maxX": 3.0,
+        "minZ": 208.0,
+        "maxZ": 238.0
+      }
+    },
+    {
+      "name": "High Speed Ring",
+      "trackLengthMeters": 4344.0,
+      "sector1Boundary": {
+        "minX": -695.0,
+        "maxX": -665.0,
+        "minZ": 274.0,
+        "maxZ": 304.0
+      },
+      "sector2Boundary": {
+        "minX": 209.0,
+        "maxX": 239.0,
+        "minZ": 158.0,
+        "maxZ": 188.0
+      }
+    },
+    {
+      "name": "Kyoto Driving Park - Miyabi",
+      "trackLengthMeters": 1916.0,
+      "sector1Boundary": {
+        "minX": -188.0,
+        "maxX": -158.0,
+        "minZ": 922.0,
+        "maxZ": 952.0
+      },
+      "sector2Boundary": {
+        "minX": -645.0,
+        "maxX": -615.0,
+        "minZ": 520.0,
+        "maxZ": 550.0
+      }
+    },
+    {
+      "name": "Kyoto Driving Park - Yamagiwa",
+      "trackLengthMeters": 4843.0,
+      "sector1Boundary": {
+        "minX": -718.0,
+        "maxX": -688.0,
+        "minZ": -241.0,
+        "maxZ": -211.0
+      },
+      "sector2Boundary": {
+        "minX": 121.0,
+        "maxX": 151.0,
+        "minZ": 389.0,
+        "maxZ": 419.0
+      }
+    },
+    {
+      "name": "Kyoto Driving Park - Yamagiwa+Miyabi",
+      "trackLengthMeters": 6757.0,
+      "sector1Boundary": {
+        "minX": -694.0,
+        "maxX": -664.0,
+        "minZ": 142.0,
+        "maxZ": 172.0
+      },
+      "sector2Boundary": {
+        "minX": -434.0,
+        "maxX": -404.0,
+        "minZ": 493.0,
+        "maxZ": 523.0
+      }
+    },
+    {
+      "name": "Lake Louise Long Track",
+      "trackLengthMeters": 3664.0,
+      "sector1Boundary": {
+        "minX": -149.0,
+        "maxX": -119.0,
+        "minZ": 2.0,
+        "maxZ": 32.0
+      },
+      "sector2Boundary": {
+        "minX": 345.0,
+        "maxX": 375.0,
+        "minZ": -667.0,
+        "maxZ": -637.0
+      }
+    },
+    {
+      "name": "Lake Louise Short Track",
+      "trackLengthMeters": 2555.0,
+      "sector1Boundary": {
+        "minX": -197.0,
+        "maxX": -167.0,
+        "minZ": 278.0,
+        "maxZ": 308.0
+      },
+      "sector2Boundary": {
+        "minX": 215.0,
+        "maxX": 245.0,
+        "minZ": -437.0,
+        "maxZ": -407.0
+      }
+    },
+    {
+      "name": "Lake Louise Tri-Oval",
+      "trackLengthMeters": 3052.0,
+      "sector1Boundary": {
+        "minX": -207.0,
+        "maxX": -177.0,
+        "minZ": 110.0,
+        "maxZ": 140.0
+      },
+      "sector2Boundary": {
+        "minX": 290.0,
+        "maxX": 320.0,
+        "minZ": -656.0,
+        "maxZ": -626.0
+      }
+    },
+    {
+      "name": "Michelin Raceway Road Atlanta",
+      "trackLengthMeters": 4049.0,
+      "sector1Boundary": {
+        "minX": -141.0,
+        "maxX": -111.0,
+        "minZ": 177.0,
+        "maxZ": 207.0
+      },
+      "sector2Boundary": {
+        "minX": -374.0,
+        "maxX": -344.0,
+        "minZ": 221.0,
+        "maxZ": 251.0
+      }
+    },
+    {
+      "name": "Mount Panorama Motor Racing Circuit",
+      "trackLengthMeters": 6165.0,
+      "sector1Boundary": {
+        "minX": -469.0,
+        "maxX": -439.0,
+        "minZ": 100.0,
+        "maxZ": 130.0
+      },
+      "sector2Boundary": {
+        "minX": 349.0,
+        "maxX": 379.0,
+        "minZ": 725.0,
+        "maxZ": 755.0
+      }
+    },
+    {
+      "name": "Northern Isle Speedway",
+      "trackLengthMeters": 975.0,
+      "sector1Boundary": {
+        "minX": 140.0,
+        "maxX": 170.0,
+        "minZ": -87.0,
+        "maxZ": -57.0
+      },
+      "sector2Boundary": {
+        "minX": -175.0,
+        "maxX": -145.0,
+        "minZ": -84.0,
+        "maxZ": -54.0
+      }
+    },
+    {
+      "name": "N\u00fcrburgring 24h",
+      "trackLengthMeters": 24982.0,
+      "sector1Boundary": {
+        "minX": -2709.0,
+        "maxX": -2679.0,
+        "minZ": -846.0,
+        "maxZ": -816.0
+      },
+      "sector2Boundary": {
+        "minX": 2150.0,
+        "maxX": 2180.0,
+        "minZ": -2439.0,
+        "maxZ": -2409.0
+      }
+    },
+    {
+      "name": "N\u00fcrburgring Endurance",
+      "trackLengthMeters": 24029.0,
+      "sector1Boundary": {
+        "minX": -2325.0,
+        "maxX": -2295.0,
+        "minZ": -1310.0,
+        "maxZ": -1280.0
+      },
+      "sector2Boundary": {
+        "minX": 2197.0,
+        "maxX": 2227.0,
+        "minZ": -2623.0,
+        "maxZ": -2593.0
+      }
+    },
+    {
+      "name": "N\u00fcrburgring GP",
+      "trackLengthMeters": 5069.0,
+      "sector1Boundary": {
+        "minX": -1704.0,
+        "maxX": -1674.0,
+        "minZ": 2689.0,
+        "maxZ": 2719.0
+      },
+      "sector2Boundary": {
+        "minX": -1746.0,
+        "maxX": -1716.0,
+        "minZ": 2295.0,
+        "maxZ": 2325.0
+      }
+    },
+    {
+      "name": "N\u00fcrburgring Nordschleife",
+      "trackLengthMeters": 20701.0,
+      "sector1Boundary": {
+        "minX": -1731.0,
+        "maxX": -1701.0,
+        "minZ": -2843.0,
+        "maxZ": -2813.0
+      },
+      "sector2Boundary": {
+        "minX": 2835.0,
+        "maxX": 2865.0,
+        "minZ": -2191.0,
+        "maxZ": -2161.0
+      }
+    },
+    {
+      "name": "Red Bull Ring",
+      "trackLengthMeters": 4286.0,
+      "sector1Boundary": {
+        "minX": -365.0,
+        "maxX": -335.0,
+        "minZ": -419.0,
+        "maxZ": -389.0
+      },
+      "sector2Boundary": {
+        "minX": -33.0,
+        "maxX": -3.0,
+        "minZ": -50.0,
+        "maxZ": -20.0
+      }
+    },
+    {
+      "name": "SUGO International Racing Course",
+      "trackLengthMeters": 3560.0,
+      "sector1Boundary": {
+        "minX": 458.0,
+        "maxX": 488.0,
+        "minZ": -62.0,
+        "maxZ": -32.0
+      },
+      "sector2Boundary": {
+        "minX": -149.0,
+        "maxX": -119.0,
+        "minZ": -31.0,
+        "maxZ": -1.0
+      }
+    },
+    {
+      "name": "Sardegna - Road Track - A",
+      "trackLengthMeters": 5086.0,
+      "sector1Boundary": {
+        "minX": 443.0,
+        "maxX": 473.0,
+        "minZ": 347.0,
+        "maxZ": 377.0
+      },
+      "sector2Boundary": {
+        "minX": 20.0,
+        "maxX": 50.0,
+        "minZ": -691.0,
+        "maxZ": -661.0
+      }
+    },
+    {
+      "name": "Sardegna - Road Track - B",
+      "trackLengthMeters": 3855.0,
+      "sector1Boundary": {
+        "minX": -74.0,
+        "maxX": -44.0,
+        "minZ": 452.0,
+        "maxZ": 482.0
+      },
+      "sector2Boundary": {
+        "minX": -12.0,
+        "maxX": 18.0,
+        "minZ": -295.0,
+        "maxZ": -265.0
+      }
+    },
+    {
+      "name": "Sardegna - Road Track - C",
+      "trackLengthMeters": 2637.0,
+      "sector1Boundary": {
+        "minX": -156.0,
+        "maxX": -126.0,
+        "minZ": 765.0,
+        "maxZ": 795.0
+      },
+      "sector2Boundary": {
+        "minX": -93.0,
+        "maxX": -63.0,
+        "minZ": 161.0,
+        "maxZ": 191.0
+      }
+    },
+    {
+      "name": "Sardegna - Windmills",
+      "trackLengthMeters": 3237.0,
+      "sector1Boundary": {
+        "minX": -30.0,
+        "maxX": 0.0,
+        "minZ": -715.0,
+        "maxZ": -685.0
+      },
+      "sector2Boundary": {
+        "minX": -131.0,
+        "maxX": -101.0,
+        "minZ": 202.0,
+        "maxZ": 232.0
+      }
+    },
+    {
+      "name": "Spa 24h Layout",
+      "trackLengthMeters": 6126.0,
+      "sector1Boundary": {
+        "minX": 289.0,
+        "maxX": 319.0,
+        "minZ": 1037.0,
+        "maxZ": 1067.0
+      },
+      "sector2Boundary": {
+        "minX": -586.0,
+        "maxX": -556.0,
+        "minZ": 972.0,
+        "maxZ": 1002.0
+      }
+    },
+    {
+      "name": "Special Stage Route X",
+      "trackLengthMeters": 30395.0,
+      "sector1Boundary": {
+        "minX": 4384.0,
+        "maxX": 4414.0,
+        "minZ": 2944.0,
+        "maxZ": 2974.0
+      },
+      "sector2Boundary": {
+        "minX": -830.0,
+        "maxX": -800.0,
+        "minZ": 610.0,
+        "maxZ": 640.0
+      }
+    },
+    {
+      "name": "Suzuka Circuit",
+      "trackLengthMeters": 5742.0,
+      "sector1Boundary": {
+        "minX": 273.0,
+        "maxX": 303.0,
+        "minZ": -170.0,
+        "maxZ": -140.0
+      },
+      "sector2Boundary": {
+        "minX": -882.0,
+        "maxX": -852.0,
+        "minZ": -538.0,
+        "maxZ": -508.0
+      }
+    },
+    {
+      "name": "Tokyo Expressway - Central Clockwise",
+      "trackLengthMeters": 4393.0,
+      "sector1Boundary": {
+        "minX": -320.0,
+        "maxX": -290.0,
+        "minZ": -144.0,
+        "maxZ": -114.0
+      },
+      "sector2Boundary": {
+        "minX": 685.0,
+        "maxX": 715.0,
+        "minZ": -176.0,
+        "maxZ": -146.0
+      }
+    },
+    {
+      "name": "Tokyo Expressway - Central Counterclockwise",
+      "trackLengthMeters": 4359.0,
+      "sector1Boundary": {
+        "minX": 675.0,
+        "maxX": 705.0,
+        "minZ": -177.0,
+        "maxZ": -147.0
+      },
+      "sector2Boundary": {
+        "minX": -320.0,
+        "maxX": -290.0,
+        "minZ": -145.0,
+        "maxZ": -115.0
+      }
+    },
+    {
+      "name": "Tokyo Expressway - East Clockwise",
+      "trackLengthMeters": 7267.0,
+      "sector1Boundary": {
+        "minX": 1458.0,
+        "maxX": 1488.0,
+        "minZ": -121.0,
+        "maxZ": -91.0
+      },
+      "sector2Boundary": {
+        "minX": -555.0,
+        "maxX": -525.0,
+        "minZ": 31.0,
+        "maxZ": 61.0
+      }
+    },
+    {
+      "name": "Tokyo Expressway - East Counterclockwise",
+      "trackLengthMeters": 7170.0,
+      "sector1Boundary": {
+        "minX": -623.0,
+        "maxX": -593.0,
+        "minZ": -102.0,
+        "maxZ": -72.0
+      },
+      "sector2Boundary": {
+        "minX": 1287.0,
+        "maxX": 1317.0,
+        "minZ": -127.0,
+        "maxZ": -97.0
+      }
+    },
+    {
+      "name": "Tokyo Expressway - South Clockwise",
+      "trackLengthMeters": 5175.0,
+      "sector1Boundary": {
+        "minX": 864.0,
+        "maxX": 894.0,
+        "minZ": -898.0,
+        "maxZ": -868.0
+      },
+      "sector2Boundary": {
+        "minX": 357.0,
+        "maxX": 387.0,
+        "minZ": 411.0,
+        "maxZ": 441.0
+      }
+    },
+    {
+      "name": "Tokyo Expressway - South Counterclockwise",
+      "trackLengthMeters": 6498.0,
+      "sector1Boundary": {
+        "minX": 490.0,
+        "maxX": 520.0,
+        "minZ": 1016.0,
+        "maxZ": 1046.0
+      },
+      "sector2Boundary": {
+        "minX": 778.0,
+        "maxX": 808.0,
+        "minZ": -796.0,
+        "maxZ": -766.0
+      }
+    },
+    {
+      "name": "Trial Mountain Circuit",
+      "trackLengthMeters": 5332.0,
+      "sector1Boundary": {
+        "minX": 444.0,
+        "maxX": 474.0,
+        "minZ": -112.0,
+        "maxZ": -82.0
+      },
+      "sector2Boundary": {
+        "minX": -879.0,
+        "maxX": -849.0,
+        "minZ": -264.0,
+        "maxZ": -234.0
+      }
+    },
+    {
+      "name": "Tsukuba Circuit",
+      "trackLengthMeters": 2070.0,
+      "sector1Boundary": {
+        "minX": -236.0,
+        "maxX": -206.0,
+        "minZ": -59.0,
+        "maxZ": -29.0
+      },
+      "sector2Boundary": {
+        "minX": 36.0,
+        "maxX": 66.0,
+        "minZ": 136.0,
+        "maxZ": 166.0
+      }
+    },
+    {
+      "name": "Watkins Glen Long Course",
+      "trackLengthMeters": 5411.0,
+      "sector1Boundary": {
+        "minX": 339.0,
+        "maxX": 369.0,
+        "minZ": 199.0,
+        "maxZ": 229.0
+      },
+      "sector2Boundary": {
+        "minX": -291.0,
+        "maxX": -261.0,
+        "minZ": 583.0,
+        "maxZ": 613.0
+      }
+    },
+    {
+      "name": "Watkins Glen Short Course",
+      "trackLengthMeters": 3896.0,
+      "sector1Boundary": {
+        "minX": 307.0,
+        "maxX": 337.0,
+        "minZ": -307.0,
+        "maxZ": -277.0
+      },
+      "sector2Boundary": {
+        "minX": 90.0,
+        "maxX": 120.0,
+        "minZ": 497.0,
+        "maxZ": 527.0
+      }
+    },
+    {
+      "name": "WeatherTech Raceway Laguna Seca",
+      "trackLengthMeters": 3560.0,
+      "sector1Boundary": {
+        "minX": -26.0,
+        "maxX": 4.0,
+        "minZ": 111.0,
+        "maxZ": 141.0
+      },
+      "sector2Boundary": {
+        "minX": 379.0,
+        "maxX": 409.0,
+        "minZ": -10.0,
+        "maxZ": 20.0
+      }
+    },
+    {
+      "name": "Willow Springs International Raceway: Big Willow",
+      "trackLengthMeters": 3917.0,
+      "sector1Boundary": {
+        "minX": -433.0,
+        "maxX": -403.0,
+        "minZ": 123.0,
+        "maxZ": 153.0
+      },
+      "sector2Boundary": {
+        "minX": 469.0,
+        "maxX": 499.0,
+        "minZ": 104.0,
+        "maxZ": 134.0
+      }
+    },
+    {
+      "name": "Willow Springs International Raceway: Horse Thief Mile",
+      "trackLengthMeters": 1591.0,
+      "sector1Boundary": {
+        "minX": -200.0,
+        "maxX": -170.0,
+        "minZ": -474.0,
+        "maxZ": -444.0
+      },
+      "sector2Boundary": {
+        "minX": -66.0,
+        "maxX": -36.0,
+        "minZ": -475.0,
+        "maxZ": -445.0
+      }
+    },
+    {
+      "name": "Willow Springs International Raceway: Streets of Willow Springs",
+      "trackLengthMeters": 2493.0,
+      "sector1Boundary": {
+        "minX": 355.0,
+        "maxX": 385.0,
+        "minZ": -283.0,
+        "maxZ": -253.0
+      },
+      "sector2Boundary": {
+        "minX": 534.0,
+        "maxX": 564.0,
+        "minZ": -509.0,
+        "maxZ": -479.0
+      }
+    },
+    {
+      "name": "Yas Marina Circuit",
+      "trackLengthMeters": 5100.0,
+      "sector1Boundary": {
+        "minX": -159.0,
+        "maxX": -129.0,
+        "minZ": -538.0,
+        "maxZ": -508.0
+      },
+      "sector2Boundary": {
+        "minX": 226.0,
+        "maxX": 256.0,
+        "minZ": 802.0,
+        "maxZ": 832.0
+      }
+    }
+  ]
+}

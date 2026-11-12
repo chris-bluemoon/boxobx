@@ -1,0 +1,488 @@
+{
+  "tracks": [
+    {
+      "name": "24 Heures du Mans Racing Circuit",
+      "trackLengthMeters": 13550.0
+    },
+    {
+      "name": "24 Heures du Mans Racing Circuit No Chicane",
+      "trackLengthMeters": 13494.0
+    },
+    {
+      "name": "Alsace - Test Course",
+      "trackLengthMeters": 2082.0
+    },
+    {
+      "name": "Alsace - Test Course (Reverse)",
+      "trackLengthMeters": 2082.0
+    },
+    {
+      "name": "Alsace - Village",
+      "trackLengthMeters": 5345.0
+    },
+    {
+      "name": "Alsace - Village (Reverse)",
+      "trackLengthMeters": 5345.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - Centre",
+      "trackLengthMeters": 1972.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - Centre (Reverse)",
+      "trackLengthMeters": 1972.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - East",
+      "trackLengthMeters": 3582.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - East (Reverse)",
+      "trackLengthMeters": 3582.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - East End",
+      "trackLengthMeters": 1883.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - East End (Reverse)",
+      "trackLengthMeters": 1883.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - Full Course",
+      "trackLengthMeters": 5717.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - Full Course (Reverse)",
+      "trackLengthMeters": 5717.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - West",
+      "trackLengthMeters": 4107.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - West (Reverse)",
+      "trackLengthMeters": 4107.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - West End",
+      "trackLengthMeters": 2373.0
+    },
+    {
+      "name": "Autodrome Lago Maggiore - West End (Reverse)",
+      "trackLengthMeters": 2373.0
+    },
+    {
+      "name": "Autodromo Nazionale Monza",
+      "trackLengthMeters": 5756.0
+    },
+    {
+      "name": "Autodromo Nazionale Monza No Chicane",
+      "trackLengthMeters": 5722.0
+    },
+    {
+      "name": "Autopolis International Racing Course",
+      "trackLengthMeters": 4606.0
+    },
+    {
+      "name": "Autopolis International Racing Course - Short Course",
+      "trackLengthMeters": 2737.0
+    },
+    {
+      "name": "Aut\u00f3dromo de Interlagos",
+      "trackLengthMeters": 4219.0
+    },
+    {
+      "name": "BB Raceway",
+      "trackLengthMeters": 1691.0
+    },
+    {
+      "name": "BB Raceway (Reverse)",
+      "trackLengthMeters": 1691.0
+    },
+    {
+      "name": "Blue Moon Bay Speedway",
+      "trackLengthMeters": 3236.0
+    },
+    {
+      "name": "Blue Moon Bay Speedway (Reverse)",
+      "trackLengthMeters": 3236.0
+    },
+    {
+      "name": "Blue Moon Bay Speedway - Infield A",
+      "trackLengthMeters": 3324.0
+    },
+    {
+      "name": "Blue Moon Bay Speedway - Infield A (Reverse)",
+      "trackLengthMeters": 3324.0
+    },
+    {
+      "name": "Blue Moon Bay Speedway - Infield B",
+      "trackLengthMeters": 2864.0
+    },
+    {
+      "name": "Blue Moon Bay Speedway - Infield B (Reverse)",
+      "trackLengthMeters": 2864.0
+    },
+    {
+      "name": "Brands Hatch Grand Prix Circuit",
+      "trackLengthMeters": 3890.0
+    },
+    {
+      "name": "Brands Hatch Indy Circuit",
+      "trackLengthMeters": 1919.0
+    },
+    {
+      "name": "Circuit Gilles-Villeneuve",
+      "trackLengthMeters": 4313.0
+    },
+    {
+      "name": "Circuit de Barcelona-Catalunya GP Layout",
+      "trackLengthMeters": 4580.0
+    },
+    {
+      "name": "Circuit de Barcelona-Catalunya GP Layout No Chicane",
+      "trackLengthMeters": 4567.0
+    },
+    {
+      "name": "Circuit de Barcelona-Catalunya National Layout",
+      "trackLengthMeters": 2790.0
+    },
+    {
+      "name": "Circuit de Barcelona-Catalunya Rallycross Layout",
+      "trackLengthMeters": 993.0
+    },
+    {
+      "name": "Circuit de Sainte-Croix - A",
+      "trackLengthMeters": 9401.0
+    },
+    {
+      "name": "Circuit de Sainte-Croix - A (Reverse)",
+      "trackLengthMeters": 9401.0
+    },
+    {
+      "name": "Circuit de Sainte-Croix - B",
+      "trackLengthMeters": 6992.0
+    },
+    {
+      "name": "Circuit de Sainte-Croix - B (Reverse)",
+      "trackLengthMeters": 6992.0
+    },
+    {
+      "name": "Circuit de Sainte-Croix - C",
+      "trackLengthMeters": 10760.0
+    },
+    {
+      "name": "Circuit de Sainte-Croix - C (Reverse)",
+      "trackLengthMeters": 10760.0
+    },
+    {
+      "name": "Circuit de Spa-Francorchamps",
+      "trackLengthMeters": 6938.0
+    },
+    {
+      "name": "Colorado Springs - Lake",
+      "trackLengthMeters": 2932.0
+    },
+    {
+      "name": "Colorado Springs - Lake (Reverse)",
+      "trackLengthMeters": 2932.0
+    },
+    {
+      "name": "Daytona Road Course",
+      "trackLengthMeters": 5702.0
+    },
+    {
+      "name": "Daytona Tri-Oval",
+      "trackLengthMeters": 3986.0
+    },
+    {
+      "name": "Deep Forest Raceway",
+      "trackLengthMeters": 4191.0
+    },
+    {
+      "name": "Deep Forest Raceway (Reverse)",
+      "trackLengthMeters": 4191.0
+    },
+    {
+      "name": "Dragon Trail - Gardens",
+      "trackLengthMeters": 4294.0
+    },
+    {
+      "name": "Dragon Trail - Gardens (Reverse)",
+      "trackLengthMeters": 4294.0
+    },
+    {
+      "name": "Dragon Trail - Seaside",
+      "trackLengthMeters": 5151.0
+    },
+    {
+      "name": "Dragon Trail - Seaside (Reverse)",
+      "trackLengthMeters": 5151.0
+    },
+    {
+      "name": "Eiger Nordwand",
+      "trackLengthMeters": 2359.0
+    },
+    {
+      "name": "Eiger Nordwand (Reverse)",
+      "trackLengthMeters": 2359.0
+    },
+    {
+      "name": "Fishermans Ranch",
+      "trackLengthMeters": 6699.0
+    },
+    {
+      "name": "Fishermans Ranch (Reverse)",
+      "trackLengthMeters": 6699.0
+    },
+    {
+      "name": "Fuji International Speedway",
+      "trackLengthMeters": 4499.0
+    },
+    {
+      "name": "Fuji International Speedway (Short)",
+      "trackLengthMeters": 4164.0
+    },
+    {
+      "name": "Goodwood Motor Circuit",
+      "trackLengthMeters": 3810.0
+    },
+    {
+      "name": "Grand Valley - Highway 1",
+      "trackLengthMeters": 5020.0
+    },
+    {
+      "name": "Grand Valley - Highway 1 (Reverse)",
+      "trackLengthMeters": 5020.0
+    },
+    {
+      "name": "Grand Valley - South",
+      "trackLengthMeters": 3033.0
+    },
+    {
+      "name": "Grand Valley - South (Reverse)",
+      "trackLengthMeters": 3033.0
+    },
+    {
+      "name": "High Speed Ring",
+      "trackLengthMeters": 4344.0
+    },
+    {
+      "name": "High Speed Ring (Reverse)",
+      "trackLengthMeters": 4344.0
+    },
+    {
+      "name": "Kyoto Driving Park - Miyabi",
+      "trackLengthMeters": 1916.0
+    },
+    {
+      "name": "Kyoto Driving Park - Yamagiwa",
+      "trackLengthMeters": 4843.0
+    },
+    {
+      "name": "Kyoto Driving Park - Yamagiwa (Reverse)",
+      "trackLengthMeters": 4843.0
+    },
+    {
+      "name": "Kyoto Driving Park - Yamagiwa+Miyabi",
+      "trackLengthMeters": 6757.0
+    },
+    {
+      "name": "Kyoto Driving Park - Yamagiwa+Miyabi (Reverse)",
+      "trackLengthMeters": 6757.0
+    },
+    {
+      "name": "Lake Louise Long Track",
+      "trackLengthMeters": 3664.0
+    },
+    {
+      "name": "Lake Louise Long Track (Reverse)",
+      "trackLengthMeters": 3664.0
+    },
+    {
+      "name": "Lake Louise Short Track",
+      "trackLengthMeters": 2555.0
+    },
+    {
+      "name": "Lake Louise Short Track (Reverse)",
+      "trackLengthMeters": 2555.0
+    },
+    {
+      "name": "Lake Louise Tri-Oval",
+      "trackLengthMeters": 3052.0
+    },
+    {
+      "name": "Lake Louise Tri-Oval (Reverse)",
+      "trackLengthMeters": 3052.0
+    },
+    {
+      "name": "Michelin Raceway Road Atlanta",
+      "trackLengthMeters": 4049.0
+    },
+    {
+      "name": "Mount Panorama Motor Racing Circuit",
+      "trackLengthMeters": 6165.0
+    },
+    {
+      "name": "Northern Isle Speedway",
+      "trackLengthMeters": 975.0
+    },
+    {
+      "name": "N\u00fcrburgring 24h",
+      "trackLengthMeters": 24982.0
+    },
+    {
+      "name": "N\u00fcrburgring Endurance",
+      "trackLengthMeters": 24029.0
+    },
+    {
+      "name": "N\u00fcrburgring GP",
+      "trackLengthMeters": 5069.0
+    },
+    {
+      "name": "N\u00fcrburgring Nordschleife",
+      "trackLengthMeters": 20701.0
+    },
+    {
+      "name": "N\u00fcrburgring Nordschleife Tourist",
+      "trackLengthMeters": 18191.0
+    },
+    {
+      "name": "N\u00fcrburgring Sprint",
+      "trackLengthMeters": 3335.0
+    },
+    {
+      "name": "Red Bull Ring",
+      "trackLengthMeters": 4286.0
+    },
+    {
+      "name": "Red Bull Ring Short Track",
+      "trackLengthMeters": 2192.0
+    },
+    {
+      "name": "SUGO International Racing Course",
+      "trackLengthMeters": 3560.0
+    },
+    {
+      "name": "Sardegna - Road Track - A",
+      "trackLengthMeters": 5086.0
+    },
+    {
+      "name": "Sardegna - Road Track - A (Reverse)",
+      "trackLengthMeters": 5086.0
+    },
+    {
+      "name": "Sardegna - Road Track - B",
+      "trackLengthMeters": 3855.0
+    },
+    {
+      "name": "Sardegna - Road Track - B (Reverse)",
+      "trackLengthMeters": 3855.0
+    },
+    {
+      "name": "Sardegna - Road Track - C",
+      "trackLengthMeters": 2637.0
+    },
+    {
+      "name": "Sardegna - Road Track - C (Reverse)",
+      "trackLengthMeters": 2637.0
+    },
+    {
+      "name": "Sardegna - Windmills",
+      "trackLengthMeters": 3237.0
+    },
+    {
+      "name": "Sardegna - Windmills (Reverse)",
+      "trackLengthMeters": 3237.0
+    },
+    {
+      "name": "Spa 24h Layout",
+      "trackLengthMeters": 6126.0
+    },
+    {
+      "name": "Special Stage Route X",
+      "trackLengthMeters": 30395.0
+    },
+    {
+      "name": "Suzuka Circuit",
+      "trackLengthMeters": 5742.0
+    },
+    {
+      "name": "Suzuka Circuit East Course",
+      "trackLengthMeters": 1912.0
+    },
+    {
+      "name": "Tokyo Expressway - Central Clockwise",
+      "trackLengthMeters": 4393.0
+    },
+    {
+      "name": "Tokyo Expressway - Central Counterclockwise",
+      "trackLengthMeters": 4359.0
+    },
+    {
+      "name": "Tokyo Expressway - East Clockwise",
+      "trackLengthMeters": 7267.0
+    },
+    {
+      "name": "Tokyo Expressway - East Counterclockwise",
+      "trackLengthMeters": 7170.0
+    },
+    {
+      "name": "Tokyo Expressway - South Clockwise",
+      "trackLengthMeters": 5175.0
+    },
+    {
+      "name": "Tokyo Expressway - South Counterclockwise",
+      "trackLengthMeters": 6498.0
+    },
+    {
+      "name": "Trial Mountain Circuit",
+      "trackLengthMeters": 5332.0
+    },
+    {
+      "name": "Trial Mountain Circuit (Reverse)",
+      "trackLengthMeters": 5332.0
+    },
+    {
+      "name": "Tsukuba Circuit",
+      "trackLengthMeters": 2070.0
+    },
+    {
+      "name": "Watkins Glen Long Course",
+      "trackLengthMeters": 5411.0
+    },
+    {
+      "name": "Watkins Glen Short Course",
+      "trackLengthMeters": 3896.0
+    },
+    {
+      "name": "WeatherTech Raceway Laguna Seca",
+      "trackLengthMeters": 3560.0
+    },
+    {
+      "name": "Willow Springs International Raceway: Big Willow",
+      "trackLengthMeters": 3917.0
+    },
+    {
+      "name": "Willow Springs International Raceway: Horse Thief Mile",
+      "trackLengthMeters": 1591.0
+    },
+    {
+      "name": "Willow Springs International Raceway: Horse Thief Mile (Reverse)",
+      "trackLengthMeters": 1591.0
+    },
+    {
+      "name": "Willow Springs International Raceway: Streets of Willow Springs",
+      "trackLengthMeters": 2493.0
+    },
+    {
+      "name": "Willow Springs International Raceway: Streets of Willow Springs (Reverse)",
+      "trackLengthMeters": 2493.0
+    },
+    {
+      "name": "Yas Marina Circuit",
+      "trackLengthMeters": 5100.0
+    }
+  ]
+}
