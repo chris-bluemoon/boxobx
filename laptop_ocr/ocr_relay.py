@@ -708,18 +708,31 @@ class GridPositionStabilizer:
     NameStabilizer) filters this out while still responding quickly to
     a real overtake."""
 
-    def __init__(self, stability_threshold: int = 2):
+    def __init__(self, stability_threshold: int = 2, max_plausible_position: int = 20):
         self._stability_threshold = stability_threshold
+        # Hard sanity bound, independent of the stability-count
+        # debounce above -- confirmed live, a genuinely garbled OCR
+        # read (e.g. two adjacent digits merged/misread, such as "6"
+        # and "9" collapsing into "69") can still read the SAME wrong
+        # value for 2+ consecutive frames purely by chance, which
+        # passes the stability check despite being an obviously
+        # impossible position (GT7's largest grids are low-20s at
+        # most, so 20 is a generous but still meaningful ceiling).
+        # This check exists ENTIRELY separately from stability_count,
+        # since raising the stability threshold alone does not fix a
+        # misread that happens to repeat.
+        self._max_plausible_position = max_plausible_position
         self._current = None
         self._candidate = None
         self._candidate_count = 0
 
     def update(self, new_position):
-        # A missing/zero reading (driver row not located this frame)
-        # is treated as "no update" rather than a real position change
-        # -- keep showing the last confirmed position rather than
-        # flickering to 0/None on a transient OCR miss.
-        if not new_position:
+        # A missing/zero reading (driver row not located this frame),
+        # OR an implausible one (see max_plausible_position above), is
+        # treated as "no update" rather than a real position change --
+        # keep showing the last confirmed position rather than
+        # flickering to 0/None/garbage on a transient OCR miss.
+        if not new_position or new_position > self._max_plausible_position:
             return self._current
 
         if self._current is None:

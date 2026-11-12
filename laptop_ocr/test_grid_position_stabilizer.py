@@ -50,4 +50,27 @@ stabilizer4 = GridPositionStabilizer(stability_threshold=3)
 r1 = stabilizer4.update(5)
 check("first-ever reading accepted immediately", r1 == 5)
 
+# Bug repro: confirmed live, a garbled OCR misread (two adjacent
+# digits merged/misread, e.g. "69" in a 16-car field) can repeat for
+# MULTIPLE consecutive frames purely by chance -- passing the
+# stability-count debounce despite being an impossible position. The
+# max_plausible_position sanity bound must reject it regardless of how
+# many times it repeats, since raising stability_threshold alone
+# cannot fix a misread that happens to be consistent.
+stabilizer5 = GridPositionStabilizer(stability_threshold=2, max_plausible_position=20)
+stabilizer5.update(12)
+sequence5 = [69, 69, 69, 69, 69]
+results5 = [stabilizer5.update(p) for p in sequence5]
+check(
+    "an implausible position (69) never gets accepted no matter how many times it repeats",
+    all(r == 12 for r in results5),
+)
+
+# A genuine position within the plausible range still updates normally
+# alongside the sanity bound (i.e. the bound doesn't break ordinary
+# overtakes).
+r_after = stabilizer5.update(11)
+r_after2 = stabilizer5.update(11)
+check("a genuine in-range position change still updates normally", r_after2 == 11)
+
 print("\nAll GridPositionStabilizer checks passed.")
