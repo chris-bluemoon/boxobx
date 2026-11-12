@@ -708,7 +708,7 @@ class GridPositionStabilizer:
     NameStabilizer) filters this out while still responding quickly to
     a real overtake."""
 
-    def __init__(self, stability_threshold: int = 3):
+    def __init__(self, stability_threshold: int = 2):
         self._stability_threshold = stability_threshold
         self._current = None
         self._candidate = None
@@ -841,15 +841,22 @@ def main() -> None:
     parser.add_argument(
         "--position-stability",
         type=int,
-        default=3,
+        default=2,
         help="Number of consecutive samples a genuinely different "
         "gridPosition must be read before it's accepted (filters out "
         "single-frame OCR noise, e.g. the highlighted-row detector "
-        "mis-firing or a row dropping out of the y-proximity grouping, "
-        "that would otherwise flicker the displayed position between "
-        "two values while actually holding station). Higher than "
-        "--name-stability's default since gridPosition has no natural "
-        "substring/partial-match leniency the way driver names do.",
+        "mis-firing, a row dropping out of the y-proximity grouping, or "
+        "a garbled position digit, that would otherwise flicker the "
+        "displayed position between two values -- or even show a wildly "
+        "implausible one, e.g. P95 in a 16-car field -- while actually "
+        "holding station). Measured live (see --debug-timing): a single "
+        "EasyOCR readtext() pass takes ~300-450ms on CPU, so each "
+        "required sample costs that much real-world latency -- 2 was "
+        "chosen as the minimum that still filters a single garbled read "
+        "without costing a full extra OCR pass's worth of lag on top of "
+        "that; 1 (no debounce at all) was tested live and let an "
+        "obviously-wrong single-frame misread straight through to the "
+        "display.",
     )
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument(
@@ -859,6 +866,18 @@ def main() -> None:
         "can't be matched (gridPosition stuck at 0) -- helps diagnose "
         "whether the capture ROI, driver name match, or OCR itself is "
         "the problem.",
+    )
+    parser.add_argument(
+        "--debug-timing",
+        action="store_true",
+        help="Print each frame's actual EasyOCR readtext() duration and "
+        "the resulting effective max frame rate, to diagnose whether "
+        "--sample-hz's nominal rate is actually being achieved or is "
+        "being silently throttled by OCR being slower than the "
+        "requested sample interval (the capture loop is synchronous: "
+        "capture -> OCR -> send, so a slow OCR pass delays everything "
+        "downstream, including how many consecutive samples "
+        "--position-stability/--name-stability need to wait for).",
     )
     parser.add_argument(
         "--save-frame",
@@ -941,7 +960,22 @@ def main() -> None:
             # detail=1 returns (bbox, text, confidence) tuples -- needed
             # to group fragments into rows by y-position and find the
             # driver's own row, rather than guessing based on line order.
+            ocr_start = time.time()
             results = reader.readtext(roi, detail=1, paragraph=False)
+            ocr_elapsed = time.time() - ocr_start
+
+            if args.debug_timing:
+                # Printed every frame deliberately (not averaged/throttled)
+                # so a one-off slow frame (e.g. a GC pause, a thermal
+                # throttle dip) is visible in the raw numbers rather than
+                # smoothed away -- this is a one-off diagnostic flag, not
+                # meant to run continuously during a real race.
+                effective_hz = 1.0 / ocr_elapsed if ocr_elapsed > 0 else float("inf")
+                print(
+                    f"[timing] OCR pass took {ocr_elapsed * 1000:.0f}ms "
+                    f"(effective max ~{effective_hz:.1f}Hz vs. requested {args.sample_hz}Hz)"
+                )
+
             parsed = parse_leaderboard(
                 results,
                 args.driver_name,
