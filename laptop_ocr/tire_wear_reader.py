@@ -49,6 +49,32 @@ TIRE_WEAR_X_MAX = 495
 TIRE_WEAR_Y_MIN = 945
 TIRE_WEAR_Y_MAX = 1055
 
+# A taller ROI used ONLY for compound-label reading (read_tire_compound
+# below) -- extends further up/down than TIRE_WEAR_Y_MIN/MAX above to
+# also capture the "RS"/"RM"/etc. compound text GT7 renders just above
+# the front bars and just below the rear bars. Kept as a separate,
+# wider box (rather than widening the wear-bar box itself) so the
+# wear-bar bar-row-span constants below don't need re-measuring.
+TIRE_COMPOUND_X_MIN = 375
+TIRE_COMPOUND_X_MAX = 495
+TIRE_COMPOUND_Y_MIN = 895
+TIRE_COMPOUND_Y_MAX = 1080
+
+# Row spans WITHIN the TIRE_COMPOUND ROI above where the front and rear
+# compound labels ("RS", "RM", "CH", etc.) are rendered -- measured
+# against a real captured frame via EasyOCR bounding boxes.
+FRONT_COMPOUND_LABEL_Y_MIN = 45
+FRONT_COMPOUND_LABEL_Y_MAX = 75
+REAR_COMPOUND_LABEL_Y_MIN = 145
+REAR_COMPOUND_LABEL_Y_MAX = 175
+
+# GT7's full set of tire compound abbreviations (comfort/sports/racing
+# hard-medium-soft, plus intermediate/wet) -- restricting EasyOCR to
+# only these characters dramatically improves accuracy on this small
+# HUD text versus unrestricted recognition.
+TIRE_COMPOUND_ALLOWLIST = "CSHRMIDW"
+TIRE_COMPOUND_MIN_CONFIDENCE = 0.5
+
 # Column spans WITHIN the cropped ROI above (measured against the same
 # 1080p reference crop) -- left-side wheel bars (front-left stacked
 # above rear-left) and right-side wheel bars (front-right stacked
@@ -95,6 +121,17 @@ def crop_tire_wear_roi(frame_bgr: np.ndarray) -> np.ndarray:
     height, width = frame_bgr.shape[:2]
     x_min, x_max, y_min, y_max = _scale_box(
         TIRE_WEAR_X_MIN, TIRE_WEAR_X_MAX, TIRE_WEAR_Y_MIN, TIRE_WEAR_Y_MAX, width, height
+    )
+    return frame_bgr[y_min:y_max, x_min:x_max]
+
+
+def crop_tire_compound_roi(frame_bgr: np.ndarray) -> np.ndarray:
+    """Crops the (taller) region containing both compound labels out of
+    a raw captured frame, scaled from the 1080p reference box to the
+    actual frame's resolution."""
+    height, width = frame_bgr.shape[:2]
+    x_min, x_max, y_min, y_max = _scale_box(
+        TIRE_COMPOUND_X_MIN, TIRE_COMPOUND_X_MAX, TIRE_COMPOUND_Y_MIN, TIRE_COMPOUND_Y_MAX, width, height
     )
     return frame_bgr[y_min:y_max, x_min:x_max]
 
@@ -151,12 +188,18 @@ class TireWearReading:
     """Remaining-grip percent (100 = fresh, 0 = fully worn) for each of
     GT7's 4 wheels, read directly off the HUD's fill-bar widget --
     None for any wheel whose bar couldn't be confidently read this
-    frame (see _bar_wear_percent)."""
+    frame (see _bar_wear_percent). front_compound/rear_compound are the
+    OCR'd compound label text (e.g. "RS"), None if not confidently
+    read this frame -- GT7 uses the same compound front and rear, so
+    these should always agree when both are present, but are kept
+    separate since they're read from two independent label positions."""
 
     front_left_percent: float | None
     front_right_percent: float | None
     rear_left_percent: float | None
     rear_right_percent: float | None
+    front_compound: str | None = None
+    rear_compound: str | None = None
 
     @property
     def has_any_reading(self) -> bool:
@@ -176,21 +219,85 @@ class TireWearReading:
             "frontRightPercent": self.front_right_percent,
             "rearLeftPercent": self.rear_left_percent,
             "rearRightPercent": self.rear_right_percent,
+            "frontCompound": self.front_compound,
+            "rearCompound": self.rear_compound,
         }
 
 
-def read_tire_wear(frame_bgr: np.ndarray) -> TireWearReading:
+# EasyOCR readers are expensive to construct (model load), so a single
+# instance is lazily created on first use and reused -- matches how
+# ocr_relay.py constructs its own reader once at startup rather than
+# per-frame. Kept as a module-level singleton here rather than
+# threaded through every call so read_tire_compound/read_tire_wear
+# have a simple, uniform "just pass a frame" signature.
+_compound_reader = None
+
+
+def _get_compound_reader():
+    global _compound_reader
+    if _compound_reader is None:
+        import easyocr
+
+        _compound_reader = easyocr.Reader(["en"], gpu=False)
+    return _compound_reader
+
+
+def _read_compound_label(roi_bgr: np.ndarray, y_min: int, y_max: int) -> str | None:
+    """OCRs a single compound-label strip (front or rear) out of the
+    tire-compound ROI, restricted to GT7's known compound-code
+    alphabet. Returns None if nothing above TIRE_COMPOUND_MIN_CONFIDENCE
+    was found -- e.g. the label isn't currently on screen, or this
+    frame's capture caught mid-transition HUD animation."""
+    strip = roi_bgr[y_min:y_max, :]
+    # EasyOCR performs poorly on tiny HUD text at native resolution --
+    # upscaling 4x before recognition is what took this from 0 reliable
+    # detections to >99% confidence in manual testing against real
+    # captured frames.
+    upscaled = cv2.resize(strip, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    reader = _get_compound_reader()
+    results = reader.readtext(upscaled, detail=1, allowlist=TIRE_COMPOUND_ALLOWLIST)
+
+    best_text = None
+    best_confidence = 0.0
+    for _box, text, confidence in results:
+        if confidence > best_confidence:
+            best_text = text
+            best_confidence = confidence
+
+    if best_text and best_confidence >= TIRE_COMPOUND_MIN_CONFIDENCE:
+        return best_text
+    return None
+
+
+def read_tire_wear(frame_bgr: np.ndarray, read_compound: bool = True) -> TireWearReading:
     """Public entry point: given a raw captured frame, crops the
     tire-wear widget and reads remaining-grip percent for all 4
-    wheels. This is the only function an external caller (e.g. the
-    main ocr_relay.py capture loop, if/when this is wired in) needs to
-    use -- everything else in this module is an implementation detail.
+    wheels, plus (by default) the compound label text. This is the
+    main function an external caller (e.g. the main ocr_relay.py
+    capture loop, if/when this is wired in) needs to use -- everything
+    else in this module is an implementation detail.
+
+    read_compound defaults to True but can be disabled by callers that
+    only want the (fast, EasyOCR-free) wear-percent reading -- e.g. a
+    high-frequency polling loop that only re-checks compound once per
+    lap/pit stop rather than every frame.
     """
     roi = crop_tire_wear_roi(frame_bgr)
+
+    front_compound = None
+    rear_compound = None
+    if read_compound:
+        compound_roi = crop_tire_compound_roi(frame_bgr)
+        front_compound = _read_compound_label(
+            compound_roi, FRONT_COMPOUND_LABEL_Y_MIN, FRONT_COMPOUND_LABEL_Y_MAX
+        )
+        rear_compound = _read_compound_label(compound_roi, REAR_COMPOUND_LABEL_Y_MIN, REAR_COMPOUND_LABEL_Y_MAX)
 
     return TireWearReading(
         front_left_percent=_bar_wear_percent(roi, LEFT_BAR_X_MIN, LEFT_BAR_X_MAX, FRONT_BAR_Y_MIN, FRONT_BAR_Y_MAX),
         front_right_percent=_bar_wear_percent(roi, RIGHT_BAR_X_MIN, RIGHT_BAR_X_MAX, FRONT_BAR_Y_MIN, FRONT_BAR_Y_MAX),
         rear_left_percent=_bar_wear_percent(roi, LEFT_BAR_X_MIN, LEFT_BAR_X_MAX, REAR_BAR_Y_MIN, REAR_BAR_Y_MAX),
         rear_right_percent=_bar_wear_percent(roi, RIGHT_BAR_X_MIN, RIGHT_BAR_X_MAX, REAR_BAR_Y_MIN, REAR_BAR_Y_MAX),
+        front_compound=front_compound,
+        rear_compound=rear_compound,
     )

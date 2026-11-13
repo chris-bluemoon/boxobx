@@ -18,6 +18,7 @@ from tire_wear_reader import (
     TireWearReading,
     _bar_wear_percent,
     _classify_pixel,
+    crop_tire_compound_roi,
     crop_tire_wear_roi,
     read_tire_wear,
 )
@@ -92,6 +93,22 @@ def test_tire_wear_reading_has_any_reading_false_when_all_none():
     assert not reading.has_any_reading
 
 
+def test_read_tire_wear_reads_rs_compound_on_both_front_and_rear_labels():
+    frame = _load_fixture("tire_compound_rs_frame.png")
+    reading = read_tire_wear(frame)
+    assert reading.front_compound == "RS"
+    assert reading.rear_compound == "RS"
+
+
+def test_read_tire_wear_skips_compound_ocr_when_disabled():
+    frame = _load_fixture("tire_compound_rs_frame.png")
+    reading = read_tire_wear(frame, read_compound=False)
+    assert reading.front_compound is None
+    assert reading.rear_compound is None
+    # Wear-bar reading should be unaffected by disabling compound OCR.
+    assert reading.front_left_percent == 100.0
+
+
 def test_crop_tire_wear_roi_scales_for_different_resolutions():
     frame_1080p = np.zeros((1080, 1920, 3), dtype=np.uint8)
     frame_4k = np.zeros((2160, 3840, 3), dtype=np.uint8)
@@ -99,6 +116,15 @@ def test_crop_tire_wear_roi_scales_for_different_resolutions():
     roi_4k = crop_tire_wear_roi(frame_4k)
     # The 4K crop should be almost exactly double the 1080p crop's
     # dimensions (allowing for integer-truncation rounding).
+    assert abs(roi_4k.shape[0] - roi_1080p.shape[0] * 2) <= 2
+    assert abs(roi_4k.shape[1] - roi_1080p.shape[1] * 2) <= 2
+
+
+def test_crop_tire_compound_roi_scales_for_different_resolutions():
+    frame_1080p = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    frame_4k = np.zeros((2160, 3840, 3), dtype=np.uint8)
+    roi_1080p = crop_tire_compound_roi(frame_1080p)
+    roi_4k = crop_tire_compound_roi(frame_4k)
     assert abs(roi_4k.shape[0] - roi_1080p.shape[0] * 2) <= 2
     assert abs(roi_4k.shape[1] - roi_1080p.shape[1] * 2) <= 2
 
