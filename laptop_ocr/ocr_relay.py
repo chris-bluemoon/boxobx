@@ -19,8 +19,16 @@ import cv2
 import easyocr
 
 from ocr_preprocessing import preprocess_cell, POSITION_DIGIT_ALLOWLIST
+from tire_wear_reader import read_tire_wear
 
 UDP_PORT = 33746
+
+# Tire compound text ("RS", "RM", etc.) almost never changes mid-stint
+# (only at a pit stop), so re-running EasyOCR on it every single sample
+# (like the leaderboard OCR pass) would be wasted CPU/latency for no
+# benefit. Re-checking it this often is still fast enough to catch a
+# compound change within a couple of seconds of leaving the pits.
+TIRE_COMPOUND_RECHECK_INTERVAL_SECONDS = 2.0
 
 # Standalone 1-2 digit position numbers in the left-most column of each
 # leaderboard row (e.g. "16", "17", "20"). Deliberately NOT the same as
@@ -955,6 +963,17 @@ def main() -> None:
     sample_interval = 1.0 / args.sample_hz
     last_sample_time = 0.0
 
+    # Tracks the last confidently-read compound so it can be reused on
+    # frames where this interval's compound recheck is skipped, or
+    # where this frame's OCR attempt didn't clear the confidence bar
+    # (e.g. a transient HUD animation/transition) -- without this, a
+    # single skipped/failed read would blank out the field every
+    # interval instead of holding the last known-good value, same
+    # reasoning as NameStabilizer/GapTracker holding state between
+    # confirmed updates elsewhere in this file.
+    last_tire_compound = None
+    last_tire_compound_check_time = 0.0
+
     print(f"Streaming parsed leaderboard data to {args.device_ip}:{UDP_PORT} "
           f"at {args.sample_hz}Hz. Press Ctrl+C to stop.")
 
@@ -1017,6 +1036,29 @@ def main() -> None:
             parsed["gapBehindTrend"] = behind_gap["trend"]
             parsed["gapToLeaderSeconds"] = leader_gap["gapSeconds"]
             parsed["gapToLeaderTrend"] = leader_gap["trend"]
+
+            # Tire-wear/compound widget is a completely separate static
+            # HUD region from the leaderboard ROI above, read directly
+            # off the full captured frame (not the already-cropped
+            # leaderboard roi) -- see tire_wear_reader.py's module
+            # docstring for why this is pixel-color analysis rather
+            # than OCR for the wear bars, and OCR (with its own
+            # EasyOCR reader instance) for the compound label text.
+            recheck_compound = (now - last_tire_compound_check_time) >= TIRE_COMPOUND_RECHECK_INTERVAL_SECONDS
+            if recheck_compound:
+                last_tire_compound_check_time = now
+            tire_wear = read_tire_wear(frame, read_compound=recheck_compound)
+
+            if recheck_compound and (tire_wear.front_compound or tire_wear.rear_compound):
+                # Prefer the front label but fall back to the rear one
+                # if only one of the two was confidently read this pass.
+                last_tire_compound = tire_wear.front_compound or tire_wear.rear_compound
+
+            parsed["tireWearFrontLeftPercent"] = tire_wear.front_left_percent
+            parsed["tireWearFrontRightPercent"] = tire_wear.front_right_percent
+            parsed["tireWearRearLeftPercent"] = tire_wear.rear_left_percent
+            parsed["tireWearRearRightPercent"] = tire_wear.rear_right_percent
+            parsed["tireCompound"] = last_tire_compound
 
             payload = json.dumps(parsed).encode("utf-8")
             sock.sendto(payload, (args.device_ip, UDP_PORT))

@@ -39,6 +39,26 @@ class HudOverlayData {
   final double? gapToLeaderSeconds;
   final GapTrend gapToLeaderTrend;
 
+  /// Remaining-grip percent (100 = fresh, 0 = fully worn) for each of
+  /// the 4 wheels, read directly off GT7's HUD tire-wear fill-bar
+  /// widget via pixel-color analysis on the laptop relay (see
+  /// laptop_ocr/tire_wear_reader.py) -- null per wheel if that frame's
+  /// bar couldn't be confidently read (e.g. the widget wasn't on
+  /// screen). This is real measured wear, unlike
+  /// PracticeLapRecord.tireWearPercent/TireWearTracker's lap-time
+  /// degradation proxy, since GT7's UDP telemetry packet has no tire
+  /// wear field at all.
+  final double? tireWearFrontLeftPercent;
+  final double? tireWearFrontRightPercent;
+  final double? tireWearRearLeftPercent;
+  final double? tireWearRearRightPercent;
+
+  /// Tire compound abbreviation (e.g. "RS", "RM", "CH") read via OCR
+  /// off the same HUD widget, null if not confidently read this frame.
+  /// Intended to auto-fill PracticeLapRecord.tireCompound instead of
+  /// requiring manual entry on the dashboard's tire picker.
+  final String? tireCompound;
+
   const HudOverlayData({
     this.gridPosition = 0,
     this.driverAhead,
@@ -49,6 +69,11 @@ class HudOverlayData {
     this.gapBehindTrend = GapTrend.unknown,
     this.gapToLeaderSeconds,
     this.gapToLeaderTrend = GapTrend.unknown,
+    this.tireWearFrontLeftPercent,
+    this.tireWearFrontRightPercent,
+    this.tireWearRearLeftPercent,
+    this.tireWearRearRightPercent,
+    this.tireCompound,
   });
 
   factory HudOverlayData.empty() => const HudOverlayData();
@@ -63,5 +88,10 @@ class HudOverlayData {
         gapBehindTrend: _gapTrendFromString(map['gapBehindTrend'] as String?),
         gapToLeaderSeconds: (map['gapToLeaderSeconds'] as num?)?.toDouble(),
         gapToLeaderTrend: _gapTrendFromString(map['gapToLeaderTrend'] as String?),
+        tireWearFrontLeftPercent: (map['tireWearFrontLeftPercent'] as num?)?.toDouble(),
+        tireWearFrontRightPercent: (map['tireWearFrontRightPercent'] as num?)?.toDouble(),
+        tireWearRearLeftPercent: (map['tireWearRearLeftPercent'] as num?)?.toDouble(),
+        tireWearRearRightPercent: (map['tireWearRearRightPercent'] as num?)?.toDouble(),
+        tireCompound: map['tireCompound'] as String?,
       );
 }
