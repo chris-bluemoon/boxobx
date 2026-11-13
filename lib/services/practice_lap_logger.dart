@@ -43,6 +43,19 @@ class PracticeLapLogger {
   /// (including right before going out on a fresh set).
   String currentTireCompound = 'Racing Medium';
 
+  /// Latest average remaining-grip percent across all 4 wheels, read
+  /// directly off GT7's HUD tire-wear widget by the laptop OCR relay
+  /// (see laptop_ocr/tire_wear_reader.py) -- kept up to date by
+  /// FusedRaceStateManager on every incoming HudOverlayData update, the
+  /// same way currentTireCompound is kept up to date from the
+  /// dashboard's tire picker. Automatically attached to a
+  /// PracticeLapRecord at the moment its lap completes (see update()
+  /// below), replacing what used to be a manual "log tire wear %"
+  /// entry on the Practice Log screen -- GT7's telemetry packet itself
+  /// has no tire-wear field at all, so this OCR reading is the only
+  /// source of real (not proxied) wear data available.
+  double? currentTireWearPercent;
+
   /// When false, update() is a complete no-op -- nothing is recorded or
   /// persisted, and no lap is tagged to whichever round is currently
   /// saved. This is what makes "free practice" (not tied to any round)
@@ -92,6 +105,12 @@ class PracticeLapLogger {
           tireCompound: currentTireCompound,
           fuelPercentAtLapStart: _fuelPercentAtLapStart!,
           fuelPercentAtLapEnd: frame.fuelPercent,
+          // Whatever the OCR relay most recently read off the HUD
+          // tire-wear widget at the moment this lap crossed the line --
+          // null if the relay isn't running/hasn't produced a
+          // confident reading yet, same as currentTireWearPercent
+          // itself.
+          tireWearPercent: currentTireWearPercent,
           shortShiftCount: _currentLapShortShifts,
           goodShiftCount: _currentLapGoodShifts,
           overRevShiftCount: _currentLapOverRevShifts,

@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../models/practice_lap_record.dart';
 import '../models/pit_stop_time_record.dart';
-import '../services/practice_log_store.dart';
 import '../services/shift_aware_fuel_calculator.dart';
 
 /// Shows every logged practice lap (lap time, tire compound, fuel
-/// start/end, and optional manually-logged tire wear %) for whichever
+/// start/end, and tire wear % auto-captured from the laptop OCR
+/// relay's HUD reading at the moment each lap completes -- see
+/// PracticeLapLogger.currentTireWearPercent) for whichever
 /// round is currently active, plus simple per-compound averages so the
 /// driver can see at a glance how consistent/fast and how worn each
 /// tire has been -- answers "how can I see how many laps I have
@@ -48,37 +49,6 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
     // runtime and silently failed, so swiping/long-pressing/tapping
     // the delete button never actually removed the row from view.
     _laps = List.of(widget.laps);
-  }
-
-  Future<void> _logTireWear(PracticeLapRecord lap) async {
-    final controller = TextEditingController();
-    final value = await showDialog<double>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.grey.shade900,
-        title: Text('Tire wear % for lap ${lap.lapNumber}', style: const TextStyle(color: Colors.white)),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          autofocus: true,
-          style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(hintText: 'e.g. 62 (read off GT7\'s pause-menu tire display)'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(context, double.tryParse(controller.text.trim())),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    if (value == null) return;
-
-    final index = _laps.indexWhere((l) => l.lapNumber == lap.lapNumber);
-    if (index == -1) return;
-    setState(() => _laps[index] = _laps[index].withTireWearPercent(value));
-    await PracticeLogStore.save(_laps);
   }
 
   Future<bool> _confirmDeleteLap(PracticeLapRecord lap) async {
@@ -337,7 +307,6 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
         child: const Icon(Icons.delete, color: Colors.white),
       ),
       child: InkWell(
-        onTap: () => _logTireWear(lap),
         onLongPress: () async {
           if (await _confirmDeleteLap(lap)) _deleteLap(lap);
         },
@@ -386,7 +355,15 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                         textAlign: TextAlign.right,
                       )
                     : Text(
-                        '+ wear',
+                        // Read-only -- tire wear is now auto-captured
+                        // from the laptop OCR relay's HUD reading at
+                        // the moment each lap completes (see
+                        // PracticeLapLogger.currentTireWearPercent),
+                        // not entered manually. Null here just means
+                        // the relay wasn't running/hadn't produced a
+                        // confident reading yet when this particular
+                        // lap completed.
+                        'wear --',
                         style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
                         textAlign: TextAlign.right,
                       ),

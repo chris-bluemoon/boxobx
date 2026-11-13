@@ -96,6 +96,23 @@ class FusedRaceStateManager {
     });
 
     _hudSub = hudService.stream.listen((hud) {
+      // Keeps PracticeLapLogger's auto-attached tire-wear reading
+      // current so it reflects whatever the OCR relay most recently
+      // read at the moment a lap actually completes, the same way
+      // setPracticeTireCompound keeps currentTireCompound current from
+      // the dashboard's manual picker -- see
+      // PracticeLapLogger.currentTireWearPercent.
+      final wearReadings = [
+        hud.tireWearFrontLeftPercent,
+        hud.tireWearFrontRightPercent,
+        hud.tireWearRearLeftPercent,
+        hud.tireWearRearRightPercent,
+      ].whereType<double>();
+      if (wearReadings.isNotEmpty) {
+        practiceLapLogger.currentTireWearPercent =
+            wearReadings.reduce((a, b) => a + b) / wearReadings.length;
+      }
+
       _state = _state.copyWith(hud: hud);
       _controller.add(_state);
     });
