@@ -179,18 +179,19 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: isRival ? Colors.blue.shade900.withValues(alpha: 0.3) : Colors.grey.shade900,
+        color: isRival ? Colors.amber.shade900.withValues(alpha: 0.35) : Colors.grey.shade900,
         borderRadius: BorderRadius.circular(8),
-        border: isRival ? Border.all(color: Colors.blue.shade700) : null,
+        border: Border.all(color: isRival ? Colors.amberAccent : Colors.grey.shade800, width: isRival ? 2 : 1),
       ),
-      // The position number + driver name area is wrapped in its own
-      // InkWell so tapping anywhere on that part of the row toggles
-      // the rival selection too -- previously only the small star
-      // IconButton on the far right responded to a tap at all, which
-      // wasn't obvious/discoverable (reported: "why can't I tap the
-      // drivers"). The Rnd/Total TextFields are deliberately OUTSIDE
-      // this tappable area so tapping into them to type still just
-      // focuses the field, rather than also toggling the rival.
+      // No separate star/checkbox control at all -- tapping the
+      // position + driver name area IS the selection toggle, and the
+      // row's own highlight (amber tint + border, above) is the only
+      // indicator of which 2 drivers are currently being monitored.
+      // Previously only a small star IconButton responded to a tap at
+      // all, which wasn't obvious/discoverable. The Rnd/Total
+      // TextFields are deliberately OUTSIDE this tappable area so
+      // tapping into them to type still just focuses the field,
+      // rather than also toggling the rival.
       child: Row(
         children: [
           Expanded(
@@ -243,17 +244,7 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
               onChanged: (_) => setState(() {}),
             ),
           ),
-          const SizedBox(width: 4),
-          IconButton(
-            icon: Icon(
-              isRival ? Icons.star : Icons.star_border,
-              color: isRival ? Colors.amberAccent : Colors.grey.shade600,
-              size: 20,
-            ),
-            tooltip: isRival ? 'Stop monitoring this rival' : 'Monitor as rival',
-            onPressed: () => _toggleRival(driver),
-          ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 8),
         ],
       ),
     );

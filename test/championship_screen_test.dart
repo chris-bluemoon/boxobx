@@ -57,40 +57,61 @@ void main() {
     expect(saved.single.totalPoints, 71);
   });
 
-  testWidgets('tapping the driver name/row (not just the star) toggles rival selection', (tester) async {
-    // Regression test: previously only the small star IconButton
+  /// The row's own Container decoration (amber tint + border) is the
+  /// ONLY indicator of rival selection -- there is deliberately no
+  /// separate star/checkbox control (see championship_screen.dart's
+  /// _driverRow). This reads the Container immediately wrapping a
+  /// given driver's row to check whether it's currently highlighted as
+  /// selected.
+  bool isHighlightedAsRival(WidgetTester tester, String driver) {
+    final container = tester.widget<Container>(
+      find.ancestor(of: find.text(driver), matching: find.byType(Container)).first,
+    );
+    final decoration = container.decoration as BoxDecoration;
+    return decoration.border == Border.all(color: Colors.amberAccent, width: 2);
+  }
+
+  testWidgets('tapping the driver name/row toggles its highlight on and off', (tester) async {
+    // Regression test: previously only a small star IconButton
     // responded to a tap at all -- tapping the driver's name or
     // anywhere else on the row did nothing, which wasn't discoverable
-    // (reported live: "why can't I tap the drivers").
+    // (reported live: "why can't I tap the drivers"). The fix removed
+    // the star entirely in favor of the row's own highlight being both
+    // the tap target AND the selection indicator.
     await tester.pumpWidget(const MaterialApp(home: ChampionshipScreen()));
     await tester.pumpAndSettle();
 
     final firstDriver = leagueRoster.first;
+    expect(isHighlightedAsRival(tester, firstDriver), isFalse);
+
     await tester.tap(find.text(firstDriver));
     await tester.pumpAndSettle();
-
-    expect(find.byIcon(Icons.star), findsOneWidget);
+    expect(isHighlightedAsRival(tester, firstDriver), isTrue);
 
     // Tapping it again toggles it back off.
     await tester.tap(find.text(firstDriver));
     await tester.pumpAndSettle();
-
-    expect(find.byIcon(Icons.star), findsNothing);
+    expect(isHighlightedAsRival(tester, firstDriver), isFalse);
   });
 
-  testWidgets('tapping a 3rd rival star shows a warning and does not select it', (tester) async {
+  testWidgets('selecting a 3rd rival shows a warning and does not highlight it', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: ChampionshipScreen()));
     await tester.pumpAndSettle();
 
-    final starButtons = find.byIcon(Icons.star_border);
-    await tester.tap(starButtons.at(0));
+    final first = leagueRoster[0];
+    final second = leagueRoster[1];
+    final third = leagueRoster[2];
+
+    await tester.tap(find.text(first));
     await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.star_border).at(0));
+    await tester.tap(find.text(second));
     await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.star_border).at(0));
+    await tester.tap(find.text(third));
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.star), findsNWidgets(2));
+    expect(isHighlightedAsRival(tester, first), isTrue);
+    expect(isHighlightedAsRival(tester, second), isTrue);
+    expect(isHighlightedAsRival(tester, third), isFalse);
     expect(find.textContaining('Only 2 rivals'), findsOneWidget);
   });
 }
