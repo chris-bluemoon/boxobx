@@ -20,6 +20,7 @@ import easyocr
 
 from ocr_preprocessing import preprocess_cell, POSITION_DIGIT_ALLOWLIST
 from tire_wear_reader import read_tire_wear
+from driver_roster import correct_driver_name, is_close_to_roster_entry
 
 UDP_PORT = 33746
 
@@ -506,7 +507,18 @@ def parse_leaderboard(
             and not NUMERIC_ONLY_PATTERN.match(text)
             and not CAR_CLASS_TOKEN_PATTERN.match(text.strip())
         )
-        if (
+        # A raw OCR reading that's already a confident match to a real
+        # league roster entry (see driver_roster.py) is EXEMPTED from
+        # the shape-based garbled-noise heuristics below entirely --
+        # those heuristics (ALL_CAPS_WORD_PATTERN,
+        # MIXED_CASE_WITHIN_WORD_PATTERN) were written assuming every
+        # real name is GT7's "<Initial>. <Surname>" display format, but
+        # a PSN gamertag like "Willy-SwerveX" or "TCR_Camcorp" has
+        # exactly the shape those heuristics exist to reject as noise.
+        # The roster is a strictly stronger signal than a shape
+        # heuristic -- if it's a known real name, it's real, regardless
+        # of what it looks like.
+        if not is_close_to_roster_entry(name) and (
             not name
             or LAP_COUNTER_PATTERN.match(name)
             or len(name) > 24
@@ -611,10 +623,21 @@ def parse_leaderboard(
     # separate quantity entirely: OUR OWN row's inline red gap number,
     # confirmed live to be the gap to the race leader, not to the car
     # ahead.
+    #
+    # Roster correction is applied here, BEFORE NameStabilizer smooths
+    # across frames (in the live capture loop) -- so stabilization
+    # operates on an already-corrected name rather than correcting
+    # after the fact, which would otherwise need its own separate
+    # debounce logic to avoid a one-off correction flapping the
+    # displayed name. See driver_roster.py's module docstring for why
+    # this fails safe (an unrecognized name passes through unchanged)
+    # rather than ever risking displaying the WRONG roster name.
+    driver_ahead_name = ahead_entry["name"] if ahead_entry else None
+    driver_behind_name = behind_entry["name"] if behind_entry else None
     return {
         "gridPosition": grid_position,
-        "driverAhead": ahead_entry["name"] if ahead_entry else None,
-        "driverBehind": behind_entry["name"] if behind_entry else None,
+        "driverAhead": correct_driver_name(driver_ahead_name),
+        "driverBehind": correct_driver_name(driver_behind_name),
         "gapAheadSeconds": own_entry["gap_to_ahead"],
         "gapBehindSeconds": behind_entry["gap_to_ahead"] if behind_entry else None,
         "gapToLeaderSeconds": own_entry["gap_to_leader"],

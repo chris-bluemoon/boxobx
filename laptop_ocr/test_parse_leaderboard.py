@@ -295,4 +295,38 @@ check(
     result10["gridPosition"] == 12,
 )
 
+# Roster correction: a confidently-read but slightly-garbled OCR name
+# that's close to a REAL league roster entry gets corrected to that
+# exact entry -- confirms parse_leaderboard actually applies
+# driver_roster.correct_driver_name() to both driverAhead/driverBehind,
+# not just that the module exists in isolation (see
+# test_driver_roster.py for the correction logic's own unit tests).
+ocr_results_11 = [
+    *row(56, ("POSITION", 128)),
+    *row(80, ("5", 62)),
+    *row(193, ("1", 60), ("K. Wilson", 89)),
+    *row(233, ("2", 60), ("G. De Simone", 93)),
+    *row(273, ("3", 60), ("Wllly-SwerveX", 89)),  # misread of a real roster entry, directly ahead
+    *row(382, ("4", 60), ("Willy Swerve", 88)),
+]
+result11 = parse_leaderboard(ocr_results_11, driver_name="Willy Swerve")
+check(
+    "driverAhead's garbled-but-close roster name is corrected to the exact real entry",
+    result11["driverAhead"] == "Willy-SwerveX",
+)
+
+ocr_results_12 = [
+    *row(56, ("POSITION", 128)),
+    *row(80, ("5", 62)),
+    *row(193, ("1", 60), ("K. Wilson", 89)),
+    *row(233, ("2", 60), ("A. Guest", 88)),  # directly ahead -- a plausible but non-roster name
+    *row(382, ("3", 60), ("Willy Swerve", 88)),
+]
+result12 = parse_leaderboard(ocr_results_12, driver_name="Willy Swerve")
+check(
+    "a plausible name with no close roster match passes through completely unchanged (fails safe)",
+    result12["driverAhead"] == "A. Guest",
+)
+
+
 print("\nAll parse_leaderboard checks passed.")
