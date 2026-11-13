@@ -38,4 +38,24 @@ void main() {
       expect(data.tireCompound, isNull);
     });
   });
+
+  group('HudOverlayData.fromMap rivalPositions', () {
+    test('parses a non-empty rivalPositions map', () {
+      final data = HudOverlayData.fromMap({
+        'gridPosition': 9,
+        'rivalPositions': {'Chuck_E82': 4, 'Willy-SwerveX': 7},
+      });
+
+      expect(data.rivalPositions, {'Chuck_E82': 4, 'Willy-SwerveX': 7});
+    });
+
+    test('defaults to an empty map when absent', () {
+      final data = HudOverlayData.fromMap({'gridPosition': 9});
+      expect(data.rivalPositions, isEmpty);
+    });
+
+    test('HudOverlayData.empty() has an empty rivalPositions map', () {
+      expect(HudOverlayData.empty().rivalPositions, isEmpty);
+    });
+  });
 }

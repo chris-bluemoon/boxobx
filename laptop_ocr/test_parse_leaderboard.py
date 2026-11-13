@@ -329,4 +329,71 @@ check(
 )
 
 
+# rivalPositions: every parsed row, not just driverAhead/driverBehind,
+# is scanned for a position reading on any of the given rival_names --
+# confirms a rival several rows away from the driver's own row is still
+# found and reported.
+ocr_results_13 = [
+    *row(56, ("POSITION", 128)),
+    *row(80, ("12", 62)),
+    *row(100, ("2", 60), ("L. Joseph", 88)),
+    *row(135, ("3", 60), ("Chuck_E82", 88)),  # a rival, NOT adjacent to the driver's own row
+    *row(230, ("8", 60), ("F. Schmidt", 88)),
+    *row(370, ("12", 60), ("Willy Swerve", 88)),
+]
+frame13 = fake_frame(highlighted_y_range=(360, 385))
+result13 = parse_leaderboard(
+    ocr_results_13,
+    driver_name="Willy Swerve",
+    frame_bgr=frame13,
+    roi_width=frame13.shape[1],
+    rival_names=["Chuck_E82", "Willy-SwerveX"],
+)
+check(
+    "a rival several rows away from the driver's own row is still found and reported",
+    result13["rivalPositions"] == {"Chuck_E82": 3},
+)
+
+# A rival who isn't on screen at all this frame simply has no entry --
+# not a stale/0 value.
+ocr_results_14 = [
+    *row(56, ("POSITION", 128)),
+    *row(80, ("5", 62)),
+    *row(193, ("1", 60), ("K. Wilson", 89)),
+    *row(382, ("5", 60), ("Willy Swerve", 88)),
+]
+result14 = parse_leaderboard(
+    ocr_results_14, driver_name="Willy Swerve", rival_names=["Chuck_E82", "Willy-SwerveX"]
+)
+check(
+    "a rival not visible on screen this frame has no entry in rivalPositions",
+    result14["rivalPositions"] == {},
+)
+
+# A garbled-but-close reading of a rival's name is still corrected and
+# resolved, same as driverAhead/driverBehind.
+ocr_results_15 = [
+    *row(56, ("POSITION", 128)),
+    *row(80, ("5", 62)),
+    *row(193, ("1", 60), ("Chck_E82", 89)),  # misread of the real rival name
+    *row(382, ("5", 60), ("Willy Swerve", 88)),
+]
+result15 = parse_leaderboard(
+    ocr_results_15, driver_name="Willy Swerve", rival_names=["Chuck_E82", "Willy-SwerveX"]
+)
+check(
+    "a garbled rival name is still roster-corrected and resolved to its position",
+    result15["rivalPositions"] == {"Chuck_E82": 1},
+)
+
+# No rival_names supplied at all -- rivalPositions is always an empty
+# dict, never omitted from the result entirely (callers always get a
+# dict to work with, no special-casing for "feature not in use").
+result16 = parse_leaderboard(ocr_results_15, driver_name="Willy Swerve")
+check(
+    "rivalPositions is an empty dict (not missing/None) when rival_names isn't supplied",
+    result16["rivalPositions"] == {},
+)
+
+
 print("\nAll parse_leaderboard checks passed.")

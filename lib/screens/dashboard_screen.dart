@@ -18,6 +18,7 @@ import '../services/voice_engine.dart';
 import '../services/proactive_coach_trigger.dart';
 import '../services/saved_briefing_store.dart';
 import '../services/pit_stop_time_store.dart';
+import '../services/rival_monitor.dart';
 import '../models/shift_event.dart';
 import 'race_strategy_screen.dart';
 import 'practice_log_screen.dart';
@@ -42,6 +43,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   late final FusedRaceStateManager _raceStateManager;
   late final VoiceEngine _voiceEngine;
   final _shiftCoachTrigger = ProactiveCoachTrigger();
+  final _rivalMonitor = RivalMonitor();
 
   FusedRaceState _state = FusedRaceState.initial();
   bool _telemetryEngaged = false;
@@ -108,6 +110,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// side effects the dropdown's own onChanged handler performs for a
   /// manual selection. Call this every time a new FusedRaceState comes
   /// in from the race-state stream.
+  /// If any of the driver's chosen championship rivals (see
+  /// ChampionshipScreen/RivalMonitor) just changed on-screen position,
+  /// has Gunther call it out unprompted -- same proactive-callout
+  /// mechanism ProactiveCoachTrigger uses for shift-habit callouts, but
+  /// unconditionally enabled here (unlike the currently-disabled shift
+  /// coaching) since this is Phase B's actual deliverable.
+  void _maybeTriggerRivalPositionCallout(FusedRaceState state) {
+    final syntheticPrompt = _rivalMonitor.check(state.hud.rivalPositions);
+    if (syntheticPrompt == null) return;
+    _voiceEngine.speakProactively(syntheticPrompt, state);
+  }
+
   void _maybeAutoFillTireCompoundFromOcr(FusedRaceState state) {
     final ocrCompound = state.hud.tireCompound;
     if (ocrCompound == null) return;
@@ -153,6 +167,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (!mounted) return;
       setState(() => _state = state);
       _maybeAutoFillTireCompoundFromOcr(state);
+      _maybeTriggerRivalPositionCallout(state);
       // Temporarily disabled -- proactive shift-habit voice callouts
       // aren't behaving correctly yet (reported live, not yet root
       // caused). Re-enable once fixed; the underlying trigger/advisor
@@ -285,6 +300,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _raceStateManager.resetTireWearEstimate();
     _raceStateManager.resetShiftHistory();
     _shiftCoachTrigger.reset();
+    // Clears tracked rival positions too -- otherwise a rival's LAST
+    // position from a previous race would be compared against this
+    // new session's first reading and fire a spurious "rival moved"
+    // callout purely from the session boundary, not a real on-track
+    // change.
+    _rivalMonitor.reset();
     setState(() {
       _state = _state.copyWith(telemetry: TelemetryFrame.empty(), recentShifts: const []);
     });

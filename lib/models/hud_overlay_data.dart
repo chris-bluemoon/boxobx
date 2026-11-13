@@ -59,6 +59,17 @@ class HudOverlayData {
   /// requiring manual entry on the dashboard's tire picker.
   final String? tireCompound;
 
+  /// On-screen grid position for each of the up-to-2 chosen
+  /// championship rivals (see ChampionshipStandingsStore.loadRivals),
+  /// keyed by their exact league roster gamertag -- read from ANY
+  /// visible leaderboard row this frame, not just driverAhead/
+  /// driverBehind (see laptop_ocr/ocr_relay.py's parse_leaderboard
+  /// rival_names parameter). A rival not currently on screen simply
+  /// has no entry in this map, rather than a stale or zero value.
+  /// Empty if no rivals are configured on the laptop relay (via
+  /// --rival-names) at all.
+  final Map<String, int> rivalPositions;
+
   const HudOverlayData({
     this.gridPosition = 0,
     this.driverAhead,
@@ -74,6 +85,7 @@ class HudOverlayData {
     this.tireWearRearLeftPercent,
     this.tireWearRearRightPercent,
     this.tireCompound,
+    this.rivalPositions = const {},
   });
 
   factory HudOverlayData.empty() => const HudOverlayData();
@@ -93,5 +105,9 @@ class HudOverlayData {
         tireWearRearLeftPercent: (map['tireWearRearLeftPercent'] as num?)?.toDouble(),
         tireWearRearRightPercent: (map['tireWearRearRightPercent'] as num?)?.toDouble(),
         tireCompound: map['tireCompound'] as String?,
+        rivalPositions: (map['rivalPositions'] as Map<String, dynamic>?)?.map(
+              (name, position) => MapEntry(name, (position as num).toInt()),
+            ) ??
+            const {},
       );
 }

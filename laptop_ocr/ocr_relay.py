@@ -403,6 +403,7 @@ def parse_leaderboard(
     roi_height: int = 0,
     debug: bool = False,
     position_reread_fn=None,
+    rival_names=None,
 ) -> dict:
     """Finds the driver's own row in the numbered standings list (each
     row: a 1-2 digit position number, driver name, national flag icon
@@ -427,7 +428,19 @@ def parse_leaderboard(
     supplementary re-read specifically targeting the field most often
     dropped by a single unprocessed OCR pass. Left as None in tests
     (which use the original single-pass behavior), and wired to a real
-    preprocessing re-read only in the live capture loop."""
+    preprocessing re-read only in the live capture loop.
+
+    rival_names, when provided (a list of exact league roster
+    gamertags -- see driver_roster.py), makes this ALSO scan every
+    parsed row (not just driverAhead/driverBehind) for a position
+    reading on any of those specific drivers, returned as the
+    "rivalPositions" dict (gamertag -> position, only for whichever
+    rivals were actually visible/readable this frame -- a rival not
+    currently on screen simply has no entry, rather than a stale or
+    0 value). GT7's leaderboard renders several rows at once (the top
+    few plus a sliding window around the driver's own car), so a
+    chosen rival is often directly readable even when they're not
+    immediately ahead/behind the driver."""
     rows = _group_into_rows(ocr_results)
     header_position = _extract_header_position(ocr_results, debug=debug)
 
@@ -555,6 +568,38 @@ def parse_leaderboard(
         )
         pending_gap_to_ahead = None
 
+    # Rival-position lookup runs over EVERY parsed entry regardless of
+    # whether the driver's own row gets matched below -- a chosen
+    # rival's row is independent of own_index, and should still be
+    # reported even on a frame where the driver's own row couldn't be
+    # confidently located (e.g. a brief highlight-detection miss). Each
+    # entry's name here is only normalized (see _normalize_driver_name
+    # above, applied when the entry was built), not yet roster-corrected
+    # -- that correction is applied right here, against rival_names
+    # specifically, since a rival's row can equally be garbled this
+    # frame and needs the same fuzzy-match treatment driverAhead/
+    # driverBehind get below (against the full LEAGUE_ROSTER instead).
+    rival_positions = {}
+    if rival_names:
+        driver_name_lower = driver_name.lower()
+        for entry in entries:
+            if entry["position"] is None:
+                continue
+            entry_name_lower = entry["name"].lower()
+            # The driver's OWN row can itself be a close fuzzy match to
+            # a rival's gamertag (observed here: "Willy Swerve" vs.
+            # "Willy-SwerveX", two genuinely different people whose
+            # names just happen to look alike) -- exclude it explicitly
+            # using the same loose substring check used elsewhere in
+            # this file to find the driver's own row, rather than
+            # letting a rival's position accidentally resolve to the
+            # driver's own.
+            if driver_name_lower in entry_name_lower or entry_name_lower in driver_name_lower:
+                continue
+            corrected = correct_driver_name(entry["name"], roster=rival_names)
+            if corrected in rival_names:
+                rival_positions[corrected] = entry["position"]
+
     # Prefer the highlighted row; only fall back to name matching if no
     # row was confidently highlighted this frame.
     own_index = next((i for i, e in enumerate(entries) if e["highlighted"]), None)
@@ -587,6 +632,7 @@ def parse_leaderboard(
             "gapAheadSeconds": None,
             "gapBehindSeconds": None,
             "gapToLeaderSeconds": None,
+            "rivalPositions": rival_positions,
         }
 
     own_entry = entries[own_index]
@@ -641,6 +687,7 @@ def parse_leaderboard(
         "gapAheadSeconds": own_entry["gap_to_ahead"],
         "gapBehindSeconds": behind_entry["gap_to_ahead"] if behind_entry else None,
         "gapToLeaderSeconds": own_entry["gap_to_leader"],
+        "rivalPositions": rival_positions,
     }
 
 
@@ -941,6 +988,20 @@ def main() -> None:
         "extracted relative to your actual position. Required unless "
         "using --list-devices.",
     )
+    parser.add_argument(
+        "--rival-names",
+        type=str,
+        default="",
+        help="Comma-separated exact league roster gamertags (see "
+        "driver_roster.py) to track the on-screen POSITION of every "
+        "frame, independent of driverAhead/driverBehind -- e.g. "
+        "'Chuck_E82,Willy-SwerveX'. Optional; if omitted, "
+        "rivalPositions is always empty in the UDP payload. Intended "
+        "to be set from the app's 2 chosen championship rivals (see "
+        "ChampionshipStandingsStore.loadRivals on the Dart side), not "
+        "typed by hand every session -- but a manual value works too "
+        "for testing.",
+    )
     args = parser.parse_args()
 
     if args.list_devices:
@@ -982,6 +1043,10 @@ def main() -> None:
     stabilizer = NameStabilizer(stability_threshold=args.name_stability)
     position_stabilizer = GridPositionStabilizer(stability_threshold=args.position_stability)
     gap_tracker = GapTracker()
+    rival_names = [name.strip() for name in args.rival_names.split(",") if name.strip()]
+    rival_position_stabilizers = {
+        name: GridPositionStabilizer(stability_threshold=args.position_stability) for name in rival_names
+    }
 
     sample_interval = 1.0 / args.sample_hz
     last_sample_time = 0.0
@@ -1044,7 +1109,22 @@ def main() -> None:
                 position_reread_fn=lambda row_items: reread_position_column(
                     reader, roi, row_items, roi.shape[1]
                 ),
+                rival_names=rival_names,
             )
+
+            # Each rival gets the SAME debounce treatment as the
+            # driver's own gridPosition (see GridPositionStabilizer) --
+            # a rival not visible this frame holds its last confirmed
+            # position rather than disappearing/flickering, and a
+            # single garbled read doesn't immediately report a bogus
+            # position change.
+            raw_rival_positions = parsed.pop("rivalPositions")
+            stabilized_rival_positions = {}
+            for name in rival_names:
+                stabilized = rival_position_stabilizers[name].update(raw_rival_positions.get(name))
+                if stabilized:
+                    stabilized_rival_positions[name] = stabilized
+            parsed["rivalPositions"] = stabilized_rival_positions
 
             parsed["driverAhead"] = stabilizer.update("ahead", parsed["driverAhead"])
             parsed["driverBehind"] = stabilizer.update("behind", parsed["driverBehind"])
