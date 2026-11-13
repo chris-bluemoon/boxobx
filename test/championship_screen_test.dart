@@ -57,6 +57,27 @@ void main() {
     expect(saved.single.totalPoints, 71);
   });
 
+  testWidgets('tapping the driver name/row (not just the star) toggles rival selection', (tester) async {
+    // Regression test: previously only the small star IconButton
+    // responded to a tap at all -- tapping the driver's name or
+    // anywhere else on the row did nothing, which wasn't discoverable
+    // (reported live: "why can't I tap the drivers").
+    await tester.pumpWidget(const MaterialApp(home: ChampionshipScreen()));
+    await tester.pumpAndSettle();
+
+    final firstDriver = leagueRoster.first;
+    await tester.tap(find.text(firstDriver));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.star), findsOneWidget);
+
+    // Tapping it again toggles it back off.
+    await tester.tap(find.text(firstDriver));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.star), findsNothing);
+  });
+
   testWidgets('tapping a 3rd rival star shows a warning and does not select it', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: ChampionshipScreen()));
     await tester.pumpAndSettle();

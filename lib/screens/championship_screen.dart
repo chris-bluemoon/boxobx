@@ -178,29 +178,49 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: isRival ? Colors.blue.shade900.withValues(alpha: 0.3) : Colors.grey.shade900,
         borderRadius: BorderRadius.circular(8),
         border: isRival ? Border.all(color: Colors.blue.shade700) : null,
       ),
+      // The position number + driver name area is wrapped in its own
+      // InkWell so tapping anywhere on that part of the row toggles
+      // the rival selection too -- previously only the small star
+      // IconButton on the far right responded to a tap at all, which
+      // wasn't obvious/discoverable (reported: "why can't I tap the
+      // drivers"). The Rnd/Total TextFields are deliberately OUTSIDE
+      // this tappable area so tapping into them to type still just
+      // focuses the field, rather than also toggling the rival.
       child: Row(
         children: [
-          SizedBox(
-            width: 28,
-            child: Text(
-              position != null ? 'P$position' : '--',
-              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-            ),
-          ),
           Expanded(
-            flex: 3,
-            child: Text(
-              driver,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              overflow: TextOverflow.ellipsis,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _toggleRival(driver),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 28,
+                      child: Text(
+                        position != null ? 'P$position' : '--',
+                        style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        driver,
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
+          const SizedBox(width: 4),
           SizedBox(
             width: 70,
             child: TextField(
@@ -223,7 +243,7 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
               onChanged: (_) => setState(() {}),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           IconButton(
             icon: Icon(
               isRival ? Icons.star : Icons.star_border,
@@ -233,6 +253,7 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
             tooltip: isRival ? 'Stop monitoring this rival' : 'Monitor as rival',
             onPressed: () => _toggleRival(driver),
           ),
+          const SizedBox(width: 4),
         ],
       ),
     );
