@@ -21,6 +21,7 @@ import '../services/pit_stop_time_store.dart';
 import '../models/shift_event.dart';
 import 'race_strategy_screen.dart';
 import 'practice_log_screen.dart';
+import 'championship_screen.dart';
 import '../widgets/telemetry_card.dart';
 import '../widgets/tire_temp_card.dart';
 import '../widgets/shift_card.dart';
@@ -270,6 +271,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _loadActiveRoundName();
   }
 
+  /// Opens the weekly league championship standings entry + rival
+  /// selection screen (Phase A of the "nearest rival" feature -- see
+  /// ChampionshipScreen's own docstring for what Phase B adds on top).
+  Future<void> _openChampionship() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ChampionshipScreen()),
+    );
+  }
+
   void _resetTelemetryDisplay() {
     _raceStateManager.resetFuelPrediction();
     _raceStateManager.resetTireWearEstimate();
@@ -445,6 +455,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 16),
                       ),
                       child: const Icon(Icons.flag, color: Colors.white),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 1,
+                    child: ElevatedButton(
+                      onPressed: _openChampionship,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.amber.shade800,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      child: const Icon(Icons.emoji_events, color: Colors.white),
                     ),
                   ),
                 ],
