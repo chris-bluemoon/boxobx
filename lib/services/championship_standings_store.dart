@@ -5,8 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/championship_standing.dart';
 
 /// Persists the LATEST weekly championship standings snapshot (one
-/// entry per driver, see ChampionshipStanding) plus which 2 rivals the
-/// driver has chosen to monitor -- both via SharedPreferences,
+/// entry per driver, see ChampionshipStanding) via SharedPreferences,
 /// mirroring PitStopTimeStore/SavedBriefingStore's persistence style.
 ///
 /// Deliberately keeps only the MOST RECENT week's standings, not a
@@ -15,9 +14,14 @@ import '../models/championship_standing.dart';
 /// total + this week's round score, not a multi-week archive). If
 /// week-over-week trend tracking is wanted later, this is the natural
 /// place to extend into a keyed-by-week history instead.
+///
+/// NOTE: rival selection/monitoring has NO presence here at all --
+/// which drivers Gunther actively tracks on-track is a --rival-names
+/// command-line flag on the laptop OCR relay (see
+/// laptop_ocr/ocr_relay.py and lib/services/rival_monitor.dart), not
+/// something persisted from this screen.
 class ChampionshipStandingsStore {
   static const _standingsKey = 'championship_standings';
-  static const _rivalsKey = 'championship_rivals';
 
   static Future<void> save(List<ChampionshipStanding> standings) async {
     final prefs = await SharedPreferences.getInstance();
@@ -69,24 +73,8 @@ class ChampionshipStandingsStore {
     return driver.totalPoints - rival.totalPoints;
   }
 
-  /// Saves exactly the 2 gamertags the driver has chosen to monitor as
-  /// championship rivals (see league_roster.dart) -- the "monitor
-  /// functionality" these are used for is a separate, later piece of
-  /// work (live on-track tracking of these specific drivers), this
-  /// just persists WHO was chosen.
-  static Future<void> saveRivals(List<String> rivalNames) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_rivalsKey, rivalNames);
-  }
-
-  static Future<List<String>> loadRivals() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList(_rivalsKey) ?? const [];
-  }
-
   static Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_standingsKey);
-    await prefs.remove(_rivalsKey);
   }
 }

@@ -64,21 +64,10 @@ void main() {
     expect(ChampionshipStandingsStore.pointsGapTo('Salty-067', 'NotInTheList', standings), isNull);
   });
 
-  test('saveRivals() then loadRivals() round-trips the chosen 2 rivals', () async {
-    await ChampionshipStandingsStore.saveRivals(['Chuck_E82', 'Willy-SwerveX']);
-    expect(await ChampionshipStandingsStore.loadRivals(), ['Chuck_E82', 'Willy-SwerveX']);
-  });
-
-  test('loadRivals() returns an empty list when none have been chosen yet', () async {
-    expect(await ChampionshipStandingsStore.loadRivals(), isEmpty);
-  });
-
-  test('clear() removes both the standings and the chosen rivals', () async {
+  test('clear() removes the saved standings', () async {
     await ChampionshipStandingsStore.save(standings);
-    await ChampionshipStandingsStore.saveRivals(['Chuck_E82']);
     await ChampionshipStandingsStore.clear();
 
     expect(await ChampionshipStandingsStore.load(), isEmpty);
-    expect(await ChampionshipStandingsStore.loadRivals(), isEmpty);
   });
 }

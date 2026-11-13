@@ -7,13 +7,14 @@ import '../services/league_roster.dart';
 /// Weekly league championship entry screen: manually enter this week's
 /// round points + running total for each driver (position is DERIVED
 /// by sorting on total, never entered directly -- see
-/// ChampionshipStandingsStore.sortedByPosition), and pick exactly 2
-/// rivals to monitor.
+/// ChampionshipStandingsStore.sortedByPosition).
 ///
-/// This is Phase A of the "nearest rival" feature -- just the data
-/// entry + rival selection. Phase B (live on-track tracking of the
-/// chosen rivals' position/strategy during a race) consumes the data
-/// persisted here but is built separately.
+/// Standings entry ONLY -- there is deliberately no rival
+/// selection/monitoring UI here. Which drivers Gunther actively tracks
+/// on-track (see RivalMonitor/parse_leaderboard's rival_names) is
+/// configured as a command-line flag (--rival-names) on the laptop OCR
+/// relay itself, not through this screen -- the driver picks the 2
+/// rivals by hand each session when starting the relay.
 class ChampionshipScreen extends StatefulWidget {
   const ChampionshipScreen({super.key});
 
@@ -27,7 +28,6 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
   // re-renders without being tied to a List index that could shift.
   final Map<String, TextEditingController> _totalControllers = {};
   final Map<String, TextEditingController> _roundControllers = {};
-  final Set<String> _selectedRivals = {};
   bool _loading = true;
 
   @override
@@ -42,16 +42,12 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
 
   Future<void> _loadSaved() async {
     final standings = await ChampionshipStandingsStore.load();
-    final rivals = await ChampionshipStandingsStore.loadRivals();
     if (!mounted) return;
     setState(() {
       for (final standing in standings) {
         _totalControllers[standing.driverName]?.text = standing.totalPoints.toString();
         _roundControllers[standing.driverName]?.text = standing.roundPoints.toString();
       }
-      _selectedRivals
-        ..clear()
-        ..addAll(rivals);
       _loading = false;
     });
   }
@@ -80,26 +76,11 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
     }
 
     await ChampionshipStandingsStore.save(standings);
-    await ChampionshipStandingsStore.saveRivals(_selectedRivals.toList());
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Championship standings saved')),
     );
-  }
-
-  void _toggleRival(String driver) {
-    setState(() {
-      if (_selectedRivals.contains(driver)) {
-        _selectedRivals.remove(driver);
-      } else if (_selectedRivals.length < 2) {
-        _selectedRivals.add(driver);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Only 2 rivals can be monitored at once -- deselect one first')),
-        );
-      }
-    });
   }
 
   @override
@@ -144,11 +125,6 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
                 'league\'s Discord standings report. Position is calculated automatically.',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Tap up to 2 drivers below to monitor as rivals -- ${_selectedRivals.length}/2 selected.',
-                style: TextStyle(color: Colors.blue.shade300, fontSize: 12, fontWeight: FontWeight.bold),
-              ),
               const SizedBox(height: 16),
               Expanded(
                 child: ListView.builder(
@@ -173,52 +149,34 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
   }
 
   Widget _driverRow(String driver, Map<String, int> positionByDriver) {
-    final isRival = _selectedRivals.contains(driver);
     final position = positionByDriver[driver];
 
+    // Plain, non-interactive row -- just position/name display plus
+    // the 2 entry fields. No tap target, no highlight state: rival
+    // selection isn't a concept this screen has at all anymore (see
+    // the class doc comment -- that's a --rival-names flag on the
+    // laptop relay now, not something picked here).
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: isRival ? Colors.amber.shade900.withValues(alpha: 0.35) : Colors.grey.shade900,
+        color: Colors.grey.shade900,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: isRival ? Colors.amberAccent : Colors.grey.shade800, width: isRival ? 2 : 1),
       ),
-      // No separate star/checkbox control at all -- tapping the
-      // position + driver name area IS the selection toggle, and the
-      // row's own highlight (amber tint + border, above) is the only
-      // indicator of which 2 drivers are currently being monitored.
-      // Previously only a small star IconButton responded to a tap at
-      // all, which wasn't obvious/discoverable. The Rnd/Total
-      // TextFields are deliberately OUTSIDE this tappable area so
-      // tapping into them to type still just focuses the field,
-      // rather than also toggling the rival.
       child: Row(
         children: [
+          SizedBox(
+            width: 28,
+            child: Text(
+              position != null ? 'P$position' : '--',
+              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+          ),
           Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () => _toggleRival(driver),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 28,
-                      child: Text(
-                        position != null ? 'P$position' : '--',
-                        style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        driver,
-                        style: const TextStyle(color: Colors.white, fontSize: 13),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            child: Text(
+              driver,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           const SizedBox(width: 4),
@@ -244,7 +202,6 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
               onChanged: (_) => setState(() {}),
             ),
           ),
-          const SizedBox(width: 8),
         ],
       ),
     );
