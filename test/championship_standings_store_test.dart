@@ -11,10 +11,24 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  const standings = [
-    ChampionshipStanding(driverName: 'Salty-067', totalPoints: 71, roundPoints: 0),
-    ChampionshipStanding(driverName: 'Chuck_E82', totalPoints: 66, roundPoints: 35),
-    ChampionshipStanding(driverName: 'Willy-SwerveX', totalPoints: 66, roundPoints: 33),
+  // Real league table: Salty-067 scored 35/36/0 across R1-R3 with no
+  // drop (71 total); Chuck_E82 and Willy-SwerveX both land on 66 after
+  // their drop points, a genuine real-world tie.
+  final standings = [
+    ChampionshipStanding(
+      driverName: 'Salty-067',
+      roundPoints: [35, 36, 0, null, null, null, null, null, null],
+    ),
+    ChampionshipStanding(
+      driverName: 'Chuck_E82',
+      roundPoints: [26, 31, 35, null, null, null, null, null, null],
+      dropPoints: 26,
+    ),
+    ChampionshipStanding(
+      driverName: 'Willy-SwerveX',
+      roundPoints: [33, 17, 33, null, null, null, null, null, null],
+      dropPoints: 17,
+    ),
   ];
 
   test('load() returns an empty list when nothing has been saved yet', () async {
@@ -28,7 +42,20 @@ void main() {
     expect(loaded, hasLength(3));
     expect(loaded[0].driverName, 'Salty-067');
     expect(loaded[0].totalPoints, 71);
-    expect(loaded[1].roundPoints, 35);
+    expect(loaded[1].roundPoints[2], 35);
+    expect(loaded[1].dropPoints, 26);
+  });
+
+  test('totalPoints is derived as sum(roundPoints) - dropPoints', () {
+    expect(standings[0].totalPoints, 71); // 35+36+0, no drop
+    expect(standings[1].totalPoints, 66); // 26+31+35 - 26
+    expect(standings[2].totalPoints, 66); // 33+17+33 - 17
+  });
+
+  test('roundsRaced counts only non-null rounds', () {
+    expect(standings[0].roundsRaced, 3);
+    final noRoundsYet = ChampionshipStanding(driverName: 'joeysnarf', roundPoints: List.filled(9, null));
+    expect(noRoundsYet.roundsRaced, 0);
   });
 
   test('sortedByPosition() orders by totalPoints descending', () {

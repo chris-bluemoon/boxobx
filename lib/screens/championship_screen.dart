@@ -23,19 +23,22 @@ class ChampionshipScreen extends StatefulWidget {
 }
 
 class _ChampionshipScreenState extends State<ChampionshipScreen> {
-  // Keyed by driver gamertag -- one controller pair per roster entry,
+  static const int _roundCount = 9;
+
+  // Keyed by driver gamertag -- one controller LIST (one per round,
+  // always length 9) plus one drop-points controller per roster entry,
   // built once in initState so text typed into a field survives
   // re-renders without being tied to a List index that could shift.
-  final Map<String, TextEditingController> _totalControllers = {};
-  final Map<String, TextEditingController> _roundControllers = {};
+  final Map<String, List<TextEditingController>> _roundControllers = {};
+  final Map<String, TextEditingController> _dropPointsControllers = {};
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
     for (final driver in leagueRoster) {
-      _totalControllers[driver] = TextEditingController();
-      _roundControllers[driver] = TextEditingController();
+      _roundControllers[driver] = List.generate(_roundCount, (_) => TextEditingController());
+      _dropPointsControllers[driver] = TextEditingController();
     }
     _loadSaved();
   }
@@ -45,8 +48,12 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
     if (!mounted) return;
     setState(() {
       for (final standing in standings) {
-        _totalControllers[standing.driverName]?.text = standing.totalPoints.toString();
-        _roundControllers[standing.driverName]?.text = standing.roundPoints.toString();
+        final controllers = _roundControllers[standing.driverName];
+        if (controllers == null) continue;
+        for (var i = 0; i < _roundCount; i++) {
+          controllers[i].text = standing.roundPoints[i]?.toString() ?? '';
+        }
+        _dropPointsControllers[standing.driverName]?.text = standing.dropPoints.toString();
       }
       _loading = false;
     });
@@ -54,26 +61,35 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
 
   @override
   void dispose() {
-    for (final controller in _totalControllers.values) {
-      controller.dispose();
+    for (final controllers in _roundControllers.values) {
+      for (final controller in controllers) {
+        controller.dispose();
+      }
     }
-    for (final controller in _roundControllers.values) {
+    for (final controller in _dropPointsControllers.values) {
       controller.dispose();
     }
     super.dispose();
   }
 
+  /// Builds a ChampionshipStanding from whatever is currently typed for
+  /// one driver, or null if NO round has any score entered yet for
+  /// them (a driver who simply hasn't raced/been transcribed this
+  /// week -- not an error, just excluded from this save).
+  ChampionshipStanding? _buildStandingFromForm(String driver) {
+    final roundPoints = [
+      for (final controller in _roundControllers[driver]!) int.tryParse(controller.text.trim()),
+    ];
+    if (roundPoints.every((points) => points == null)) return null;
+
+    final dropPoints = int.tryParse(_dropPointsControllers[driver]!.text.trim()) ?? 0;
+    return ChampionshipStanding(driverName: driver, roundPoints: roundPoints, dropPoints: dropPoints);
+  }
+
   Future<void> _save() async {
-    final standings = <ChampionshipStanding>[];
-    for (final driver in leagueRoster) {
-      final total = int.tryParse(_totalControllers[driver]!.text.trim());
-      final round = int.tryParse(_roundControllers[driver]!.text.trim()) ?? 0;
-      // A driver with no total entered yet simply isn't included this
-      // week -- e.g. a new roster addition who hasn't raced, or a row
-      // the user hasn't gotten to transcribing yet. Not an error.
-      if (total == null) continue;
-      standings.add(ChampionshipStanding(driverName: driver, totalPoints: total, roundPoints: round));
-    }
+    final standings = [
+      for (final driver in leagueRoster) _buildStandingFromForm(driver),
+    ].whereType<ChampionshipStanding>().toList();
 
     await ChampionshipStandingsStore.save(standings);
 
@@ -82,6 +98,16 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
       const SnackBar(content: Text('Championship standings saved')),
     );
   }
+
+  // Fixed column widths shared between the header row and every driver
+  // row, so everything lines up -- both rows are built against this
+  // same set of constants rather than each hardcoding widths
+  // independently.
+  static const double _positionColumnWidth = 32;
+  static const double _nameColumnWidth = 160;
+  static const double _roundColumnWidth = 48;
+  static const double _dropColumnWidth = 56;
+  static const double _totalColumnWidth = 56;
 
   @override
   Widget build(BuildContext context) {
@@ -97,12 +123,7 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
     // reload first.
     final previewStandings = ChampionshipStandingsStore.sortedByPosition([
       for (final driver in leagueRoster)
-        if (int.tryParse(_totalControllers[driver]!.text.trim()) != null)
-          ChampionshipStanding(
-            driverName: driver,
-            totalPoints: int.parse(_totalControllers[driver]!.text.trim()),
-            roundPoints: int.tryParse(_roundControllers[driver]!.text.trim()) ?? 0,
-          ),
+        if (_buildStandingFromForm(driver) != null) _buildStandingFromForm(driver)!,
     ]);
     final positionByDriver = {
       for (var i = 0; i < previewStandings.length; i++) previewStandings[i].driverName: i + 1,
@@ -121,15 +142,40 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Enter this week\'s round points + running total for each driver, from the '
-                'league\'s Discord standings report. Position is calculated automatically.',
+                'Enter each round\'s points for every driver, from the league\'s Discord '
+                'standings report. Drop points and total are calculated automatically.',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
               ),
               const SizedBox(height: 16),
+              // The 9 round columns + drop + total + name + position
+              // don't comfortably fit an iPad's width all at once, so
+              // the whole table (header included, so column labels
+              // scroll in lockstep with the data under them) scrolls
+              // horizontally as one unit.
               Expanded(
-                child: ListView.builder(
-                  itemCount: leagueRoster.length,
-                  itemBuilder: (context, index) => _driverRow(leagueRoster[index], positionByDriver),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
+                    width: _positionColumnWidth +
+                        _nameColumnWidth +
+                        (_roundColumnWidth * _roundCount) +
+                        _dropColumnWidth +
+                        _totalColumnWidth +
+                        40,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _headerRow(),
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: ListView.builder(
+                            itemCount: leagueRoster.length,
+                            itemBuilder: (context, index) => _driverRow(leagueRoster[index], positionByDriver),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -148,17 +194,63 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
     );
   }
 
+  Widget _headerLabel(String text, double width) {
+    return SizedBox(
+      width: width,
+      child: Text(
+        text,
+        style: TextStyle(color: Colors.grey.shade500, fontSize: 11, fontWeight: FontWeight.bold),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  Widget _headerRow() {
+    return Row(
+      children: [
+        _headerLabel('POS', _positionColumnWidth),
+        SizedBox(
+          width: _nameColumnWidth,
+          child: Text(
+            'DRIVER',
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 11, fontWeight: FontWeight.bold),
+          ),
+        ),
+        for (var i = 1; i <= _roundCount; i++) _headerLabel('R$i', _roundColumnWidth),
+        _headerLabel('DROP', _dropColumnWidth),
+        _headerLabel('TOTAL', _totalColumnWidth),
+      ],
+    );
+  }
+
+  Widget _roundField(String driver, int roundIndex) {
+    return SizedBox(
+      width: _roundColumnWidth,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: TextField(
+          controller: _roundControllers[driver]![roundIndex],
+          keyboardType: TextInputType.number,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white, fontSize: 12),
+          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 8)),
+          onChanged: (_) => setState(() {}),
+        ),
+      ),
+    );
+  }
+
   Widget _driverRow(String driver, Map<String, int> positionByDriver) {
     final position = positionByDriver[driver];
+    final standing = _buildStandingFromForm(driver);
 
-    // Plain, non-interactive row -- just position/name display plus
-    // the 2 entry fields. No tap target, no highlight state: rival
-    // selection isn't a concept this screen has at all anymore (see
-    // the class doc comment -- that's a --rival-names flag on the
-    // laptop relay now, not something picked here).
+    // Plain, non-interactive row -- display + entry fields only. No
+    // tap target, no highlight state: rival selection isn't a concept
+    // this screen has at all (see the class doc comment -- that's a
+    // --rival-names flag on the laptop relay now, not picked here).
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.grey.shade900,
         borderRadius: BorderRadius.circular(8),
@@ -166,40 +258,42 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
       child: Row(
         children: [
           SizedBox(
-            width: 28,
+            width: _positionColumnWidth,
             child: Text(
               position != null ? 'P$position' : '--',
               style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
             ),
           ),
-          Expanded(
+          SizedBox(
+            width: _nameColumnWidth,
             child: Text(
               driver,
               style: const TextStyle(color: Colors.white, fontSize: 13),
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          const SizedBox(width: 4),
+          for (var i = 0; i < _roundCount; i++) _roundField(driver, i),
           SizedBox(
-            width: 70,
-            child: TextField(
-              controller: _roundControllers[driver],
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              decoration: const InputDecoration(isDense: true, hintText: 'Rnd', hintStyle: TextStyle(fontSize: 11)),
-              onChanged: (_) => setState(() {}),
+            width: _dropColumnWidth,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: TextField(
+                controller: _dropPointsControllers[driver],
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 8)),
+                onChanged: (_) => setState(() {}),
+              ),
             ),
           ),
-          const SizedBox(width: 8),
           SizedBox(
-            width: 70,
-            child: TextField(
-              controller: _totalControllers[driver],
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              decoration:
-                  const InputDecoration(isDense: true, hintText: 'Total', hintStyle: TextStyle(fontSize: 11)),
-              onChanged: (_) => setState(() {}),
+            width: _totalColumnWidth,
+            child: Text(
+              standing?.totalPoints.toString() ?? '--',
+              style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
             ),
           ),
         ],
