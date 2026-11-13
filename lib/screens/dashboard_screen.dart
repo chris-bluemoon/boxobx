@@ -77,6 +77,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
     'Heavy Wet',
   ];
 
+  /// Maps the laptop OCR relay's raw compound code (read off GT7's HUD
+  /// tire-wear widget -- see laptop_ocr/tire_wear_reader.py) to one of
+  /// this dropdown's display strings. Only the compounds actually
+  /// reachable from the dropdown are mapped; anything else (e.g. a
+  /// comfort/sport-compound code, or a misread) is deliberately left
+  /// unmapped so an unreliable read can never silently overwrite the
+  /// driver's manual selection with the wrong compound.
+  static const Map<String, String> _ocrCompoundToDropdownValue = {
+    'RH': 'Racing Hard',
+    'RM': 'Racing Medium',
+    'RS': 'Racing Soft',
+    'IM': 'Intermediate',
+    'W': 'Heavy Wet',
+  };
+
+  /// Last OCR compound code this picker auto-applied, so a change is
+  /// only ever auto-applied ONCE per new value read -- if the driver
+  /// manually overrides the picker afterward (e.g. the OCR read is
+  /// wrong), that manual choice sticks until the OCR reads something
+  /// genuinely different again, rather than snapping back on every
+  /// subsequent HUD update.
+  String? _lastAutoAppliedOcrCompound;
+
+  /// If the HUD OCR relay just read a (dropdown-mappable) tire
+  /// compound that's different from the last one this picker
+  /// auto-applied, updates both the dropdown's selection and the
+  /// PracticeLapLogger's currentTireCompound to match -- the same two
+  /// side effects the dropdown's own onChanged handler performs for a
+  /// manual selection. Call this every time a new FusedRaceState comes
+  /// in from the race-state stream.
+  void _maybeAutoFillTireCompoundFromOcr(FusedRaceState state) {
+    final ocrCompound = state.hud.tireCompound;
+    if (ocrCompound == null) return;
+    if (ocrCompound == _lastAutoAppliedOcrCompound) return;
+
+    final mappedValue = _ocrCompoundToDropdownValue[ocrCompound];
+    if (mappedValue == null) return;
+
+    _lastAutoAppliedOcrCompound = ocrCompound;
+    if (mappedValue == _selectedTireCompound) return;
+
+    setState(() => _selectedTireCompound = mappedValue);
+    _raceStateManager.setPracticeTireCompound(mappedValue);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -106,6 +151,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _raceStateManager.stream.listen((state) {
       if (!mounted) return;
       setState(() => _state = state);
+      _maybeAutoFillTireCompoundFromOcr(state);
       // Temporarily disabled -- proactive shift-habit voice callouts
       // aren't behaving correctly yet (reported live, not yet root
       // caused). Re-enable once fixed; the underlying trigger/advisor
@@ -415,6 +461,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           Expanded(
                             child: TireTempCard(
                               tireTemps: telemetry.tireTemps,
+                              tireWearPercents: [
+                                _state.hud.tireWearFrontLeftPercent,
+                                _state.hud.tireWearFrontRightPercent,
+                                _state.hud.tireWearRearLeftPercent,
+                                _state.hud.tireWearRearRightPercent,
+                              ],
                             ),
                           ),
                           const SizedBox(width: 12),

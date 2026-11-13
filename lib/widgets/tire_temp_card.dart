@@ -10,10 +10,32 @@ class TireTempCard extends StatelessWidget {
   /// [FL, FR, RL, RR] in degrees Celsius.
   final List<double> tireTemps;
 
-  const TireTempCard({super.key, required this.tireTemps});
+  /// [FL, FR, RL, RR] remaining-grip percent (100 = fresh, 0 = fully
+  /// worn), read directly off GT7's HUD tire-wear widget by the
+  /// laptop OCR relay (see laptop_ocr/tire_wear_reader.py) -- null per
+  /// wheel if that frame's reading wasn't confidently read (e.g. the
+  /// HUD relay isn't running, or the widget isn't currently on
+  /// screen). Shown as a secondary readout under each corner's
+  /// temperature, since GT7's own telemetry packet has no tire-wear
+  /// field at all -- this is the only source of real (not proxied)
+  /// wear data in the app.
+  final List<double?> tireWearPercents;
+
+  const TireTempCard({
+    super.key,
+    required this.tireTemps,
+    this.tireWearPercents = const [null, null, null, null],
+  });
 
   static const double _coldThreshold = 70;
   static const double _hotThreshold = 95;
+
+  // Mirrors GT7's own in-game wear-bar colour behaviour (see
+  // tire_wear_reader.py's module docstring): comfortably fresh is
+  // white/green, below the "wear cliff" bands amber then red as grip
+  // falls off.
+  static const double _wearWarningThreshold = 50;
+  static const double _wearCriticalThreshold = 20;
 
   Color _colorFor(double tempC) {
     if (tempC <= 0) return Colors.grey.shade700;
@@ -22,9 +44,16 @@ class TireTempCard extends StatelessWidget {
     return Colors.greenAccent.shade400;
   }
 
+  Color _wearColorFor(double? wearPercent) {
+    if (wearPercent == null) return Colors.grey.shade600;
+    if (wearPercent <= _wearCriticalThreshold) return Colors.redAccent;
+    if (wearPercent <= _wearWarningThreshold) return Colors.amberAccent;
+    return Colors.grey.shade500;
+  }
+
   bool get _anyOverheating => tireTemps.any((t) => t > _hotThreshold);
 
-  Widget _corner(String label, double tempC) {
+  Widget _corner(String label, double tempC, double? wearPercent) {
     final color = _colorFor(tempC);
     return Expanded(
       child: Column(
@@ -51,6 +80,15 @@ class TireTempCard extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(height: 2),
+          Text(
+            wearPercent == null ? 'WEAR --' : 'WEAR ${wearPercent.toStringAsFixed(0)}%',
+            style: TextStyle(
+              color: _wearColorFor(wearPercent),
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
       ),
     );
@@ -62,6 +100,11 @@ class TireTempCard extends StatelessWidget {
     final fr = tireTemps.length > 1 ? tireTemps[1] : 0.0;
     final rl = tireTemps.length > 2 ? tireTemps[2] : 0.0;
     final rr = tireTemps.length > 3 ? tireTemps[3] : 0.0;
+
+    final wearFl = tireWearPercents.isNotEmpty ? tireWearPercents[0] : null;
+    final wearFr = tireWearPercents.length > 1 ? tireWearPercents[1] : null;
+    final wearRl = tireWearPercents.length > 2 ? tireWearPercents[2] : null;
+    final wearRr = tireWearPercents.length > 3 ? tireWearPercents[3] : null;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 150),
@@ -90,8 +133,18 @@ class TireTempCard extends StatelessWidget {
           Expanded(
             child: Column(
               children: [
-                Expanded(child: Row(children: [_corner('FL', fl), _corner('FR', fr)])),
-                Expanded(child: Row(children: [_corner('RL', rl), _corner('RR', rr)])),
+                Expanded(
+                  child: Row(children: [
+                    _corner('FL', fl, wearFl),
+                    _corner('FR', fr, wearFr),
+                  ]),
+                ),
+                Expanded(
+                  child: Row(children: [
+                    _corner('RL', rl, wearRl),
+                    _corner('RR', rr, wearRr),
+                  ]),
+                ),
               ],
             ),
           ),
