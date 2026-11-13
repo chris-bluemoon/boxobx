@@ -30,6 +30,30 @@ void main() {
     expect(find.text('WEAR 67%'), findsOneWidget);
   });
 
+  testWidgets('does not overflow when the card is given a tight height (regression)', (tester) async {
+    // Reproduces the reported real-device bug: the WEAR line added a
+    // 3rd fixed-height Text to each corner's label+temp pair, and on a
+    // real iPad's actual (tighter than the simulator's) card height
+    // that combined fixed height overflowed the available space by
+    // ~37px. 90px is deliberately tight enough to trigger the old bug
+    // (label + 26px temp + wear line all at fixed size) while still
+    // being a plausible real on-screen card height.
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          height: 90,
+          width: 300,
+          child: TireTempCard(
+            tireTemps: [80, 82, 79, 81],
+            tireWearPercents: [54.05, 59.46, 61.11, 66.67],
+          ),
+        ),
+      ),
+    ));
+
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('shows -- for just the wheels OCR could not read, keeping the others', (tester) async {
     await tester.pumpWidget(const MaterialApp(
       home: Scaffold(

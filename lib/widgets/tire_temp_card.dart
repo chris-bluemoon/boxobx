@@ -55,23 +55,33 @@ class TireTempCard extends StatelessWidget {
 
   Widget _corner(String label, double tempC, double? wearPercent) {
     final color = _colorFor(tempC);
+    // The WHOLE stack (label + temp + wear) is wrapped in a single
+    // FittedBox, rather than just the temperature number -- adding the
+    // wear-percent line introduced a 3rd fixed-height Text to what was
+    // previously a label+temp pair that just barely fit, and on a real
+    // device's actual constrained card height (vs. the simulator this
+    // was built/eyeballed against) the combined fixed height overflowed
+    // by ~37px. Scaling everything uniformly as one unit guarantees no
+    // overflow regardless of how tight the available space gets, at the
+    // cost of all 3 lines shrinking together rather than the number
+    // alone staying large while the labels clip.
     return Expanded(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.grey.shade500,
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 1.0,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: Colors.grey.shade500,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 1.0,
+              ),
             ),
-          ),
-          const SizedBox(height: 2),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
+            const SizedBox(height: 2),
+            Text(
               tempC <= 0 ? '--' : tempC.toStringAsFixed(0),
               style: TextStyle(
                 color: color,
@@ -79,17 +89,17 @@ class TireTempCard extends StatelessWidget {
                 fontWeight: FontWeight.bold,
               ),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            wearPercent == null ? 'WEAR --' : 'WEAR ${wearPercent.toStringAsFixed(0)}%',
-            style: TextStyle(
-              color: _wearColorFor(wearPercent),
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
+            const SizedBox(height: 2),
+            Text(
+              wearPercent == null ? 'WEAR --' : 'WEAR ${wearPercent.toStringAsFixed(0)}%',
+              style: TextStyle(
+                color: _wearColorFor(wearPercent),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
