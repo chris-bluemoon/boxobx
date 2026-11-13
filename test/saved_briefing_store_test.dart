@@ -11,7 +11,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:boxbox/models/race_briefing.dart';
 import 'package:boxbox/models/race_strategy.dart';
-import 'package:boxbox/models/strategy_validation.dart';
 import 'package:boxbox/services/saved_briefing_store.dart';
 
 void main() {
@@ -38,12 +37,10 @@ void main() {
   );
 
   test('load() returns all nulls when nothing has been saved yet', () async {
-    final (name, loadedBriefing, loadedStrategy, loadedValidation, validatedAt) = await SavedBriefingStore.load();
+    final (name, loadedBriefing, loadedStrategy, _, _) = await SavedBriefingStore.load();
     expect(name, isNull);
     expect(loadedBriefing, isNull);
     expect(loadedStrategy, isNull);
-    expect(loadedValidation, isNull);
-    expect(validatedAt, isNull);
   });
 
   test('save() then load() round-trips the name, briefing, and strategy', () async {
@@ -95,50 +92,10 @@ void main() {
     await SavedBriefingStore.save(name: 'Round 5', briefing: briefing, strategy: strategy);
     await SavedBriefingStore.clear();
 
-    final (name, loadedBriefing, loadedStrategy, loadedValidation, validatedAt) = await SavedBriefingStore.load();
+    final (name, loadedBriefing, loadedStrategy, _, _) = await SavedBriefingStore.load();
 
     expect(name, isNull);
     expect(loadedBriefing, isNull);
     expect(loadedStrategy, isNull);
-    expect(loadedValidation, isNull);
-    expect(validatedAt, isNull);
-  });
-
-  // --- New coverage: practice-lap validation snapshots associate with
-  // whichever round is currently saved (this is the actual mechanism
-  // for "tagging" practice data to a round, per the user's request). ---
-
-  const validation = StrategyValidation(
-    fitness: StrategyFitness.onPlan,
-    actualPercentPerLap: 5.1,
-    assumedPercentPerLap: 5.0,
-  );
-
-  test('saveValidation() persists a validation snapshot alongside the current round', () async {
-    await SavedBriefingStore.save(name: 'Round 5', briefing: briefing, strategy: strategy);
-    await SavedBriefingStore.saveValidation(validation);
-
-    final (name, _, _, loadedValidation, validatedAt) = await SavedBriefingStore.load();
-
-    expect(name, 'Round 5');
-    expect(loadedValidation, isNotNull);
-    expect(loadedValidation!.fitness, StrategyFitness.onPlan);
-    expect(loadedValidation.actualPercentPerLap, 5.1);
-    expect(validatedAt, isNotNull);
-  });
-
-  test('saving a NEW briefing clears any previous validation snapshot', () async {
-    await SavedBriefingStore.save(name: 'Round 5', briefing: briefing, strategy: strategy);
-    await SavedBriefingStore.saveValidation(validation);
-
-    // Starting a new round's briefing should not carry over the old
-    // round's practice-session validation result.
-    await SavedBriefingStore.save(name: 'Round 6', briefing: briefing, strategy: strategy);
-
-    final (name, _, _, loadedValidation, validatedAt) = await SavedBriefingStore.load();
-
-    expect(name, 'Round 6');
-    expect(loadedValidation, isNull);
-    expect(validatedAt, isNull);
   });
 }

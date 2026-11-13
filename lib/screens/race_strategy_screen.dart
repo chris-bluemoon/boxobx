@@ -3,33 +3,33 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../models/race_briefing.dart';
 import '../models/race_strategy.dart';
-import '../models/strategy_validation.dart';
 import '../models/fuel_prediction.dart';
-import '../models/tire_wear_estimate.dart';
 import '../models/track_info.dart';
 import '../models/pit_stop_time_record.dart';
 import '../models/practice_lap_record.dart';
 import '../services/race_strategist_service.dart';
-import '../services/strategy_validator.dart';
 import '../services/track_database.dart';
 import '../services/saved_briefing_store.dart';
 import '../services/pit_stop_time_store.dart';
 import '../services/shift_aware_fuel_calculator.dart';
 
 /// Pre-race strategy planning screen: enter this week's APRL driver
-/// briefing, get an AI-generated pit-stop strategy, then optionally
-/// validate that strategy's fuel assumption AND real tire degradation
-/// against a live practice session's telemetry (see StrategyValidator).
+/// briefing and get an AI-generated pit-stop strategy, informed by
+/// REAL measured fuel consumption from logged practice laps (see
+/// ShiftAwareFuelCalculator) rather than a generic baseline guess.
+///
+/// Previously also had a separate "VALIDATE AGAINST PRACTICE SESSION"
+/// step that re-compared the generated strategy against live telemetry
+/// after the fact -- removed as redundant: regenerating the strategy
+/// (tap "GENERATE STRATEGY" again) already pulls in whatever practice
+/// laps have been driven since, which is strictly more accurate than a
+/// one-off live-telemetry snapshot comparison.
 class RaceStrategyScreen extends StatefulWidget {
-  /// Supplied by the caller (dashboard) so this screen can validate
-  /// against the SAME live FuelPredictor already running during a
-  /// practice session, rather than needing its own separate telemetry
-  /// connection.
+  /// Supplied by the caller (dashboard) so this screen can fall back to
+  /// the SAME live FuelPredictor already running during a practice
+  /// session when generating a strategy, rather than needing its own
+  /// separate telemetry connection.
   final FuelPrediction Function() getCurrentFuelPrediction;
-
-  /// Same pattern as getCurrentFuelPrediction, for the live
-  /// TireWearTracker's lap-time-degradation estimate.
-  final TireWearEstimate Function() getCurrentTireWearEstimate;
 
   /// Same pattern again, for the logged practice laps (lap time, tire,
   /// fuel, AND shift-quality counts) -- used to compute a
@@ -41,7 +41,6 @@ class RaceStrategyScreen extends StatefulWidget {
   const RaceStrategyScreen({
     super.key,
     required this.getCurrentFuelPrediction,
-    required this.getCurrentTireWearEstimate,
     required this.getPracticeLaps,
   });
 
@@ -76,7 +75,6 @@ final List<int> _totalLapsOptions = List.generate(36, (i) => i + 1);
 
 class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   late final RaceStrategistService _strategist;
-  final _strategyValidator = StrategyValidator();
   late final Future<List<TrackInfo>> _tracksFuture;
 
   final _roundNameController = TextEditingController(text: 'Round 1');
@@ -97,10 +95,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   int _mandatoryPitStopCount = 0;
   bool _wetOrChangeableWeather = false;
 
-  RaceBriefing? _briefing;
   RaceStrategy? _strategy;
-  StrategyValidation? _validation;
-  DateTime? _validatedAt;
   bool _loading = false;
   String? _error;
 
@@ -169,14 +164,12 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   }
 
   /// Restores the single saved briefing (+ its last-generated strategy
-  /// and last practice-session validation snapshot, if any) into every
-  /// form field, so the screen comes back exactly as it was left last
-  /// time the driver saved/validated -- this is what makes "load it up
+  /// into every form field, so the screen comes back exactly as it was
+  /// left last time the driver saved -- this is what makes "load it up
   /// every time the app starts" work without the driver re-entering
-  /// the same weekly briefing OR re-driving practice laps just to see
-  /// their last validation result again.
+  /// the same weekly briefing.
   Future<void> _loadSavedBriefing() async {
-    final (name, briefing, strategy, validation, validatedAt) = await SavedBriefingStore.load();
+    final (name, briefing, strategy, _, _) = await SavedBriefingStore.load();
     if (briefing == null) return;
 
     setState(() {
@@ -197,10 +190,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       _mandatoryPitStopCount = briefing.mandatoryPitStopCount;
       _wetOrChangeableWeather = briefing.wetOrChangeableWeather;
       _notesController.text = briefing.additionalNotes;
-      _briefing = briefing;
       _strategy = strategy;
-      _validation = validation;
-      _validatedAt = validatedAt;
       _savedBriefingLoaded = true;
     });
   }
@@ -209,10 +199,10 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   /// fields, or null (with _error set) if required fields are missing.
   /// Used by both _generateStrategy() and _saveBriefing() so that
   /// saving always reflects the latest on-screen edits rather than a
-  /// stale _briefing left over from the last time "GENERATE STRATEGY"
-  /// was pressed -- previously Save silently persisted that stale
-  /// object, so edits made after generating (or after loading a saved
-  /// briefing) without re-generating were never actually saved.
+  /// stale briefing object left over from the last time "GENERATE
+  /// STRATEGY" was pressed -- previously Save silently persisted that
+  /// stale object, so edits made after generating (or after loading a
+  /// saved briefing) without re-generating were never actually saved.
   RaceBriefing? _buildBriefingFromForm() {
     final fuel = double.tryParse(_fuelController.text.trim());
     final raceLengthMinutes = int.tryParse(_raceLengthMinutesController.text.trim());
@@ -250,7 +240,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       strategy: _strategy,
     );
     if (!mounted) return;
-    setState(() => _briefing = briefing);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Saved as "${_roundNameController.text.trim()}"')),
     );
@@ -264,7 +253,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       _loading = true;
       _error = null;
       _strategy = null;
-      _validation = null;
     });
 
     try {
@@ -306,7 +294,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
         measuredPitStopTimeLossSeconds: measuredPitStopTimeLossSeconds,
       );
       setState(() {
-        _briefing = briefing;
         _strategy = strategy;
         _usedMeasuredFuelData = measuredPercentPerLap != null;
         _usedShiftAwareFuelData = cleanShiftAverage != null;
@@ -318,33 +305,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
         _loading = false;
       });
     }
-  }
-
-  /// Validates against whatever telemetry is live RIGHT NOW, then
-  /// persists the result into the SAME saved-briefing slot (see
-  /// SavedBriefingStore.saveValidation) -- this is how practice-lap
-  /// data gets associated with "Round 5" (or whichever round is
-  /// currently saved): since there's only ever one saved round at a
-  /// time, every validation implicitly belongs to it, and survives an
-  /// app restart without needing to re-drive practice laps.
-  Future<void> _validateAgainstPractice() async {
-    if (_strategy == null || _briefing == null) return;
-    final prediction = widget.getCurrentFuelPrediction();
-    final tireWearEstimate = widget.getCurrentTireWearEstimate();
-    final validation = _strategyValidator.evaluate(
-      strategy: _strategy!,
-      briefing: _briefing!,
-      practiceFuelPrediction: prediction,
-      tireWearEstimate: tireWearEstimate,
-    );
-
-    await SavedBriefingStore.saveValidation(validation);
-
-    if (!mounted) return;
-    setState(() {
-      _validation = validation;
-      _validatedAt = DateTime.now();
-    });
   }
 
   @override
@@ -616,22 +576,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 _sectionLabel('RECOMMENDED STRATEGY'),
                 const SizedBox(height: 8),
                 _strategyCard(_strategy!),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: _validateAgainstPractice,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue.shade700,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                  child: const Text(
-                    'VALIDATE AGAINST PRACTICE SESSION',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                if (_validation != null) ...[
-                  const SizedBox(height: 16),
-                  _validationCard(_validation!),
-                ],
               ],
             ],
           ),
@@ -805,80 +749,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 ],
               ),
             ),
-        ],
-      ),
-    );
-  }
-
-  String _formatValidatedAt(DateTime time) {
-    final now = DateTime.now();
-    final sameDay = time.year == now.year && time.month == now.month && time.day == now.day;
-    final h = time.hour.toString().padLeft(2, '0');
-    final m = time.minute.toString().padLeft(2, '0');
-    return sameDay ? 'today at $h:$m' : '${time.month}/${time.day} at $h:$m';
-  }
-
-  Widget _validationCard(StrategyValidation validation) {
-    final (label, color) = switch (validation.fitness) {
-      StrategyFitness.insufficientData => ('Not enough practice laps yet', Colors.grey),
-      StrategyFitness.onPlan => ('On plan -- real consumption matches the strategy', Colors.greenAccent),
-      StrategyFitness.burningMoreThanPlanned => (
-          'Burning MORE fuel than planned -- pit earlier',
-          Colors.redAccent
-        ),
-      StrategyFitness.burningLessThanPlanned => (
-          'Burning LESS fuel than planned -- can extend the stint',
-          Colors.lightBlueAccent
-        ),
-    };
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade900,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color, width: 2),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
-          if (_validatedAt != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Validated for "${_roundNameController.text.trim()}" ${_formatValidatedAt(_validatedAt!)}',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 11, fontStyle: FontStyle.italic),
-            ),
-          ],
-          if (validation.actualPercentPerLap != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Planned: ${validation.assumedPercentPerLap.toStringAsFixed(2)}%/lap   '
-              'Actual: ${validation.actualPercentPerLap!.toStringAsFixed(2)}%/lap',
-              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-            ),
-          ],
-          if (validation.recommendedPitLap != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Recommended pit lap at real consumption: L${validation.recommendedPitLap}',
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-            ),
-          ],
-          if (validation.tireWearWarning != null) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade900.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                validation.tireWearWarning!,
-                style: const TextStyle(color: Colors.orangeAccent, fontSize: 12),
-              ),
-            ),
-          ],
         ],
       ),
     );

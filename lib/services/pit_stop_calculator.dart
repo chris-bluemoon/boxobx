@@ -16,9 +16,10 @@ class PitStopCalculator {
   /// Baseline fuel consumption for a Gr.3 car at a 1x fuel consumption
   /// multiplier, as a percent of the tank burned per lap on a
   /// medium-length circuit (~4-5km). This is a deliberately simple,
-  /// fixed prior -- StrategyValidator later corrects it against the
-  /// driver's own real practice-session telemetry, so it only needs to
-  /// be a reasonable, CONSISTENT starting point, not a perfect one.
+  /// fixed prior -- used only when no real measured practice-session
+  /// consumption is available yet (see measuredPercentPerLap/
+  /// ShiftAwareFuelCalculator), so it only needs to be a reasonable,
+  /// CONSISTENT starting point, not a perfect one.
   static const double _basePercentPerLapAt1x = 2.5;
 
   /// Reference track length (meters) the base consumption figure above

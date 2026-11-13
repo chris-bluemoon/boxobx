@@ -11,7 +11,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:boxbox/models/fuel_prediction.dart';
-import 'package:boxbox/models/tire_wear_estimate.dart';
 import 'package:boxbox/screens/race_strategy_screen.dart';
 import 'package:boxbox/services/saved_briefing_store.dart';
 
@@ -30,7 +29,6 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       home: RaceStrategyScreen(
         getCurrentFuelPrediction: () => FuelPrediction.insufficientData(),
-        getCurrentTireWearEstimate: () => TireWearEstimate.insufficientData(),
         getPracticeLaps: () => const [],
       ),
     ));

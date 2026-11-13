@@ -33,8 +33,8 @@ class PlannedPitStop {
 
 /// The AI-generated race strategy produced by RaceStrategistService from
 /// a RaceBriefing -- a recommended pit-stop plan plus the reasoning
-/// behind it, generated once pre-race and then checked against real
-/// practice-session telemetry (see StrategyValidator).
+/// behind it, informed by real practice-session telemetry when
+/// available (see ShiftAwareFuelCalculator) at generation time.
 class RaceStrategy {
   final List<PlannedPitStop> pitStops;
 
@@ -46,9 +46,10 @@ class RaceStrategy {
   final String summary;
 
   /// Assumed average fuel consumption percent-per-lap the strategy's
-  /// pit-lap math was based on -- this is what StrategyValidator
-  /// compares real practice-session consumption against to flag if the
-  /// plan's assumption was wrong.
+  /// pit-lap math was based on -- either the generic baseline, or real
+  /// measured consumption from logged practice laps when enough data
+  /// existed at generation time (see PitStopCalculator,
+  /// ShiftAwareFuelCalculator).
   final double assumedPercentPerLap;
 
   /// Total estimated time lost to pit stops across the whole race

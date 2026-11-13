@@ -81,10 +81,10 @@ class PracticeLapRecord {
   /// early or late) to 1.0 (every shift was clean), or null if no
   /// upshifts were recorded at all this lap (e.g. a single-gear
   /// straight, or shift detection wasn't active). This is the signal
-  /// StrategyValidator/PitStopCalculator can use to judge how much to
-  /// trust this particular lap's fuel-per-lap reading: a lap with a
-  /// low ratio burned more fuel than a clean lap would have purely
-  /// from shift habit, independent of tire/fuel-map differences.
+  /// ShiftAwareFuelCalculator uses to judge how much to trust this
+  /// particular lap's fuel-per-lap reading: a lap with a low ratio
+  /// burned more fuel than a clean lap would have purely from shift
+  /// habit, independent of tire/fuel-map differences.
   double? get cleanShiftRatio => totalShiftCount == 0 ? null : goodShiftCount / totalShiftCount;
 
   String get formattedLapTime {

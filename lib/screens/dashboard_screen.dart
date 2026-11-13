@@ -251,16 +251,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   /// Opens the pre-race strategy planner, passing a getter for the
-  /// current live FuelPrediction so that screen's "validate against
-  /// practice" button reads the SAME live data this dashboard is
-  /// already tracking, rather than needing its own telemetry
-  /// connection.
+  /// current live FuelPrediction so strategy generation can fall back
+  /// to the SAME live data this dashboard is already tracking (when
+  /// not enough clean practice laps exist for the shift-aware average)
+  /// without needing its own telemetry connection.
   Future<void> _openRaceStrategy() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => RaceStrategyScreen(
           getCurrentFuelPrediction: () => _state.fuelPrediction,
-          getCurrentTireWearEstimate: () => _state.tireWearEstimate,
           getPracticeLaps: () => _state.practiceLaps,
         ),
       ),
