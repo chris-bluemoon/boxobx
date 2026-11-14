@@ -12,6 +12,8 @@ import 'corner_report.dart';
 import 'race_lap_estimator.dart';
 import 'sector_calculator.dart';
 import 'fuel_predictor.dart';
+import 'crash_detector.dart';
+import 'race_rival_tracker.dart';
 import 'tire_wear_tracker.dart';
 import 'practice_lap_logger.dart';
 import 'practice_log_store.dart';
@@ -53,6 +55,28 @@ class FusedRaceStateManager {
   /// the dashboard has Boxington call these out. The full log, kept
   /// up to date with tyre/fuel, is FusedRaceState.opponentPitStops.
   Stream<List<OpponentPitStop>> get opponentPitted => _opponentPittedController.stream;
+
+  /// Serious crashes (see CrashDetector).
+  final CrashDetector crashDetector = CrashDetector();
+  final _crashController = StreamController<Crash>.broadcast();
+
+  /// Fires once per serious crash -- the dashboard has Boxington react
+  /// to it (Race Mode only).
+  Stream<Crash> get crashes => _crashController.stream;
+
+  /// The chosen race rival (see RaceRivalTracker) -- Race Mode calls.
+  final RaceRivalTracker raceRivalTracker = RaceRivalTracker();
+  final _rivalEventController = StreamController<RivalEvent>.broadcast();
+
+  /// Fires with each call to make about the race rival.
+  Stream<RivalEvent> get rivalEvents => _rivalEventController.stream;
+
+  /// Chooses the race rival (null = none).
+  void setRaceRival(String? name) {
+    raceRivalTracker.setRival(name);
+    _state = _state.copyWith(clearRaceRival: true);
+    _controller.add(_state);
+  }
 
   final _sessionEndedController = StreamController<void>.broadcast();
 
@@ -191,6 +215,7 @@ class FusedRaceStateManager {
       // anything that accumulates per-lap data.
       _state = _state.copyWith(telemetry: frame, sessionPhase: SessionPhase.paused);
       _controller.add(_state);
+      crashDetector.reset();
       return;
     }
 
@@ -217,6 +242,8 @@ class FusedRaceStateManager {
       _persistTimeTrial(() => TimeTrialStore.save(snapshot));
     }
     shiftHistoryTracker.update(frame);
+    final crash = crashDetector.update(frame);
+    if (crash != null) _crashController.add(crash);
     _state = _state.copyWith(
       telemetry: frame,
       sectors: sectorState,
@@ -272,13 +299,22 @@ class FusedRaceStateManager {
     _playerWasInPit = hud.playerInPit;
 
     final pitted = pitLaneMonitor.check(hud.driversInPit, ourLap: _state.telemetry.currentLap);
+    final rivalEvents = raceRivalTracker.update(
+      hud,
+      ourLap: _state.telemetry.currentLap,
+      ourLastLapMs: _state.telemetry.lastLapTimeMs,
+      pitLapProgress: _state.pitLapProgress,
+      now: DateTime.now(),
+    );
     _state = _state.copyWith(
+      raceRival: raceRivalTracker.state,
       hud: hud,
       opponentPitStops: hud.driversInPit.isEmpty && pitted.isEmpty ? null : pitLaneMonitor.stops,
       rejoinForecast: RejoinForecaster.forecast(hud.traffic, measuredPitLossSeconds: _pitStopTimeSeconds),
     );
     _controller.add(_state);
     if (pitted.isNotEmpty) _opponentPittedController.add(pitted);
+    rivalEvents.forEach(_rivalEventController.add);
   }
 
   /// GT7's pit-stop tyre letter (see the relay's read_pit_service) to the
@@ -351,6 +387,8 @@ class FusedRaceStateManager {
     shiftHistoryTracker.reset();
     pitStopTracker.reset();
     pitLaneMonitor.reset();
+    crashDetector.reset();
+    raceRivalTracker.reset();
     practiceLapLogger.startNewSession();
     timeTrialLogger.startNewSession();
     sectorCalculator.reset();
@@ -363,6 +401,7 @@ class FusedRaceStateManager {
       fuelPrediction: FuelPrediction.insufficientData(),
       tireWearEstimate: TireWearEstimate.insufficientData(),
       recentShifts: const [],
+      clearRaceRival: true,
     );
     _controller.add(_state);
     _sessionEndedController.add(null);
@@ -483,5 +522,7 @@ class FusedRaceStateManager {
     _controller.close();
     _sessionEndedController.close();
     _opponentPittedController.close();
+    _crashController.close();
+    _rivalEventController.close();
   }
 }

@@ -168,7 +168,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                   for (final stint in StintSummary.fromLaps(laps)) ...[
                     _stintCard(stint),
                     const SizedBox(height: 8),
-                    for (final lap in stint.laps.reversed) _lapRow(lap),
+                    for (final lap in stint.laps.reversed) _lapRow(lap, counted: lap.isPitLap || stint.counts(lap)),
                     const SizedBox(height: 16),
                   ],
                 ],
@@ -230,8 +230,8 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
             ),
           Text(
             'Start a test from the dashboard\'s TEST chip (long-press to pick any test). Only stints '
-            'started as a test count. Long stints also end if fuel drops to 5% or lap times fall 1.5s '
-            'off the stint best.',
+            'started as a test count. Long stints also end if fuel drops to 5% or the tyres drop off '
+            '(lap times lastingly off peak pace; off-pace laps such as spins are left out).',
             style: TextStyle(color: Colors.grey.shade600, fontSize: 10),
           ),
         ],
@@ -251,14 +251,24 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
     final fuel = stint.fuelPerLapPercent;
     final wear = stint.tyreWearPerLapPercent;
     final dropOff = stint.dropOffMs;
+    final consistency = stint.consistencyMs;
+    final wentOff = stint.tyreDropOff;
+    final excluded = stint.excludedLaps.length;
     final stats = <(String, String)>[
-      ('Laps', '${stint.lapCount}'),
+      ('Laps', '${stint.lapCount}${excluded == 0 ? '' : ' (+$excluded off-pace)'}'),
+      ('Consistency', consistency == null ? '--' : '±${(consistency / 1000).toStringAsFixed(2)}s'),
       ('Avg lap', lapTime(stint.averageLapMs)),
       ('Fuel/lap', fuel == null ? '--' : '${fuel.toStringAsFixed(2)}%'),
       ('Fuel lasts', laps(stint.projectedFuelLaps)),
       ('Wear/lap', wear == null ? '--' : '${wear.toStringAsFixed(1)}%'),
       ('Tyres last', laps(stint.projectedTyreLaps)),
       ('Drop-off', dropOff == null ? '--' : '${dropOff >= 0 ? '+' : ''}${(dropOff / 1000).toStringAsFixed(2)}s'),
+      (
+        'Tyres went off',
+        wentOff == null
+            ? (stint.lapCount >= StintSummary.dropOffMinLaps ? 'not yet' : '--')
+            : 'L${wentOff.fromLapNumber}${wentOff.wearPercentAtDropOff == null ? '' : ' (${wentOff.wearPercentAtDropOff!.round()}% left)'}',
+      ),
     ];
 
     return Container(
@@ -339,7 +349,8 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
     );
   }
 
-  Widget _lapRow(PracticeLapRecord lap) {
+  /// [counted] false greys out a lap left out of the stint's figures.
+  Widget _lapRow(PracticeLapRecord lap, {bool counted = true}) {
     return Dismissible(
       key: ValueKey(lap.recordedAt),
       direction: DismissDirection.endToStart,
@@ -376,7 +387,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  lap.isPitLap ? 'L${lap.lapNumber} PIT' : 'L${lap.lapNumber}',
+                  lap.isPitLap ? 'L${lap.lapNumber} PIT' : (counted ? 'L${lap.lapNumber}' : 'L${lap.lapNumber} OFF-PACE'),
                   style: const TextStyle(color: Colors.white, fontSize: 12),
                 ),
               ),
@@ -385,7 +396,12 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                 flex: 2,
                 child: Text(
                   lap.formattedLapTime,
-                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: counted ? Colors.white : Colors.grey.shade600,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    decoration: counted ? null : TextDecoration.lineThrough,
+                  ),
                 ),
               ),
               Expanded(

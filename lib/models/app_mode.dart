@@ -16,9 +16,15 @@ enum AppMode {
 
   /// Unprompted calls and race widgets that only make sense in a race.
   bool get pitCalls => this == race;
+  /// The race rival's position, pace, gap and spin calls (see
+  /// RaceRivalTracker) and its chip.
   bool get rivalCallouts => this == race;
   bool get opponentPitCallouts => this == race;
   bool get trafficChip => this == race;
+
+  /// Boxington's reaction to a serious crash (CrashDetector) and the
+  /// "wait... go" rejoin call (RejoinCoach).
+  bool get incidentCalls => this == race;
 
   /// Boxington's "biggest loss" call after each lap (see CornerReport).
   bool get cornerCalls => this == timeTrial;

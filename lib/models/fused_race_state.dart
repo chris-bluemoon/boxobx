@@ -1,3 +1,5 @@
+import '../services/race_rival_tracker.dart';
+import '../services/stint_summary.dart';
 import 'telemetry_frame.dart';
 import 'hud_overlay_data.dart';
 import 'sector_state.dart';
@@ -77,6 +79,10 @@ class FusedRaceState {
   /// race (see RaceLapEstimator). Null if unknown.
   final RaceLaps? raceLaps;
 
+  /// The chosen race rival, as tracked (see RaceRivalTracker); null with
+  /// no rival chosen or nothing seen yet.
+  final RaceRivalState? raceRival;
+
   const FusedRaceState({
     required this.telemetry,
     required this.hud,
@@ -95,6 +101,7 @@ class FusedRaceState {
     this.timeTrialLaps = const [],
     this.cornerReport,
     this.raceLaps,
+    this.raceRival,
   });
 
   factory FusedRaceState.initial() => FusedRaceState(
@@ -127,6 +134,8 @@ class FusedRaceState {
     CornerReport? cornerReport,
     RaceLaps? raceLaps,
     bool clearRaceLaps = false,
+    RaceRivalState? raceRival,
+    bool clearRaceRival = false,
   }) {
     return FusedRaceState(
       telemetry: telemetry ?? this.telemetry,
@@ -149,6 +158,7 @@ class FusedRaceState {
       timeTrialLaps: timeTrialLaps ?? this.timeTrialLaps,
       cornerReport: cornerReport ?? this.cornerReport,
       raceLaps: clearRaceLaps ? null : raceLaps ?? this.raceLaps,
+      raceRival: clearRaceRival ? null : raceRival ?? this.raceRival,
     );
   }
 
@@ -191,12 +201,15 @@ class FusedRaceState {
     'tireDegradationPercent': tireWearEstimate.percentSlowerThanStintBest,
     'consecutiveDegradingLaps': tireWearEstimate.consecutiveDegradingLaps,
     'practiceLapsLogged': practiceLaps.length,
+    if (mode == AppMode.practice && practiceLaps.isNotEmpty)
+      'currentStint': StintSummary.fromLaps(practiceLaps).first.toPromptContext(),
     'shiftZone': ShiftAdvice.classify(telemetry.rpm, config: powerBand).zone.name,
     'driversInPitNow': hud.driversInPit.keys.toList(),
     'opponentPitStops': opponentPitStops.map((s) => s.toPromptContext()).toList(),
     'traffic': hud.traffic.toPromptContext(),
     'playerInPit': hud.playerInPit,
     'rejoinForecast': rejoinForecast?.toPromptContext(),
+    if (mode == AppMode.race && raceRival != null) 'raceRival': raceRival!.toPromptContext(opponentPitStops),
     'recentShiftTimings': recentShifts.map((s) => s.timing.name).toList(),
   };
 

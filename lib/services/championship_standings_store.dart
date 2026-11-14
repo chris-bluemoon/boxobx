@@ -15,11 +15,8 @@ import '../models/championship_standing.dart';
 /// week-over-week trend tracking is wanted later, this is the natural
 /// place to extend into a keyed-by-week history instead.
 ///
-/// NOTE: rival selection/monitoring has NO presence here at all --
-/// which drivers Boxington actively tracks on-track is a --rival-names
-/// command-line flag on the laptop OCR relay (see
-/// laptop_ocr/ocr_relay.py and lib/services/rival_monitor.dart), not
-/// something persisted from this screen.
+/// NOTE: rival selection has no presence here -- the race rival is
+/// picked on the Race Mode screen and stored by RaceRivalStore.
 class ChampionshipStandingsStore {
   static const _standingsKey = 'championship_standings';
 

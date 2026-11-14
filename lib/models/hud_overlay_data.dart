@@ -24,6 +24,36 @@ GapTrend _gapTrendFromString(String? value) {
   }
 }
 
+/// One leaderboard row as the relay read it.
+class StandingsRow {
+  /// Roster-corrected name (PSN ID where the relay could resolve it).
+  final String name;
+
+  /// Null when the position digit couldn't be read this frame.
+  final int? position;
+
+  /// This row's interval to the row above it, seconds; null if unread.
+  final double? gapToAhead;
+  final bool inPit;
+  final bool isPlayer;
+
+  const StandingsRow({
+    required this.name,
+    this.position,
+    this.gapToAhead,
+    this.inPit = false,
+    this.isPlayer = false,
+  });
+
+  factory StandingsRow.fromJson(Map<String, dynamic> json) => StandingsRow(
+        name: json['name'] as String? ?? '',
+        position: (json['position'] as num?)?.toInt(),
+        gapToAhead: (json['gapToAhead'] as num?)?.toDouble(),
+        inPit: json['inPit'] as bool? ?? false,
+        isPlayer: json['isPlayer'] as bool? ?? false,
+      );
+}
+
 /// Parsed state from the HUD Screen Parser (Component B) — produced via
 /// OCR (VNRecognizeTextRequest) on the ROI-cropped leaderboard strip.
 class HudOverlayData {
@@ -62,16 +92,10 @@ class HudOverlayData {
   /// requiring manual entry on the dashboard's tire picker.
   final String? tireCompound;
 
-  /// On-screen grid position for each of the up-to-2 chosen
-  /// championship rivals (see ChampionshipStandingsStore.loadRivals),
-  /// keyed by their exact league roster gamertag -- read from ANY
-  /// visible leaderboard row this frame, not just driverAhead/
-  /// driverBehind (see laptop_ocr/ocr_relay.py's parse_leaderboard
-  /// rival_names parameter). A rival not currently on screen simply
-  /// has no entry in this map, rather than a stale or zero value.
-  /// Empty if no rivals are configured on the laptop relay (via
-  /// --rival-names) at all.
-  final Map<String, int> rivalPositions;
+  /// Every leaderboard row visible this frame, top to bottom (the top
+  /// few cars plus a window around ours) -- where the race rival's
+  /// position, gap and pit flag are read from (see RaceRivalTracker).
+  final List<StandingsRow> standings;
 
   /// Drivers currently showing GT7's "P" (in pits) marker on the
   /// leaderboard, keyed by roster PSN ID where the relay could resolve
@@ -102,7 +126,7 @@ class HudOverlayData {
     this.tireWearRearLeftPercent,
     this.tireWearRearRightPercent,
     this.tireCompound,
-    this.rivalPositions = const {},
+    this.standings = const [],
     this.driversInPit = const {},
     this.traffic = TrafficMap.empty,
     this.playerInPit = false,
@@ -126,10 +150,10 @@ class HudOverlayData {
         tireWearRearLeftPercent: (map['tireWearRearLeftPercent'] as num?)?.toDouble(),
         tireWearRearRightPercent: (map['tireWearRearRightPercent'] as num?)?.toDouble(),
         tireCompound: map['tireCompound'] as String?,
-        rivalPositions: (map['rivalPositions'] as Map<String, dynamic>?)?.map(
-              (name, position) => MapEntry(name, (position as num).toInt()),
-            ) ??
-            const {},
+        standings: [
+          for (final row in (map['standings'] as List? ?? const []))
+            StandingsRow.fromJson(row as Map<String, dynamic>),
+        ],
         driversInPit: (map['driversInPit'] as Map<String, dynamic>?)?.map(
               (name, value) => MapEntry(name, PitLaneEntry.fromJson(value)),
             ) ??

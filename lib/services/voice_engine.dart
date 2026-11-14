@@ -76,6 +76,116 @@ class VoiceEngine {
     await audioSession.configureForVoiceEngineer();
   }
 
+  // --- Instant clips -------------------------------------------------------
+
+  /// Fixed phrases synthesised once and kept as files, so they play the
+  /// moment they're needed -- no AI model, no TTS round trip. For calls
+  /// where a second's delay matters (the rejoin "wait... go").
+  final Map<String, String> _clipFiles = {};
+
+  /// Bumped whenever a clip cuts in: a reply that was still being
+  /// generated, or playing, when it did is dropped.
+  int _generation = 0;
+  AudioPlayer? _currentPlayer;
+
+  /// The TTS socket handles one utterance at a time; everything that
+  /// uses it queues here.
+  Future<void> _ttsTail = Future.value();
+
+  Future<T> _withTts<T>(Future<T> Function() body) {
+    final result = _ttsTail.then((_) => body());
+    _ttsTail = result.then((_) {}, onError: (_) {});
+    return result;
+  }
+
+  /// Synthesises [phrases] ahead of time (call once at start-up).
+  Future<void> precacheClips(Iterable<String> phrases) async {
+    for (final phrase in phrases) {
+      try {
+        await _clipFile(phrase);
+      } catch (error) {
+        debugPrint('VoiceEngine: could not cache "$phrase": $error');
+      }
+    }
+  }
+
+  Future<String?> _clipFile(String phrase) async {
+    final cached = _clipFiles[phrase];
+    if (cached != null) return cached;
+    final bytes = await _withTts(() => _synthesize(phrase));
+    if (bytes.isEmpty) return null;
+    final isCartesia = ttsService.provider == 'cartesia';
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/boxington_clip_${phrase.hashCode.toUnsigned(32)}.${isCartesia ? 'wav' : 'mp3'}');
+    await file.writeAsBytes(isCartesia ? TtsStreamingService.wrapPcm16AsWav(bytes) : bytes);
+    return _clipFiles[phrase] = file.path;
+  }
+
+  Future<List<int>> _synthesize(String text) async {
+    await ttsService.connect();
+    final audioBytes = <int>[];
+    final sub = ttsService.audioChunks.listen(audioBytes.addAll);
+    try {
+      ttsService.sendToken(text);
+      ttsService.flush();
+      await ttsService.waitForCompletion();
+      await Future.delayed(const Duration(milliseconds: 150));
+    } finally {
+      await sub.cancel();
+      await ttsService.disconnect();
+    }
+    return audioBytes;
+  }
+
+  /// Says [phrase] straight away, cutting off whatever Boxington is
+  /// saying (or about to say). Uses the cached clip, synthesising it
+  /// first if it isn't cached yet.
+  Future<void> speakClip(String phrase) async {
+    final generation = ++_generation;
+    final interrupted = _currentPlayer;
+    _currentPlayer = null;
+    await interrupted?.stop();
+
+    final String? path;
+    try {
+      path = await _clipFile(phrase);
+    } catch (error) {
+      debugPrint('VoiceEngine.speakClip failed: $error');
+      return;
+    }
+    if (path == null || generation != _generation) return;
+
+    _setStatus(VoiceEngineStatus.responding);
+    await audioSession.setDucking(true);
+    await _play(path, generation);
+  }
+
+  /// Plays a file to the end (or until a clip cuts in), then releases
+  /// ducking and goes idle -- unless a clip has taken over meanwhile.
+  Future<void> _play(String path, int generation) async {
+    final player = AudioPlayer();
+    _currentPlayer = player;
+    try {
+      await player.setFilePath(path);
+      unawaited(player.play());
+      // Wait for playback to actually finish (or be stopped by a clip)
+      // before releasing ducking and resetting status, otherwise
+      // Boxington's voice would be un-ducked/cut short mid-sentence.
+      await player.playerStateStream.firstWhere(
+        (state) =>
+            state.processingState == ProcessingState.completed ||
+            (state.processingState == ProcessingState.idle && _currentPlayer != player),
+      );
+    } finally {
+      await player.dispose();
+      if (_currentPlayer == player) _currentPlayer = null;
+      if (generation == _generation) {
+        await audioSession.setDucking(false);
+        _setStatus(VoiceEngineStatus.idle);
+      }
+    }
+  }
+
   Future<void> onPushToTalkPressed() async {
     _setStatus(VoiceEngineStatus.listening);
     await pushToTalk.startRecording();
@@ -101,7 +211,7 @@ class VoiceEngine {
       return;
     }
     try {
-      await _streamBixResponse(syntheticPrompt, raceState);
+      await _streamBoxingtonResponse(syntheticPrompt, raceState);
     } catch (error, stackTrace) {
       debugPrint('VoiceEngine.speakProactively failed: $error\n$stackTrace');
       _setStatus(VoiceEngineStatus.error);
@@ -126,7 +236,7 @@ class VoiceEngine {
       debugPrint('VoiceEngine: Whisper transcribed "$transcript"');
       _transcriptController.add(transcript);
 
-      await _streamBixResponse(transcript, raceState);
+      await _streamBoxingtonResponse(transcript, raceState);
     } catch (error, stackTrace) {
       // Previously swallowed completely silently -- any failure here
       // (bad API key, network drop, TTS error) would just show the
@@ -139,8 +249,22 @@ class VoiceEngine {
     }
   }
 
-  Future<void> _streamBixResponse(String utterance, FusedRaceState raceState) async {
+  Future<void> _streamBoxingtonResponse(String utterance, FusedRaceState raceState) async {
+    final generation = _generation;
     _setStatus(VoiceEngineStatus.responding);
+    final path = await _withTts(() => _generateResponseAudio(utterance, raceState, generation));
+    if (path == null) return;
+    final file = File(path);
+    try {
+      await _play(path, generation);
+    } finally {
+      await file.delete().catchError((_) => file);
+    }
+  }
+
+  /// Streams the reply through the AI model and TTS into a temp file;
+  /// null if there's nothing to play (or a clip has cut in).
+  Future<String?> _generateResponseAudio(String utterance, FusedRaceState raceState, int generation) async {
     await ttsService.connect();
     await audioSession.setDucking(true);
 
@@ -184,10 +308,13 @@ class VoiceEngine {
       await ttsService.disconnect();
     }
 
+    // A clip cut in while this was being generated: it has the floor.
+    if (generation != _generation) return null;
+
     if (audioBytes.isEmpty) {
       await audioSession.setDucking(false);
       _setStatus(VoiceEngineStatus.idle);
-      return;
+      return null;
     }
 
     final isCartesia = ttsService.provider == 'cartesia';
@@ -197,26 +324,10 @@ class VoiceEngine {
 
     final dir = await getTemporaryDirectory();
     final outputFile = File(
-      '${dir.path}/bix_response_${DateTime.now().millisecondsSinceEpoch}.$extension',
+      '${dir.path}/boxington_response_${DateTime.now().millisecondsSinceEpoch}.$extension',
     );
     await outputFile.writeAsBytes(outputBytes);
-
-    final player = AudioPlayer();
-    try {
-      await player.setFilePath(outputFile.path);
-      await player.play();
-      // Wait for playback to actually finish before releasing ducking
-      // and resetting status, otherwise Boxington's voice would be
-      // un-ducked/cut short mid-sentence.
-      await player.playerStateStream.firstWhere(
-        (state) => state.processingState == ProcessingState.completed,
-      );
-    } finally {
-      await player.dispose();
-      await outputFile.delete().catchError((_) => outputFile);
-      await audioSession.setDucking(false);
-      _setStatus(VoiceEngineStatus.idle);
-    }
+    return outputFile.path;
   }
 
   void dispose() {

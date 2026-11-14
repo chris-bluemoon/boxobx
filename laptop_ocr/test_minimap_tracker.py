@@ -104,6 +104,45 @@ def check_seconds_behind(clockwise):
     )
 
 
+def check_seconds_to_reach_while_stopped(full_lap_first):
+    """The driver stops for 20 s (an off); a car 6 s behind keeps going.
+    seconds_behind keeps growing while we sit there, but seconds_to_reach
+    must count down as the car approaches."""
+    tracker = m.TrafficTracker()
+    t = 0.0
+    lap_end = 90.0 if full_lap_first else 30.0
+
+    def opponent_frame(t, driver_t, car_t):
+        frame = np.full((1080, 1920, 3), (150, 110, 70), np.uint8)
+        cv2.circle(frame, CENTRE, RADIUS, (245, 245, 245), 6)
+
+        def point(seconds):
+            angle = 2 * math.pi * seconds / LAP_SECONDS
+            return int(CENTRE[0] + RADIUS * math.cos(angle)), int(CENTRE[1] + RADIUS * math.sin(angle))
+
+        cv2.circle(frame, point(car_t), 4, (240, 200, 120), -1)
+        cv2.circle(frame, point(driver_t), 4, (30, 30, 230), -1)
+        return frame
+
+    while t <= lap_end:
+        tracker.update(opponent_frame(t, t, t - 15.0), t)
+        t += 1.0
+    stop_at = lap_end
+    readings = []
+    for k in range(1, 12):
+        now = stop_at + k
+        # The driver is parked; the car, 15 s behind when we stopped, closes in.
+        snap = tracker.update(opponent_frame(now, stop_at, now - 15.0), now)
+        reach = [c.seconds_to_reach for c in snap.cars if c.seconds_to_reach is not None]
+        readings.append((15.0 - k, reach[0] if reach else None))
+    label = "after a full lap" if full_lap_first else "on the first lap"
+    late = readings[-6:]
+    check(
+        f"[{label}] seconds-to-reach counts down while we're stopped (got {[None if r is None else round(r, 1) for _, r in late]})",
+        all(r is not None and abs(r - want) < 2.0 for want, r in late),
+    )
+
+
 def check_relearns_when_map_changes():
     tracker = m.TrafficTracker()
     for i in range(20):
@@ -118,5 +157,7 @@ check_circular_delta()
 check_real_recording()
 check_seconds_behind(clockwise=True)
 check_seconds_behind(clockwise=False)
+check_seconds_to_reach_while_stopped(full_lap_first=True)
+check_seconds_to_reach_while_stopped(full_lap_first=False)
 check_relearns_when_map_changes()
 print("\nAll minimap tracker checks passed.")

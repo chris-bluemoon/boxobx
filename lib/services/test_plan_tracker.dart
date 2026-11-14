@@ -56,8 +56,7 @@ class TestPlanTracker {
   /// Long stints also end when fuel gets this low...
   static const double fuelOutPercent = 5;
 
-  /// ...or when the latest lap is this much slower than the stint's best.
-  static const double dropOffLimitMs = 1500;
+  // ...or once the tyres have dropped off (StintSummary.tyreDropOff).
 
   /// Wear readings are noisy; within this of the target counts as reached.
   static const double wearTolerancePercent = 2;
@@ -89,9 +88,10 @@ class TestPlanTracker {
         }
         final fuel = liveFuelPercent ?? stint?.laps.last.fuelPercentAtLapEnd;
         if (fuel != null && fuel <= fuelOutPercent) return 'fuel nearly out (${fuel.toStringAsFixed(0)}%)';
-        final dropOff = stint == null ? null : _latestLapOffBestMs(stint);
-        if (dropOff != null && dropOff >= dropOffLimitMs) {
-          return 'lap times ${(dropOff / 1000).toStringAsFixed(1)}s off the stint best';
+        final dropOff = stint?.tyreDropOff;
+        if (dropOff != null) {
+          return 'tyres dropped off from lap ${dropOff.fromLapNumber}, '
+              '${(dropOff.lossMs / 1000).toStringAsFixed(1)}s a lap off peak pace';
         }
         return null;
     }
@@ -109,13 +109,6 @@ class TestPlanTracker {
       return ((100 - planned.stopAtWearRemainingPercent!) / perLap).round();
     }
     return null;
-  }
-
-  static double? _latestLapOffBestMs(StintSummary stint) {
-    final clean = stint.laps.where((l) => !l.isPitLap).toList();
-    if (clean.length < 3) return null;
-    final best = clean.map((l) => l.lapTimeMs).reduce((a, b) => a < b ? a : b);
-    return (clean.last.lapTimeMs - best).toDouble();
   }
 
   /// Each planned test is in progress while it's the [activeTestNumber];

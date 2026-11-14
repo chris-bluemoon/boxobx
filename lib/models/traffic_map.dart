@@ -12,12 +12,19 @@ class TrafficCar {
   /// trajectory.
   final double? secondsBehind;
 
-  const TrafficCar({required this.lapProgress, this.count = 1, this.secondsBehind});
+  /// How long this car takes to reach our current point at our own
+  /// pace. Unlike [secondsBehind] it doesn't grow while we're stopped
+  /// (after a spin or an off), so it's a real arrival time -- see
+  /// RejoinCoach. Null until the relay can time it.
+  final double? secondsToReach;
+
+  const TrafficCar({required this.lapProgress, this.count = 1, this.secondsBehind, this.secondsToReach});
 
   factory TrafficCar.fromJson(Map<String, dynamic> json) => TrafficCar(
         lapProgress: (json['lapProgress'] as num).toDouble(),
         count: (json['count'] as num?)?.toInt() ?? 1,
         secondsBehind: (json['secondsBehind'] as num?)?.toDouble(),
+        secondsToReach: (json['secondsToReach'] as num?)?.toDouble(),
       );
 }
 
@@ -55,6 +62,19 @@ class TrafficMap {
     final lap = lapSeconds;
     if (behind == null || lap == null || lap <= 0) return null;
     return behind <= lap / 2 ? behind : behind - lap;
+  }
+
+  /// Seconds until the next car reaches us from behind, at our own
+  /// pace: [double.infinity] when no car is within [horizonSeconds], null
+  /// when the map can't tell (not ready, or not timed yet).
+  double? nextArrivalSeconds({double horizonSeconds = 15}) {
+    if (!trackReady || playerLapProgress == null) return null;
+    final arrivals = [for (final car in cars) car.secondsToReach];
+    if (arrivals.isNotEmpty && arrivals.every((s) => s == null)) return null;
+    return arrivals
+        .whereType<double>()
+        .where((s) => s <= horizonSeconds)
+        .fold<double>(double.infinity, (a, b) => b < a ? b : a);
   }
 
   /// Compact summary for Boxington: how many cars are close behind/ahead,

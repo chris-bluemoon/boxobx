@@ -17,8 +17,10 @@ import '../services/tts_streaming_service.dart';
 import '../services/native_audio_session_service.dart';
 import '../services/voice_engine.dart';
 import '../services/proactive_coach_trigger.dart';
+import '../services/rejoin_coach.dart';
 import '../services/saved_briefing_store.dart';
-import '../services/rival_monitor.dart';
+import '../services/league_roster.dart';
+import '../services/race_rival_store.dart';
 import '../models/shift_event.dart';
 import '../models/opponent_pit_stop.dart';
 import '../services/rejoin_forecaster.dart';
@@ -67,9 +69,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   late final FusedRaceStateManager _raceStateManager;
   late final VoiceEngine _voiceEngine;
   final _shiftCoachTrigger = ProactiveCoachTrigger();
-  final _rivalMonitor = RivalMonitor();
   final _pitCallAdvisor = PitCallAdvisor();
   final _testPlanCaller = TestPlanCaller();
+  final _dropOffCaller = TyreDropOffCaller();
+  int _dropOffCheckedLaps = -1;
 
   /// The practice test plan for the saved round (see TestPlan), built
   /// from its briefing; null with no round saved.
@@ -174,19 +177,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// side effects the dropdown's own onChanged handler performs for a
   /// manual selection. Call this every time a new FusedRaceState comes
   /// in from the race-state stream.
-  /// If any of the driver's chosen championship rivals (see
-  /// ChampionshipScreen/RivalMonitor) just changed on-screen position,
-  /// has Boxington call it out unprompted -- same proactive-callout
-  /// mechanism ProactiveCoachTrigger uses for shift-habit callouts, but
-  /// unconditionally enabled here (unlike the currently-disabled shift
-  /// coaching) since this is Phase B's actual deliverable.
-  void _maybeTriggerRivalPositionCallout(FusedRaceState state) {
-    final syntheticPrompt = _rivalMonitor.check(state.hud.rivalPositions);
-    // Still checked in practice so tracking stays current; just not spoken.
-    if (syntheticPrompt == null || !_mode.rivalCallouts || _choosingMode) return;
-    _voiceEngine.speakProactively(syntheticPrompt, state);
-  }
-
   /// Boxington's test-plan call (Practice Mode): the running test has
   /// reached its target.
   void _maybeMakeTestPlanCall(FusedRaceState state) {
@@ -221,6 +211,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     Timer(const Duration(seconds: 15), closeTest);
   }
 
+  /// Boxington's drop-off call (Practice Mode, outside a test -- a test
+  /// stint's own call covers it): the current stint's tyres have gone
+  /// off. Checked once per new lap.
+  void _maybeMakeDropOffCall(FusedRaceState state) {
+    if (!_mode.testPlan || _choosingMode) return;
+    if (state.practiceLaps.length == _dropOffCheckedLaps) return;
+    _dropOffCheckedLaps = state.practiceLaps.length;
+    if (_raceStateManager.practiceLapLogger.activeTestNumber != null) return;
+    final prompt = _dropOffCaller.check(_currentStintSummary());
+    if (prompt != null) _voiceEngine.speakProactively(prompt, state);
+  }
+
   /// Time Trialing: after each clean lap, Boxington names the corner where
   /// the most time went against the reference lap and what to change
   /// (see CornerReport) -- once per lap, and only if it's worth saying.
@@ -242,6 +244,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   CornerReport? _lastCalledCornerReport;
+
+  /// "Wait... wait... GO" after a spin or an off (see RejoinCoach).
+  final _rejoinCoach = RejoinCoach();
+
+  static const _rejoinWords = {RejoinCall.wait: 'Wait.', RejoinCall.go: 'Go! Go! Go!'};
+
+  void _maybeMakeRejoinCall(FusedRaceState state) {
+    final onTrack = state.sessionPhase == SessionPhase.driving || state.sessionPhase == SessionPhase.unknown;
+    if (!_mode.incidentCalls || _choosingMode || !onTrack) return;
+    final call = _rejoinCoach.update(
+      speedKmh: state.telemetry.speedKmh,
+      inPitLane: state.hud.playerInPit,
+      traffic: state.hud.traffic,
+      now: DateTime.now(),
+    );
+    if (call != null) _voiceEngine.speakClip(_rejoinWords[call]!);
+  }
 
   /// Losses smaller than this (ms) aren't worth a call.
   static const _cornerCallMinLossMs = 50;
@@ -567,7 +586,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// Championship rivals (those the relay tracks positions for) are
   /// flagged so he can treat them as the priority.
   String _opponentPitCalloutPrompt(List<OpponentPitStop> stops) {
-    final rivals = _state.hud.rivalPositions.keys.toSet();
+    final rival = _raceStateManager.raceRivalTracker.rival;
     final descriptions = stops
         .map((s) {
           final details = [
@@ -575,7 +594,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             if (OpponentPitStop.tyreName(s.tyre) != null) 'fitting ${OpponentPitStop.tyreName(s.tyre)}',
             if (s.fuel != null) 'taking ${s.fuel} fuel',
           ];
-          final who = rivals.contains(s.driver) ? 'championship rival ${s.driver}' : s.driver;
+          final who = s.driver == rival ? 'our RACE RIVAL ${s.driver}' : s.driver;
           return details.isEmpty ? who : '$who (${details.join(', ')})';
         })
         .join('; ');
@@ -612,6 +631,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     _loadActiveRoundName();
     _loadMode();
+    _loadRaceRival();
     TrackOutlines.load().then((outlines) {
       if (mounted) setState(() => _trackOutlines = outlines);
     });
@@ -629,16 +649,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
 
     _voiceEngine.initialize();
+    // Rejoin words play instantly from cache (no AI or TTS round trip).
+    if (widget.connectOnStart) _voiceEngine.precacheClips(_rejoinWords.values);
 
     _raceStateManager.stream.listen((state) {
       if (!mounted) return;
       _trackPositionLoss(state.hud.gridPosition);
       setState(() => _state = state);
       _maybeAutoFillTireCompoundFromOcr(state);
-      _maybeTriggerRivalPositionCallout(state);
       _maybeMakePitCall(state);
       _maybeMakeTestPlanCall(state);
+      _maybeMakeDropOffCall(state);
       _maybeMakeCornerCall(state);
+      _maybeMakeRejoinCall(state);
       // Temporarily disabled -- proactive shift-habit voice callouts
       // aren't behaving correctly yet (reported live, not yet root
       // caused). Re-enable once fixed; the underlying trigger/advisor
@@ -667,6 +690,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // Stops are logged in both modes; only called out in a race.
       if (!_mode.opponentPitCallouts || _choosingMode) return;
       _voiceEngine.speakProactively(_opponentPitCalloutPrompt(stops), _state);
+    });
+
+    _raceStateManager.rivalEvents.listen((event) {
+      if (!_mode.rivalCallouts || _choosingMode) return;
+      _voiceEngine.speakProactively(event.prompt, _state);
+    });
+
+    _raceStateManager.crashes.listen((crash) {
+      if (!_mode.incidentCalls || _choosingMode) return;
+      _voiceEngine.speakProactively(crash.toPrompt(), _state);
     });
 
     _raceStateManager.telemetryStatusStream.listen((status) {
@@ -825,9 +858,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // new session's first reading and fire a spurious "rival moved"
     // callout purely from the session boundary, not a real on-track
     // change.
-    _rivalMonitor.reset();
     _pitCallAdvisor.reset();
     _testPlanCaller.reset();
+    _dropOffCaller.reset();
+    _rejoinCoach.reset();
     _voiceEngine.clearQueuedCallouts();
     _lastGridPosition = null;
     _positionLostAt = null;
@@ -974,8 +1008,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
             (_state.sessionPhase == SessionPhase.paused || _state.sessionPhase == SessionPhase.offTrack))
           _chip(_state.sessionPhase == SessionPhase.paused ? 'PAUSED' : 'OFF TRACK', color: Colors.grey.shade800),
         if (_mode == AppMode.race) ?_timeTrialComparisonChip(),
+        if (_mode.rivalCallouts) _rivalChip(),
       ],
     );
+  }
+
+  /// The race rival: who, and where they are; tap to choose.
+  Widget _rivalChip() {
+    final rival = _raceStateManager.raceRivalTracker.rival;
+    if (rival == null) {
+      return _chip('PICK RIVAL', color: Colors.grey.shade800, border: Colors.amber.shade700, onTap: _pickRival);
+    }
+    final state = _state.raceRival;
+    final gap = state?.gapSeconds;
+    final parts = [
+      'RIVAL: $rival',
+      if (state?.position != null) 'P${state!.position}',
+      if (gap != null) '${gap >= 0 ? '+' : '-'}${gap.abs().toStringAsFixed(1)}s',
+      if (state?.inPit ?? false) 'PIT',
+      if (state?.inTrouble ?? false) 'STOPPED',
+    ];
+    return _chip(
+      parts.join(' · '),
+      color: Colors.amber.shade900.withValues(alpha: 0.4),
+      border: Colors.amber.shade700,
+      onTap: _pickRival,
+    );
+  }
+
+  Future<void> _pickRival() async {
+    final current = _raceStateManager.raceRivalTracker.rival;
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Race rival'),
+        children: [
+          for (final name in leagueRoster)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, name),
+              child: Text(name, style: TextStyle(fontWeight: name == current ? FontWeight.bold : FontWeight.normal)),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, ''),
+            child: const Text('No rival', style: TextStyle(color: Colors.grey)),
+          ),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final rival = picked.isEmpty ? null : picked;
+    setState(() => _raceStateManager.setRaceRival(rival));
+    RaceRivalStore.save(rival);
+  }
+
+  Future<void> _loadRaceRival() async {
+    final rival = await RaceRivalStore.load();
+    if (!mounted || rival == null) return;
+    setState(() => _raceStateManager.setRaceRival(rival));
   }
 
   /// Stint Testing's tyre row: the tyre laps are being logged on,
@@ -1369,9 +1458,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final fuel = _state.sessionPhase == SessionPhase.offTrack ? null : _state.telemetry.fuelPercent;
     final expected = running == null ? null : progress!.expectedLaps[running.number - 1];
     final fuelPerLap = stint?.fuelPerLapPercent;
-    final clean = stint?.laps.where((l) => !l.isPitLap).toList() ?? const [];
-    final best = clean.isEmpty ? null : clean.map((l) => l.lapTimeMs).reduce((a, b) => a < b ? a : b);
+    final best = stint?.bestLapMs;
     final dropOff = stint?.dropOffMs;
+    final wentOff = stint?.tyreDropOff != null;
 
     Widget tile(String label, String value, {bool alert = false}) => Expanded(
       child: TelemetryCard(label: label, value: value, alert: alert),
@@ -1419,8 +1508,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     tile('BEST (STINT)', _lapTime(best)),
                     const SizedBox(width: 12),
                     tile(
-                      'DROP-OFF',
+                      wentOff ? 'DROPPED OFF' : 'DROP-OFF',
                       dropOff == null ? '--' : '${dropOff >= 0 ? '+' : ''}${(dropOff / 1000).toStringAsFixed(2)}s',
+                      alert: wentOff,
                     ),
                   ],
                 ),

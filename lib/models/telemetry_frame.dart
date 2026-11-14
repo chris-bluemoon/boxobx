@@ -136,6 +136,7 @@ class TelemetryFrame {
     'carCode': carCode,
     'minAlertRpm': minAlertRpm,
     'maxAlertRpm': maxAlertRpm,
+    'packetId': packetId,
   };
 
   factory TelemetryFrame.fromMap(Map<String, dynamic> map) => TelemetryFrame(
@@ -159,6 +160,7 @@ class TelemetryFrame {
     carCode: (map['carCode'] as num?)?.toInt() ?? 0,
     minAlertRpm: (map['minAlertRpm'] as num?)?.toInt() ?? 0,
     maxAlertRpm: (map['maxAlertRpm'] as num?)?.toInt() ?? 0,
+    packetId: (map['packetId'] as num?)?.toInt() ?? 0,
   );
 }
 

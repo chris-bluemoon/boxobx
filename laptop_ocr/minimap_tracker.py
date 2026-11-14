@@ -45,6 +45,10 @@ import numpy as np
 # circuit's real length.
 LAP_PROGRESS_MAX = 1000.0
 
+# Below this pace (lap progress per second; a 90 s lap averages ~11) the
+# driver counts as stopped when timing a stretch of the current lap.
+MIN_MOVING_PROGRESS_PER_SECOND = 2.0
+
 # Generous top-right search box (1080p reference coordinates) for the
 # course map. Different circuits draw differently-shaped maps, so this
 # is wider than any one map; it stops above GT7's wind indicator
@@ -226,6 +230,11 @@ class TrafficCar:
     # far behind us around the lap, in seconds). None until a full lap
     # of the driver's own trajectory has been recorded.
     seconds_behind: float | None = None
+    # How long this car takes to reach the driver's current point at the
+    # driver's own pace, 0..lap time. Unlike seconds_behind it doesn't
+    # grow while the driver is stopped (after a spin or an off), so it's
+    # a real arrival time -- what the "wait... go" rejoin call needs.
+    seconds_to_reach: float | None = None
 
 
 @dataclass
@@ -245,6 +254,7 @@ class TrafficSnapshot:
                     "lapProgress": round(c.lap_progress, 1),
                     "count": c.count,
                     "secondsBehind": None if c.seconds_behind is None else round(c.seconds_behind, 2),
+                    "secondsToReach": None if c.seconds_to_reach is None else round(c.seconds_to_reach, 2),
                 }
                 for c in self.cars
             ],
@@ -296,6 +306,7 @@ class TrafficTracker:
         if player_s is not None and self._direction_known:
             for car in cars:
                 car.seconds_behind = self._seconds_behind(player_s, car.lap_progress)
+                car.seconds_to_reach = self._seconds_to_reach(player_s, car.lap_progress)
 
         return TrafficSnapshot(
             track_ready=True,
@@ -386,6 +397,37 @@ class TrafficTracker:
         now_s, now_t = self._trail_s[-1], self._trail_t[-1]
         passed_at = self._time_at(now_s - distance_behind)
         return None if passed_at is None else now_t - passed_at
+
+    def _seconds_to_reach(self, player_s: float, car_s: float) -> float | None:
+        """How long a car at car_s takes to reach the driver's point at
+        the driver's own pace: the time the driver took over that same
+        stretch on the previous lap or, without a previous lap yet, on
+        the current one with any time spent (nearly) stopped left out."""
+        if not self._trail_s:
+            return None
+        distance_behind = (player_s - car_s) % LAP_PROGRESS_MAX
+        now_s = self._trail_s[-1]
+
+        lap_ago_end = self._time_at(now_s - LAP_PROGRESS_MAX)
+        lap_ago_start = self._time_at(now_s - LAP_PROGRESS_MAX - distance_behind)
+        if lap_ago_end is not None and lap_ago_start is not None:
+            return lap_ago_end - lap_ago_start
+
+        start_s = now_s - distance_behind
+        if start_s < self._trail_s[0]:
+            return None
+        moving = 0.0
+        for i in range(bisect_left(self._trail_s, start_s), len(self._trail_s)):
+            if i == 0:
+                continue
+            s0, s1 = self._trail_s[i - 1], self._trail_s[i]
+            dt = self._trail_t[i] - self._trail_t[i - 1]
+            ds = s1 - s0
+            if ds <= 0 or dt <= 0 or ds / dt < MIN_MOVING_PROGRESS_PER_SECOND:
+                continue
+            covered = s1 - max(s0, start_s)
+            moving += dt * covered / ds
+        return moving
 
     def _lap_seconds(self) -> float | None:
         """Duration of the driver's most recent full lap on the map."""

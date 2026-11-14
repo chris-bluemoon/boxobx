@@ -86,7 +86,13 @@ already see directly on GT7's own HUD. The metric Boxington actually needs
 is whether that gap is **shrinking or growing** -- that's what
 `gapAheadTrend`/`gapBehindTrend` report, as one of `"closing"`,
 `"losing"`, `"steady"`, or `"unknown"` (not enough recent history yet,
-or the rival isn't currently visible in the on-screen leaderboard).
+or that car isn't currently visible in the on-screen leaderboard).
+
+Every visible row is also sent as `standings` (roster-corrected name,
+position, its own gap to the row above, pit marker, and which row is
+yours). The app follows the race rival you pick on its Race Mode
+screen from these rows plus the course map, so there's no rival flag
+to set here.
 
 This is computed by `GapTracker`, which keeps a short rolling window of
 the last several gap readings (default 5 samples at 5Hz = ~1 second) per
@@ -151,7 +157,7 @@ independent UDP streams converge on the mobile device:
 | Data | Source | Port |
 |---|---|---|
 | RPM/speed/gear/position/fuel/tires | PS5/GT7 directly (see telemetry_udp_service.dart) | 33740 (receive) / 33739 (heartbeat) |
-| Grid position/rival names/gaps | This laptop relay | 33746 |
+| Grid position/standings/gaps/course map | This laptop relay | 33746 |
 
 If your network has client isolation enabled (common on guest networks),
 either or both UDP paths will silently fail — use the dashboard's

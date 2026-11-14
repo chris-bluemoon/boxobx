@@ -58,6 +58,11 @@ void main() {
     expect(frame.carCode, 3218);
   });
 
+  test('the packet counter survives the trip from the UDP isolate', () {
+    final packet = _encryptedPacket((p) => p.setInt32(0x70, 4242, Endian.little));
+    expect(TelemetryFrame.fromMap(decodeGt7Packet(packet)!.toMap()).packetId, 4242);
+  });
+
   test('paused and loading frames are not "driving"', () {
     final paused = decodeGt7Packet(
       _encryptedPacket((p) {

@@ -5,7 +5,7 @@ Boxbox Laptop HUD OCR Relay
 Captures the HDMI-mirrored PS5 feed from a USB capture card (via OpenCV),
 crops a strict, hand-measured leaderboard bounding box (not a wide
 percentage-of-frame region), runs OCR at a throttled
-~5Hz, parses grid position / rival driver names / gap intervals, and
+~5Hz, parses grid position / every visible standings row / gap intervals, and
 streams the result as JSON over UDP to the iPhone running Boxbox
 (HudOcrService listens on port 33746).
 """
@@ -582,7 +582,6 @@ def parse_leaderboard(
     roi_height: int = 0,
     debug: bool = False,
     position_reread_fn=None,
-    rival_names=None,
     header_position=None,
     pit_marker_fn=None,
     pit_service_fn=None,
@@ -612,17 +611,13 @@ def parse_leaderboard(
     (which use the original single-pass behavior), and wired to a real
     preprocessing re-read only in the live capture loop.
 
-    rival_names, when provided (a list of exact league roster
-    gamertags -- see driver_roster.py), makes this ALSO scan every
-    parsed row (not just driverAhead/driverBehind) for a position
-    reading on any of those specific drivers, returned as the
-    "rivalPositions" dict (gamertag -> position, only for whichever
-    rivals were actually visible/readable this frame -- a rival not
-    currently on screen simply has no entry, rather than a stale or
-    0 value). GT7's leaderboard renders several rows at once (the top
-    few plus a sliding window around the driver's own car), so a
-    chosen rival is often directly readable even when they're not
-    immediately ahead/behind the driver.
+    Every parsed row is also returned in "standings", top to bottom:
+    roster-corrected name, position (None if unread), gapToAhead (that
+    row's own interval to the row above it, None if unread), inPit and
+    isPlayer. GT7 shows the top few cars plus a window around the
+    driver's own, so a chosen rival is often readable even when not
+    directly ahead/behind -- the app picks its race rival out of this
+    (see lib/services/race_rival_tracker.dart).
 
     header_position, when provided, is the driver's position as read off
     the big HUD digit tile (see read_header_position; 0 = unreadable).
@@ -768,32 +763,6 @@ def parse_leaderboard(
         )
         pending_gap_to_ahead = None
 
-    # Rival-position lookup runs over EVERY parsed entry regardless of
-    # whether the driver's own row gets matched below -- a chosen
-    # rival's row is independent of own_index, and should still be
-    # reported even on a frame where the driver's own row couldn't be
-    # confidently located (e.g. a brief highlight-detection miss). Each
-    # entry's name here is only normalized (see _normalize_driver_name
-    # above, applied when the entry was built), not yet roster-corrected
-    # -- that correction is applied right here, against rival_names
-    # specifically, since a rival's row can equally be garbled this
-    # frame and needs the same fuzzy-match treatment driverAhead/
-    # driverBehind get below (against the full LEAGUE_ROSTER instead).
-    rival_positions = {}
-    if rival_names:
-        for entry in entries:
-            if entry["position"] is None:
-                continue
-            # Never report the driver's OWN row as a rival's position --
-            # matched by name or nickname alias (see is_same_driver), so
-            # it holds whether --driver-name is the on-screen nickname
-            # or the PSN ID.
-            if is_same_driver(driver_name, entry["name"]):
-                continue
-            corrected = correct_driver_name(entry["name"], roster=rival_names)
-            if corrected in rival_names:
-                rival_positions[corrected] = entry["position"]
-
     drivers_in_pit = {}
     for entry in entries:
         if not entry["in_pit"] or is_same_driver(driver_name, entry["name"]):
@@ -821,6 +790,17 @@ def parse_leaderboard(
     if debug:
         _report_unmatched_names(entries)
 
+    standings = [
+        {
+            "name": correct_driver_name(entry["name"]),
+            "position": entry["position"],
+            "gapToAhead": entry["gap_to_ahead"],
+            "inPit": entry["in_pit"],
+            "isPlayer": index == own_index,
+        }
+        for index, entry in enumerate(entries)
+    ]
+
     if own_index is None:
         if debug:
             if not entries:
@@ -840,7 +820,7 @@ def parse_leaderboard(
             "gapAheadSeconds": None,
             "gapBehindSeconds": None,
             "gapToLeaderSeconds": None,
-            "rivalPositions": rival_positions,
+            "standings": standings,
             "driversInPit": drivers_in_pit,
             "playerInPit": False,
             "playerPitService": None,
@@ -903,7 +883,7 @@ def parse_leaderboard(
         "gapAheadSeconds": own_entry["gap_to_ahead"],
         "gapBehindSeconds": behind_entry["gap_to_ahead"] if behind_entry else None,
         "gapToLeaderSeconds": own_entry["gap_to_leader"],
-        "rivalPositions": rival_positions,
+        "standings": standings,
         "driversInPit": drivers_in_pit,
         # Our own car shows the same "P" marker (and tyre/fuel boxes)
         # while in the pit lane.
@@ -1231,20 +1211,6 @@ def main() -> None:
         "extracted relative to your actual position. Required unless "
         "using --list-devices.",
     )
-    parser.add_argument(
-        "--rival-names",
-        type=str,
-        default="",
-        help="Comma-separated exact league roster gamertags (see "
-        "driver_roster.py) to track the on-screen POSITION of every "
-        "frame, independent of driverAhead/driverBehind -- e.g. "
-        "'Chuck_E82,Willy-SwerveX'. Optional; if omitted, "
-        "rivalPositions is always empty in the UDP payload. Intended "
-        "to be set from the app's 2 chosen championship rivals (see "
-        "ChampionshipStandingsStore.loadRivals on the Dart side), not "
-        "typed by hand every session -- but a manual value works too "
-        "for testing.",
-    )
     args = parser.parse_args()
 
     if args.list_devices:
@@ -1291,10 +1257,6 @@ def main() -> None:
     # minimap_tracker.py) -- learns the circuit outline by itself.
     traffic_tracker = TrafficTracker()
     player_in_pit_streak = 0
-    rival_names = [name.strip() for name in args.rival_names.split(",") if name.strip()]
-    rival_position_stabilizers = {
-        name: GridPositionStabilizer(stability_threshold=args.position_stability) for name in rival_names
-    }
 
     sample_interval = 1.0 / args.sample_hz
     last_sample_time = 0.0
@@ -1358,7 +1320,6 @@ def main() -> None:
                 position_reread_fn=lambda row_items: reread_position_column(
                     reader, roi, row_items, roi.shape[1]
                 ),
-                rival_names=rival_names,
                 header_position=read_header_position(reader, frame),
                 pit_marker_fn=lambda row_items: row_has_pit_marker(
                     frame, roi_y_offset + sum(y for _t, _x, y in row_items) / len(row_items)
@@ -1373,20 +1334,6 @@ def main() -> None:
             parsed["playerInPit"] = player_in_pit_streak >= pit_marker_stabilizer.stability_threshold
             if not parsed["playerInPit"]:
                 parsed["playerPitService"] = None
-
-            # Each rival gets the SAME debounce treatment as the
-            # driver's own gridPosition (see GridPositionStabilizer) --
-            # a rival not visible this frame holds its last confirmed
-            # position rather than disappearing/flickering, and a
-            # single garbled read doesn't immediately report a bogus
-            # position change.
-            raw_rival_positions = parsed.pop("rivalPositions")
-            stabilized_rival_positions = {}
-            for name in rival_names:
-                stabilized = rival_position_stabilizers[name].update(raw_rival_positions.get(name))
-                if stabilized:
-                    stabilized_rival_positions[name] = stabilized
-            parsed["rivalPositions"] = stabilized_rival_positions
 
             parsed["driverAhead"] = stabilizer.update("ahead", parsed["driverAhead"])
             parsed["driverBehind"] = stabilizer.update("behind", parsed["driverBehind"])

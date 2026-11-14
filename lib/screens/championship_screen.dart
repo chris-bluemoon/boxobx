@@ -9,12 +9,9 @@ import '../services/league_roster.dart';
 /// by sorting on total, never entered directly -- see
 /// ChampionshipStandingsStore.sortedByPosition).
 ///
-/// Standings entry ONLY -- there is deliberately no rival
-/// selection/monitoring UI here. Which drivers Boxington actively tracks
-/// on-track (see RivalMonitor/parse_leaderboard's rival_names) is
-/// configured as a command-line flag (--rival-names) on the laptop OCR
-/// relay itself, not through this screen -- the driver picks the 2
-/// rivals by hand each session when starting the relay.
+/// Standings entry ONLY -- there is deliberately no rival selection UI
+/// here. The race rival Boxington tracks on track is picked on the Race
+/// Mode screen (see RaceRivalTracker).
 class ChampionshipScreen extends StatefulWidget {
   const ChampionshipScreen({super.key});
 
@@ -246,8 +243,8 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
 
     // Plain, non-interactive row -- display + entry fields only. No
     // tap target, no highlight state: rival selection isn't a concept
-    // this screen has at all (see the class doc comment -- that's a
-    // --rival-names flag on the laptop relay now, not picked here).
+    // this screen has at all (the race rival is picked on the Race
+    // Mode screen).
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),

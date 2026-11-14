@@ -39,23 +39,27 @@ void main() {
     });
   });
 
-  group('HudOverlayData.fromMap rivalPositions', () {
-    test('parses a non-empty rivalPositions map', () {
+  group('HudOverlayData.fromMap standings', () {
+    test('parses every visible leaderboard row', () {
       final data = HudOverlayData.fromMap({
         'gridPosition': 9,
-        'rivalPositions': {'Chuck_E82': 4, 'Willy-SwerveX': 7},
+        'standings': [
+          {'name': 'Chuck_E82', 'position': 8, 'gapToAhead': null, 'inPit': true, 'isPlayer': false},
+          {'name': 'Willy-SwerveX', 'position': 9, 'gapToAhead': 1.4, 'inPit': false, 'isPlayer': true},
+        ],
       });
-
-      expect(data.rivalPositions, {'Chuck_E82': 4, 'Willy-SwerveX': 7});
+      expect(data.standings, hasLength(2));
+      expect(data.standings[0].name, 'Chuck_E82');
+      expect(data.standings[0].inPit, isTrue);
+      expect(data.standings[0].gapToAhead, isNull);
+      expect(data.standings[1].position, 9);
+      expect(data.standings[1].gapToAhead, 1.4);
+      expect(data.standings[1].isPlayer, isTrue);
     });
 
-    test('defaults to an empty map when absent', () {
-      final data = HudOverlayData.fromMap({'gridPosition': 9});
-      expect(data.rivalPositions, isEmpty);
-    });
-
-    test('HudOverlayData.empty() has an empty rivalPositions map', () {
-      expect(HudOverlayData.empty().rivalPositions, isEmpty);
+    test('defaults to no rows when absent', () {
+      expect(HudOverlayData.fromMap({'gridPosition': 9}).standings, isEmpty);
+      expect(HudOverlayData.empty().standings, isEmpty);
     });
   });
 }

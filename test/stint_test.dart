@@ -138,6 +138,80 @@ void main() {
     });
   });
 
+  group('representative laps and tyre drop-off', () {
+    // Lap-to-lap scatter of a decent driver, about +-0.2 s.
+    const noise = [0, 150, -120, 210, -80, 60, -190, 130, -40, 170, -150, 90, -60, 200, -110, 40, -170, 120];
+
+    List<PracticeLapRecord> laps(List<int> times, {double wearStart = 100, double wearPerLap = 4}) => [
+      for (final (i, t) in times.indexed)
+        PracticeLapRecord(
+          lapNumber: i + 1,
+          lapTimeMs: t,
+          tireCompound: 'Racing Soft',
+          fuelPercentAtLapStart: 100 - i * 3.0,
+          fuelPercentAtLapEnd: 97 - i * 3.0,
+          tireWearPercent: wearStart - (i + 1) * wearPerLap,
+          recordedAt: DateTime(2026, 1, 1, 0, i),
+          stintNumber: 1,
+        ),
+    ];
+
+    test('a spin and a cold out-lap are left out; ordinary scatter is not', () {
+      final times = [for (var i = 0; i < 12; i++) 90000 + noise[i]];
+      times[0] = 93500; // out-lap on cold tyres
+      times[6] = 98000; // spin
+      final s = StintSummary.fromLaps(laps(times)).single;
+      expect(s.excludedLaps.map((l) => l.lapNumber), [1, 7]);
+      expect(s.lapCount, 10);
+      expect(s.consistencyMs!, inInclusiveRange(100, 250));
+      expect(s.bestLapMs, 89850); // lap 11; lap 7 (the spin) is out
+      expect(s.averageLapMs!, closeTo(90000, 120));
+      expect(s.tyreDropOff, isNull);
+    });
+
+    test('steady pace with scatter and a spin is no drop-off', () {
+      final times = [for (var i = 0; i < 18; i++) 90000 + noise[i]];
+      times[9] = 96000;
+      expect(StintSummary.fromLaps(laps(times)).single.tyreDropOff, isNull);
+    });
+
+    test('a cliff: pace holds, then falls away and stays down', () {
+      final times = [
+        for (var i = 0; i < 16; i++) 90000 + noise[i] + (i >= 10 ? 1200 + (i - 10) * 300 : 0),
+      ];
+      final s = StintSummary.fromLaps(laps(times)).single;
+      final dropOff = s.tyreDropOff!;
+      expect(dropOff.fromLapNumber, 11);
+      expect(dropOff.lapsBeforeDropOff, 10);
+      expect(dropOff.wearPercentAtDropOff, 60); // after lap 10 at 4%/lap
+      expect(dropOff.lossMs, closeTo(2000, 300));
+      expect(s.excludedLaps, isEmpty); // the slow laps are the tyres, not mistakes
+    });
+
+    test('gradual wear is a drop-off once it is clearly past the scatter', () {
+      final times = [for (var i = 0; i < 14; i++) 90000 + noise[i] + i * 120];
+      final dropOff = StintSummary.fromLaps(laps(times)).single.tyreDropOff!;
+      expect(dropOff.fromLapNumber, inInclusiveRange(6, 10));
+    });
+
+    test('a single slow lap near the end is not called as a drop-off', () {
+      final times = [for (var i = 0; i < 10; i++) 90000 + noise[i]];
+      times[8] = 91000;
+      expect(StintSummary.fromLaps(laps(times)).single.tyreDropOff, isNull);
+    });
+
+    test('Boxington calls the drop-off once per stint', () {
+      final times = [for (var i = 0; i < 14; i++) 90000 + noise[i] + (i >= 8 ? 1500 : 0)];
+      final caller = TyreDropOffCaller();
+      final stint = StintSummary.fromLaps(laps(times)).single;
+      final prompt = caller.check(stint);
+      expect(prompt, contains('gone off from lap 9'));
+      expect(prompt, contains('after 8 laps at peak pace'));
+      expect(caller.check(stint), isNull);
+      expect(caller.check(StintSummary.fromLaps(laps(times.sublist(0, 8))).single), isNull);
+    });
+  });
+
   testWidgets('the practice log shows each stint with its label and results', (tester) async {
     // Tall enough that the pit-testing panel above doesn't push the
     // stints out of the lazily built list.

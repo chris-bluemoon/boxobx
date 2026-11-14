@@ -147,9 +147,8 @@ def correct_driver_name(ocr_name: str | None, roster: list[str] | None = None) -
     nickname, or a misread too garbled to resolve) is passed through
     as-is rather than dropped.
 
-    roster defaults to LEAGUE_ROSTER but can be overridden (e.g. the
-    relay's --rival-names list); nickname aliases apply to whichever
-    roster is used.
+    roster defaults to LEAGUE_ROSTER but can be overridden; nickname
+    aliases apply to whichever roster is used.
     """
     if ocr_name is None:
         return None

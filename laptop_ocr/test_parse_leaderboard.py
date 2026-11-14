@@ -329,76 +329,65 @@ check(
 )
 
 
-# rivalPositions: every parsed row, not just driverAhead/driverBehind,
-# is scanned for a position reading on any of the given rival_names --
-# confirms a rival several rows away from the driver's own row is still
-# found and reported.
+# standings: every parsed row, not just driverAhead/driverBehind, is
+# returned top to bottom -- so the app can follow its race rival even
+# several rows away from the driver's own row.
 ocr_results_13 = [
     *row(56, ("POSITION", 128)),
     *row(80, ("12", 62)),
     *row(100, ("2", 60), ("L. Joseph", 88)),
-    *row(135, ("3", 60), ("Chuck_E82", 88)),  # a rival, NOT adjacent to the driver's own row
+    *row(135, ("3", 60), ("Chuck_E82", 88)),  # NOT adjacent to the driver's own row
     *row(230, ("8", 60), ("F. Schmidt", 88)),
     *row(370, ("12", 60), ("Willy Swerve", 88)),
 ]
 frame13 = fake_frame(highlighted_y_range=(360, 385))
-result13 = parse_leaderboard(
-    ocr_results_13,
-    driver_name="Willy Swerve",
-    frame_bgr=frame13,
-    roi_width=frame13.shape[1],
-    rival_names=["Chuck_E82", "Willy-SwerveX"],
+result13 = parse_leaderboard(ocr_results_13, driver_name="Willy Swerve", frame_bgr=frame13, roi_width=frame13.shape[1])
+standings13 = result13["standings"]
+check(
+    "every visible row is in standings, top to bottom, with its position",
+    [(r["name"], r["position"]) for r in standings13]
+    == [("L. Joseph", 2), ("Chuck_E82", 3), ("F. Schmidt", 8), ("Willy-SwerveX", 12)],
 )
 check(
-    "a rival several rows away from the driver's own row is still found and reported",
-    result13["rivalPositions"] == {"Chuck_E82": 3},
+    "only the driver's own row is flagged isPlayer",
+    [r["isPlayer"] for r in standings13] == [False, False, False, True],
 )
 
-# A rival who isn't on screen at all this frame simply has no entry --
-# not a stale/0 value.
-ocr_results_14 = [
-    *row(56, ("POSITION", 128)),
-    *row(80, ("5", 62)),
-    *row(193, ("1", 60), ("K. Wilson", 89)),
-    *row(382, ("5", 60), ("Willy Swerve", 88)),
-]
-result14 = parse_leaderboard(
-    ocr_results_14, driver_name="Willy Swerve", rival_names=["Chuck_E82", "Willy-SwerveX"]
-)
-check(
-    "a rival not visible on screen this frame has no entry in rivalPositions",
-    result14["rivalPositions"] == {},
-)
-
-# A garbled-but-close reading of a rival's name is still corrected and
-# resolved, same as driverAhead/driverBehind.
+# A garbled-but-close reading of a roster name is corrected, same as
+# driverAhead/driverBehind.
 ocr_results_15 = [
     *row(56, ("POSITION", 128)),
     *row(80, ("5", 62)),
-    *row(193, ("1", 60), ("Chck_E82", 89)),  # misread of the real rival name
+    *row(193, ("1", 60), ("Chck_E82", 89)),  # misread of a real roster name
     *row(382, ("5", 60), ("Willy Swerve", 88)),
 ]
-result15 = parse_leaderboard(
-    ocr_results_15, driver_name="Willy Swerve", rival_names=["Chuck_E82", "Willy-SwerveX"]
-)
+result15 = parse_leaderboard(ocr_results_15, driver_name="Willy Swerve")
 check(
-    "a garbled rival name is still roster-corrected and resolved to its position",
-    result15["rivalPositions"] == {"Chuck_E82": 1},
+    "a garbled roster name is corrected in standings",
+    result15["standings"][0]["name"] == "Chuck_E82" and result15["standings"][0]["position"] == 1,
 )
 
-# No rival_names supplied at all -- rivalPositions is always an empty
-# dict, never omitted from the result entirely (callers always get a
-# dict to work with, no special-casing for "feature not in use").
-result16 = parse_leaderboard(ocr_results_15, driver_name="Willy Swerve")
+# Each row carries its own interval to the row above (the standalone gap
+# row rendered between two names belongs to the LOWER one).
+ocr_results_16 = [
+    *row(56, ("POSITION", 128)),
+    *row(80, ("4", 62)),
+    *row(193, ("3", 60), ("Chuck_E82", 89)),
+    *row(227, ("+1.420", 229)),
+    *row(262, ("4", 60), ("Willy Swerve", 88)),
+    *row(295, ("+0.850", 227)),
+    *row(330, ("5", 60), ("SushiSuzie", 88)),
+]
+result16 = parse_leaderboard(ocr_results_16, driver_name="Willy Swerve")
 check(
-    "rivalPositions is an empty dict (not missing/None) when rival_names isn't supplied",
-    result16["rivalPositions"] == {},
+    "standings rows carry their own gap to the row above",
+    [r["gapToAhead"] for r in result16["standings"]] == [None, 1.42, 0.85],
 )
 
 
 # Replays show GT7 profile NICKNAMES instead of PSN IDs. A known
 # nickname (driver_roster.NICKNAME_ALIASES) must resolve to its PSN ID
-# everywhere: driverAhead/driverBehind, rival positions, own-row
+# everywhere: driverAhead/driverBehind, standings, own-row
 # lookup, and the mixed-case noise filter's roster exemption.
 ocr_results_17 = [
     *row(56, ("POSITION", 128)),
@@ -406,23 +395,23 @@ ocr_results_17 = [
     *row(193, ("4", 60), ("Willy Swerve", 89)),  # nickname of roster's Willy-SwerveX
     *row(382, ("5", 60), ("Chuck_E82", 88)),
 ]
-result17 = parse_leaderboard(ocr_results_17, driver_name="Chuck_E82", rival_names=["Willy-SwerveX"])
+result17 = parse_leaderboard(ocr_results_17, driver_name="Chuck_E82")
 check("a known nickname directly ahead resolves to its PSN ID", result17["driverAhead"] == "Willy-SwerveX")
-check("a rival shown by nickname is found by PSN ID", result17["rivalPositions"] == {"Willy-SwerveX": 4})
+check("a driver shown by nickname is listed in standings by PSN ID", result17["standings"][0]["name"] == "Willy-SwerveX")
 check("own row found from the name match, giving the right position", result17["gridPosition"] == 5)
 
 # --driver-name given as the PSN ID still finds the on-screen nickname
-# row, and that row is never reported as a rival's position.
+# row, and that row is flagged as the player's in standings.
 ocr_results_18 = [
     *row(56, ("POSITION", 128)),
     *row(80, ("6", 62)),
     *row(193, ("2", 60), ("Chuck_E82", 89)),
     *row(382, ("3", 60), ("Willy Swerve", 88)),
 ]
-result18 = parse_leaderboard(ocr_results_18, driver_name="Willy-SwerveX", rival_names=["Willy-SwerveX", "Chuck_E82"])
+result18 = parse_leaderboard(ocr_results_18, driver_name="Willy-SwerveX")
 check("PSN-ID --driver-name matches the on-screen nickname row", result18["gridPosition"] == 3)
 check("driverAhead is found relative to the nickname row", result18["driverAhead"] == "Chuck_E82")
-check("own nickname row is not reported as a rival", result18["rivalPositions"] == {"Chuck_E82": 2})
+check("own nickname row is flagged isPlayer", [r["isPlayer"] for r in result18["standings"]] == [False, True])
 
 
 # A header tile reading supplied by the live loop (read_header_position)
