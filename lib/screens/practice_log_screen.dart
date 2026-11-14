@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../models/practice_lap_record.dart';
-import '../models/pit_stop_time_record.dart';
-import '../services/shift_aware_fuel_calculator.dart';
+import '../services/stint_summary.dart';
+import '../services/test_plan_tracker.dart';
+import '../models/test_plan.dart';
 
 /// Shows every logged practice lap (lap time, tire compound, fuel
 /// start/end, and tire wear % auto-captured from the laptop OCR
@@ -16,7 +17,6 @@ import '../services/shift_aware_fuel_calculator.dart';
 /// methodology: watch for the wear "cliff" around 50%/20% remaining).
 class PracticeLogScreen extends StatefulWidget {
   final List<PracticeLapRecord> laps;
-  final List<PitStopTimeRecord> pitStopTimeRecords;
   final VoidCallback onClear;
 
   /// Called with the recordedAt timestamp of a single lap the driver
@@ -24,10 +24,21 @@ class PracticeLogScreen extends StatefulWidget {
   /// one bad lap be deleted without clearing the whole practice log.
   final ValueChanged<DateTime> onDeleteLap;
 
+  /// The saved round's name (e.g. "Round 5"), used in stint labels.
+  final String? roundName;
+
+  /// The round's practice test plan, shown with each test's status.
+  final TestPlan? testPlan;
+
+  /// The test being run right now, if any (shown as in progress).
+  final int? activeTestNumber;
+
   const PracticeLogScreen({
     super.key,
     required this.laps,
-    this.pitStopTimeRecords = const [],
+    this.roundName,
+    this.testPlan,
+    this.activeTestNumber,
     required this.onClear,
     required this.onDeleteLap,
   });
@@ -88,7 +99,8 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
   Widget build(BuildContext context) {
     final laps = _laps;
     final byCompound = <String, List<PracticeLapRecord>>{};
-    for (final lap in laps) {
+    // Pit laps would skew the per-compound lap-time and fuel averages.
+    for (final lap in laps.where((l) => !l.isPitLap)) {
       byCompound.putIfAbsent(lap.tireCompound, () => []).add(lap);
     }
 
@@ -139,62 +151,145 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  if (widget.pitStopTimeRecords.isNotEmpty) ...[
-                    _sectionLabel('PIT STOP TIME LOSS'),
-                    const SizedBox(height: 8),
-                    _pitStopSummary(widget.pitStopTimeRecords),
-                    const SizedBox(height: 20),
-                  ],
-                  if (laps.any((l) => l.totalShiftCount > 0)) ...[
-                    _sectionLabel('SHIFT QUALITY'),
-                    const SizedBox(height: 8),
-                    _shiftQualitySummary(laps),
-                    const SizedBox(height: 20),
-                  ],
                   if (byCompound.length > 1) ...[
                     _sectionLabel('AVERAGE BY COMPOUND'),
                     const SizedBox(height: 8),
                     for (final entry in byCompound.entries) _compoundSummaryRow(entry.key, entry.value),
                     const SizedBox(height: 20),
                   ],
-                  _sectionLabel('ALL LAPS (tap to log tire wear %, swipe left or long-press to delete)'),
+                  if (widget.testPlan != null && widget.testPlan!.stints.isNotEmpty) ...[
+                    _sectionLabel('TEST PLAN'),
+                    const SizedBox(height: 8),
+                    _testPlanCard(widget.testPlan!, laps),
+                    const SizedBox(height: 20),
+                  ],
+                  _sectionLabel('STINTS (swipe a lap left or long-press to delete it)'),
                   const SizedBox(height: 8),
-                  for (final lap in laps.reversed) _lapRow(lap),
+                  for (final stint in StintSummary.fromLaps(laps)) ...[
+                    _stintCard(stint),
+                    const SizedBox(height: 8),
+                    for (final lap in stint.laps.reversed) _lapRow(lap),
+                    const SizedBox(height: 16),
+                  ],
                 ],
               ),
       ),
     );
   }
 
-  /// Session-level roll-up: total short-shifts/over-revs across every
-  /// logged lap, and how many of those laps were "clean enough" to
-  /// trust for fuel-per-lap prediction (see ShiftAwareFuelCalculator) --
-  /// answers "how much short-shifting/over-revving happened" at a
-  /// glance, without needing to scan every individual lap row.
-  Widget _shiftQualitySummary(List<PracticeLapRecord> laps) {
-    final totalShort = laps.fold<int>(0, (sum, l) => sum + l.shortShiftCount);
-    final totalOverRev = laps.fold<int>(0, (sum, l) => sum + l.overRevShiftCount);
-    final totalGood = laps.fold<int>(0, (sum, l) => sum + l.goodShiftCount);
-    final cleanLapCount = ShiftAwareFuelCalculator.cleanLapCount(laps);
-
+  /// The test plan: each planned stint, what it's for, and whether it's
+  /// done (with the logged stint that did it), running, or still to do.
+  Widget _testPlanCard(TestPlan plan, List<PracticeLapRecord> laps) {
+    final progress = TestPlanTracker.progress(plan, laps, activeTestNumber: widget.activeTestNumber);
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: Colors.grey.shade900, borderRadius: BorderRadius.circular(8)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                '$cleanLapCount/${laps.length} laps clean enough to trust for fuel prediction',
-                style: const TextStyle(color: Colors.white, fontSize: 13),
+          for (final (i, planned) in plan.stints.indexed)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    switch (progress.statuses[i]) {
+                      TestStatus.done => Icons.check_circle,
+                      TestStatus.inProgress => Icons.play_circle,
+                      TestStatus.toDo => Icons.radio_button_unchecked,
+                    },
+                    size: 18,
+                    color: switch (progress.statuses[i]) {
+                      TestStatus.done => Colors.greenAccent,
+                      TestStatus.inProgress => Colors.lightBlueAccent,
+                      TestStatus.toDo => Colors.grey.shade600,
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Test ${planned.number}: ${progress.targetFor(planned)}',
+                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          progress.matchedStints[i] == null
+                              ? planned.purpose
+                              : '${planned.purpose} -- stint ${progress.matchedStints[i]!.stintNumber}',
+                          style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 6),
+            ),
           Text(
-            '$totalGood good shifts, $totalShort short-shifts, $totalOverRev over-revs across all logged laps',
-            style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+            'Start a test from the dashboard\'s TEST chip (long-press to pick any test). Only stints '
+            'started as a test count. Long stints also end if fuel drops to 5% or lap times fall 1.5s '
+            'off the stint best.',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 10),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One stint's header: its label and how the tyres and fuel held up.
+  Widget _stintCard(StintSummary stint) {
+    String laps(double? v) => v == null ? '--' : '${v.toStringAsFixed(1)} laps';
+    String lapTime(double? ms) {
+      if (ms == null) return '--';
+      final minutes = ms ~/ 60000;
+      return '$minutes:${((ms % 60000) / 1000).toStringAsFixed(3).padLeft(6, '0')}';
+    }
+
+    final fuel = stint.fuelPerLapPercent;
+    final wear = stint.tyreWearPerLapPercent;
+    final dropOff = stint.dropOffMs;
+    final stats = <(String, String)>[
+      ('Laps', '${stint.lapCount}'),
+      ('Avg lap', lapTime(stint.averageLapMs)),
+      ('Fuel/lap', fuel == null ? '--' : '${fuel.toStringAsFixed(2)}%'),
+      ('Fuel lasts', laps(stint.projectedFuelLaps)),
+      ('Wear/lap', wear == null ? '--' : '${wear.toStringAsFixed(1)}%'),
+      ('Tyres last', laps(stint.projectedTyreLaps)),
+      ('Drop-off', dropOff == null ? '--' : '${dropOff >= 0 ? '+' : ''}${(dropOff / 1000).toStringAsFixed(2)}s'),
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: stint.isRace ? Colors.red.shade900.withValues(alpha: 0.35) : Colors.teal.shade900.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: stint.isRace ? Colors.red.shade700 : Colors.teal.shade700),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            stint.label(widget.roundName),
+            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 14,
+            runSpacing: 6,
+            children: [
+              for (final (name, value) in stats)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(name, style: TextStyle(color: Colors.grey.shade500, fontSize: 10)),
+                    Text(value, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                  ],
+                ),
+            ],
           ),
         ],
       ),
@@ -244,52 +339,6 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
     );
   }
 
-  Widget _pitStopSummary(List<PitStopTimeRecord> records) {
-    final avg = records.map((r) => r.totalTimeLossSeconds).reduce((a, b) => a + b) / records.length;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.grey.shade900, borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        children: [
-          Text(
-            '${records.length} stop${records.length == 1 ? '' : 's'} logged',
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-          ),
-          const Spacer(),
-          Text(
-            'avg ${avg.toStringAsFixed(1)}s loss',
-            style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Shows this lap's shift-quality breakdown (short-shifts/over-revs,
-  /// the two habits that burn more fuel than a clean shift for the
-  /// same distance covered) -- a quick color-coded cue, not just a
-  /// raw ratio, so a glance down the lap list makes it obvious which
-  /// laps were clean vs. which had a rough shifting pattern that
-  /// shouldn't be trusted as hard for fuel-per-lap prediction.
-  Widget _shiftQualityBadge(PracticeLapRecord lap) {
-    if (lap.totalShiftCount == 0) {
-      return Text('no shifts', style: TextStyle(color: Colors.grey.shade600, fontSize: 10), textAlign: TextAlign.right);
-    }
-    final ratio = lap.cleanShiftRatio!;
-    final color = ratio >= 0.9
-        ? Colors.greenAccent
-        : ratio >= 0.7
-            ? Colors.orangeAccent
-            : Colors.redAccent;
-    return Text(
-      '${lap.shortShiftCount} short / ${lap.overRevShiftCount} over-rev '
-      '(${(ratio * 100).toStringAsFixed(0)}% clean)',
-      style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
-      textAlign: TextAlign.right,
-      overflow: TextOverflow.ellipsis,
-    );
-  }
-
   Widget _lapRow(PracticeLapRecord lap) {
     return Dismissible(
       key: ValueKey(lap.recordedAt),
@@ -326,7 +375,10 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                   color: Colors.purple.shade900,
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text('L${lap.lapNumber}', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                child: Text(
+                  lap.isPitLap ? 'L${lap.lapNumber} PIT' : 'L${lap.lapNumber}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -368,8 +420,6 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                         textAlign: TextAlign.right,
                       ),
               ),
-              const SizedBox(width: 8),
-              Expanded(child: _shiftQualityBadge(lap)),
               const SizedBox(width: 4),
               IconButton(
                 icon: const Icon(Icons.close, size: 16),

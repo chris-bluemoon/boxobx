@@ -31,19 +31,10 @@ class PracticeLapRecord {
   /// against lapTimeMs across consecutive laps on the same compound.
   final double? tireWearPercent;
 
-  /// How many upshifts during this lap were classified as short-shifts
-  /// (shifted well before the power band -- see ShiftTiming.early),
-  /// good (within the optimal window), or over-revs (held well past
-  /// the optimal point -- ShiftTiming.late), via the same
-  /// PowerBandConfig-based classification ShiftHistoryTracker already
-  /// uses for the live dashboard gauge. Both short-shifting and
-  /// over-revving burn more fuel per lap than a clean shift (more time
-  /// spent off the engine's efficient operating range to cover the
-  /// same distance), so these counts are a real input to how accurate
-  /// a fuel-per-lap prediction from this lap's data actually is -- a
-  /// lap with a lot of early/late shifts shouldn't be weighted the
-  /// same as a clean one when predicting how many laps a stint will
-  /// last.
+  /// Upshift counts for this lap by timing (early / good / late, per
+  /// PowerBandConfig). Still recorded and saved, but currently unused:
+  /// shift quality was taken out of the strategy calculation and the
+  /// practice log on 2026-11-14, pending a rethink.
   final int shortShiftCount;
   final int goodShiftCount;
   final int overRevShiftCount;
@@ -52,6 +43,27 @@ class PracticeLapRecord {
   /// mainly for display ("logged 10 minutes ago") and for potential
   /// future pruning/sorting.
   final DateTime recordedAt;
+
+  /// True if a pit stop was detected on this lap or the lap before it
+  /// (see PitStopTracker). Pit laps are much slower and may show
+  /// negative fuel use (a refuel), so they're excluded from lap-time
+  /// and fuel-per-lap averages.
+  final bool isPitLap;
+
+  /// Which stint of the round this lap belongs to (1, 2, ...): a run on
+  /// one set of tyres and one fuel load, so wear and fuel use can be
+  /// measured per stint (see StintSummary). 0 = logged before stints
+  /// existed.
+  final int stintNumber;
+
+  /// True if logged in Race Mode rather than Practice Mode (see
+  /// AppMode) -- laps are recorded in both.
+  final bool isRaceLap;
+
+  /// Which planned test (see TestPlan) the driver said this stint was
+  /// for, by its number in the plan; null = not a test stint. Set only
+  /// by the driver starting a test from the dashboard -- never inferred.
+  final int? testNumber;
 
   const PracticeLapRecord({
     required this.lapNumber,
@@ -64,6 +76,10 @@ class PracticeLapRecord {
     this.goodShiftCount = 0,
     this.overRevShiftCount = 0,
     required this.recordedAt,
+    this.isPitLap = false,
+    this.stintNumber = 0,
+    this.isRaceLap = false,
+    this.testNumber,
   });
 
   /// Fuel percent actually consumed over this lap -- negative values
@@ -71,21 +87,6 @@ class PracticeLapRecord {
   /// clamped, so callers can decide whether to exclude anomalous laps
   /// from an average rather than have bad data silently hidden here.
   double get fuelConsumedPercent => fuelPercentAtLapStart - fuelPercentAtLapEnd;
-
-  /// Total upshifts recorded this lap, across all three
-  /// classifications -- used to compute cleanShiftRatio below.
-  int get totalShiftCount => shortShiftCount + goodShiftCount + overRevShiftCount;
-
-  /// Fraction of this lap's upshifts that were classified as "good"
-  /// (within the optimal power-band window), from 0.0 (every shift was
-  /// early or late) to 1.0 (every shift was clean), or null if no
-  /// upshifts were recorded at all this lap (e.g. a single-gear
-  /// straight, or shift detection wasn't active). This is the signal
-  /// ShiftAwareFuelCalculator uses to judge how much to trust this
-  /// particular lap's fuel-per-lap reading: a lap with a low ratio
-  /// burned more fuel than a clean lap would have purely from shift
-  /// habit, independent of tire/fuel-map differences.
-  double? get cleanShiftRatio => totalShiftCount == 0 ? null : goodShiftCount / totalShiftCount;
 
   String get formattedLapTime {
     final totalMs = lapTimeMs;
@@ -105,6 +106,10 @@ class PracticeLapRecord {
         goodShiftCount: (map['goodShiftCount'] as num?)?.toInt() ?? 0,
         overRevShiftCount: (map['overRevShiftCount'] as num?)?.toInt() ?? 0,
         recordedAt: DateTime.parse(map['recordedAt'] as String),
+        isPitLap: map['isPitLap'] as bool? ?? false,
+        stintNumber: (map['stintNumber'] as num?)?.toInt() ?? 0,
+        isRaceLap: map['isRaceLap'] as bool? ?? false,
+        testNumber: (map['testNumber'] as num?)?.toInt(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -118,6 +123,10 @@ class PracticeLapRecord {
         'goodShiftCount': goodShiftCount,
         'overRevShiftCount': overRevShiftCount,
         'recordedAt': recordedAt.toIso8601String(),
+        'isPitLap': isPitLap,
+        'stintNumber': stintNumber,
+        'isRaceLap': isRaceLap,
+        'testNumber': testNumber,
       };
 
   /// Returns a copy with tireWearPercent set -- used by the Practice
@@ -135,6 +144,10 @@ class PracticeLapRecord {
         goodShiftCount: goodShiftCount,
         overRevShiftCount: overRevShiftCount,
         recordedAt: recordedAt,
+        isPitLap: isPitLap,
+        stintNumber: stintNumber,
+        isRaceLap: isRaceLap,
+        testNumber: testNumber,
       );
 
   /// Returns a copy with a different lapNumber -- used by
@@ -152,5 +165,9 @@ class PracticeLapRecord {
         goodShiftCount: goodShiftCount,
         overRevShiftCount: overRevShiftCount,
         recordedAt: recordedAt,
+        isPitLap: isPitLap,
+        stintNumber: stintNumber,
+        isRaceLap: isRaceLap,
+        testNumber: testNumber,
       );
 }

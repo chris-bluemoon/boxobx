@@ -5,18 +5,16 @@ import '../models/race_briefing.dart';
 import '../models/race_strategy.dart';
 import '../models/fuel_prediction.dart';
 import '../models/track_info.dart';
-import '../models/pit_stop_time_record.dart';
 import '../models/practice_lap_record.dart';
 import '../services/race_strategist_service.dart';
 import '../services/track_database.dart';
 import '../services/saved_briefing_store.dart';
-import '../services/pit_stop_time_store.dart';
-import '../services/shift_aware_fuel_calculator.dart';
+import '../services/practice_fuel_calculator.dart';
 
 /// Pre-race strategy planning screen: enter this week's APRL driver
 /// briefing and get an AI-generated pit-stop strategy, informed by
 /// REAL measured fuel consumption from logged practice laps (see
-/// ShiftAwareFuelCalculator) rather than a generic baseline guess.
+/// PracticeFuelCalculator) rather than a generic baseline guess.
 ///
 /// Previously also had a separate "VALIDATE AGAINST PRACTICE SESSION"
 /// step that re-compared the generated strategy against live telemetry
@@ -31,11 +29,9 @@ class RaceStrategyScreen extends StatefulWidget {
   /// separate telemetry connection.
   final FuelPrediction Function() getCurrentFuelPrediction;
 
-  /// Same pattern again, for the logged practice laps (lap time, tire,
-  /// fuel, AND shift-quality counts) -- used to compute a
-  /// shift-quality-weighted fuel average (see
-  /// ShiftAwareFuelCalculator) that's preferred over the raw rolling
-  /// average when enough clean-lap data exists.
+  /// Same pattern again, for the logged practice laps -- their average
+  /// fuel use (see PracticeFuelCalculator) is preferred over the live
+  /// rolling average once enough laps exist.
   final List<PracticeLapRecord> Function() getPracticeLaps;
 
   const RaceStrategyScreen({
@@ -105,20 +101,14 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   /// strategy card so the driver knows which one they're looking at.
   bool _usedMeasuredFuelData = false;
 
-  /// Whether that measured figure specifically came from
-  /// ShiftAwareFuelCalculator (clean-shift-filtered average across
-  /// logged practice laps) rather than FuelPredictor's raw rolling
-  /// average -- shown as a more specific badge label, since the
-  /// shift-aware figure is a stronger guarantee of what a clean stint
-  /// should actually burn.
-  bool _usedShiftAwareFuelData = false;
+  /// Whether that measured figure came from the logged practice laps
+  /// (PracticeFuelCalculator) rather than FuelPredictor's live rolling
+  /// average -- shown on the badge so the driver knows the source.
+  bool _usedPracticeLapFuelData = false;
 
-  /// Manually-logged pit-stop time-loss measurements (see
-  /// PitStopTimeRecord) -- GT7 has no pit-lane entry/exit telemetry
-  /// signal at all, so these are entered by hand after comparing an
-  /// in/out lap sequence against a normal lap.
-  List<PitStopTimeRecord> _pitStopTimeRecords = [];
-  final _pitStopTimeLossController = TextEditingController();
+  /// GT7's on-screen "Pit Stop Time" for this track (whole stop,
+  /// including service), saved with the briefing.
+  final _pitStopTimeController = TextEditingController();
 
   @override
   void initState() {
@@ -126,30 +116,12 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     _strategist = RaceStrategistService(dotenv.env['GROQ_API_KEY'] ?? '');
     _tracksFuture = TrackDatabase.load();
     _loadSavedBriefing();
-    _loadPitStopTimeRecords();
   }
 
-  Future<void> _loadPitStopTimeRecords() async {
-    final records = await PitStopTimeStore.load();
-    if (!mounted) return;
-    setState(() => _pitStopTimeRecords = records);
-  }
-
-  Future<void> _logPitStopTime() async {
-    final seconds = double.tryParse(_pitStopTimeLossController.text.trim());
-    if (seconds == null || seconds <= 0) {
-      setState(() => _error = 'Enter a valid pit-stop time loss in seconds (e.g. 23.5).');
-      return;
-    }
-    final record = PitStopTimeRecord(
-      totalTimeLossSeconds: seconds,
-      tireCompoundFitted: _mandatoryTyreCompound != 'N/A' ? _mandatoryTyreCompound : _selectedTireCompounds.firstOrNull ?? 'Racing Medium',
-      refuelRateLitersPerSecond: _refuelingSpeed,
-      recordedAt: DateTime.now(),
-    );
-    await PitStopTimeStore.addRecord(record);
-    _pitStopTimeLossController.clear();
-    await _loadPitStopTimeRecords();
+  /// The pit stop time field as a number, or null if empty/invalid.
+  double? _enteredPitStopTime() {
+    final value = double.tryParse(_pitStopTimeController.text.trim());
+    return value != null && value > 0 ? value : null;
   }
 
   @override
@@ -159,7 +131,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     _fuelController.dispose();
     _finishReserveController.dispose();
     _notesController.dispose();
-    _pitStopTimeLossController.dispose();
+    _pitStopTimeController.dispose();
     super.dispose();
   }
 
@@ -180,6 +152,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       _tyreWearMultiplier = briefing.tyreWearMultiplier;
       _fuelConsumptionMultiplier = briefing.fuelConsumptionMultiplier;
       _refuelingSpeed = briefing.refuelingSpeedLitersPerSec;
+      _pitStopTimeController.text = briefing.pitStopTimeSeconds?.toString() ?? '';
       _fuelController.text = briefing.startingFuelPercent.toString();
       _finishReserveController.text = briefing.finishFuelReservePercent.toString();
       _maxTyreStintLaps = briefing.maxTyreStintLaps;
@@ -220,6 +193,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       tyreWearMultiplier: _tyreWearMultiplier,
       fuelConsumptionMultiplier: _fuelConsumptionMultiplier,
       refuelingSpeedLitersPerSec: _refuelingSpeed,
+      pitStopTimeSeconds: _enteredPitStopTime(),
       startingFuelPercent: fuel,
       finishFuelReservePercent: finishReserve,
       maxTyreStintLaps: _maxTyreStintLaps,
@@ -271,21 +245,17 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       // when enough data exists, instead of the generic baseline
       // assumption -- this is what makes practice laps actually
       // influence the generated strategy itself, not just validate it
-      // after the fact. Prefer the shift-quality-weighted average
-      // (excludes laps with a lot of short-shifting/over-revving,
-      // which burn more fuel than a clean lap for the same distance)
-      // when enough clean-lap data exists; fall back to the raw live
-      // rolling average otherwise.
+      // after the fact. Prefer the average over logged practice laps
+      // (pit laps excluded) once there are enough; fall back to the
+      // live rolling average otherwise.
       final practiceLaps = widget.getPracticeLaps();
-      final cleanShiftAverage = ShiftAwareFuelCalculator.averagePercentPerLap(practiceLaps);
+      final practiceLapAverage = PracticeFuelCalculator.averagePercentPerLap(practiceLaps);
       final practiceFuelPrediction = widget.getCurrentFuelPrediction();
-      final measuredPercentPerLap = cleanShiftAverage ??
+      final measuredPercentPerLap = practiceLapAverage ??
           (practiceFuelPrediction.hasEnoughData ? practiceFuelPrediction.percentPerLap : null);
 
-      // Real measured pit-stop time loss (in-lap + stationary + out-lap
-      // vs. a normal lap), averaged across however many stops the
-      // driver has manually logged -- see PitStopTimeStore.
-      final measuredPitStopTimeLossSeconds = PitStopTimeStore.averageTimeLossSeconds(_pitStopTimeRecords);
+      // GT7's own pit stop time for this track, if entered.
+      final measuredPitStopTimeLossSeconds = briefing.pitStopTimeSeconds;
 
       final strategy = await _strategist.generateStrategy(
         briefing,
@@ -296,7 +266,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       setState(() {
         _strategy = strategy;
         _usedMeasuredFuelData = measuredPercentPerLap != null;
-        _usedShiftAwareFuelData = cleanShiftAverage != null;
+        _usedPracticeLapFuelData = practiceLapAverage != null;
         _loading = false;
       });
     } catch (error) {
@@ -490,42 +460,19 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 onChanged: (v) => setState(() => _mandatoryPitStopCount = v!),
               ),
               const SizedBox(height: 12),
-              _sectionLabel('PIT STOP TIME LOSS (measured)'),
+              _sectionLabel('PIT STOP TIME'),
               const SizedBox(height: 4),
               Text(
-                'Drive an in-lap + stationary + out-lap sequence, compare the total '
-                'vs. a normal lap, then log the difference in seconds below.',
+                'Read GT7\'s "Pit Stop Time" after a stop and enter it here -- the whole stop, '
+                'including the tyre change and refuelling.',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
               ),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: _textField(
-                      _pitStopTimeLossController,
-                      'Time lost this stop (seconds, e.g. 23.5)',
-                      keyboardType: TextInputType.number,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _logPitStopTime,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue.shade800,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                    ),
-                    child: const Text('LOG'),
-                  ),
-                ],
+              _textField(
+                _pitStopTimeController,
+                'Pit stop time (seconds, e.g. 24.5)',
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
               ),
-              if (_pitStopTimeRecords.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  '${_pitStopTimeRecords.length} stop${_pitStopTimeRecords.length == 1 ? '' : 's'} logged -- '
-                  'average ${PitStopTimeStore.averageTimeLossSeconds(_pitStopTimeRecords)!.toStringAsFixed(1)}s loss',
-                  style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-                ),
-              ],
               const SizedBox(height: 8),
               SwitchListTile(
                 value: _wetOrChangeableWeather,
@@ -690,7 +637,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    _usedShiftAwareFuelData ? 'FROM CLEAN PRACTICE LAPS' : 'FROM PRACTICE LAPS',
+                    _usedPracticeLapFuelData ? 'FROM PRACTICE LAPS' : 'FROM LIVE FUEL AVERAGE',
                     style: const TextStyle(color: Colors.greenAccent, fontSize: 9, fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -702,7 +649,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
             Row(
               children: [
                 Text(
-                  '${strategy.pitStopTimeIsMeasured ? 'Measured' : 'Assumed'} pit loss: '
+                  '${strategy.pitStopTimeIsMeasured ? 'Entered' : 'Assumed'} pit loss: '
                   '${strategy.totalEstimatedTimeLossSeconds.toStringAsFixed(1)}s total '
                   '(${strategy.pitStops.length} stop${strategy.pitStops.length == 1 ? '' : 's'})',
                   style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
@@ -716,7 +663,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: const Text(
-                      'FROM LOGGED STOPS',
+                      'FROM GT7 PIT STOP TIME',
                       style: TextStyle(color: Colors.greenAccent, fontSize: 9, fontWeight: FontWeight.bold),
                     ),
                   ),

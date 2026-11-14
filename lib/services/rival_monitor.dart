@@ -11,10 +11,23 @@
 /// inferring a rival's tire strategy from their pace is a larger,
 /// separate piece of work for a later phase.
 class RivalMonitor {
-  /// Last position seen for each rival, so a repeat reading of the SAME
-  /// position across consecutive frames doesn't re-trigger a callout --
-  /// only a genuine CHANGE from what was last reported does.
+  /// How many consecutive readings a NEW position must be seen for
+  /// before it's accepted as a real change. A single OCR misread
+  /// (P5 -> P8 -> P5) would otherwise produce two bogus callouts, one
+  /// for the misread and one for "moving back". At the relay's 8Hz,
+  /// the default of 2 adds only ~125ms of latency to a real move.
+  final int stabilityThreshold;
+
+  RivalMonitor({this.stabilityThreshold = 2});
+
+  /// Last ACCEPTED position for each rival -- what a callout compares
+  /// against.
   final Map<String, int> _lastKnownPosition = {};
+
+  /// A not-yet-accepted new position per rival, and how many
+  /// consecutive readings it's been seen for.
+  final Map<String, int> _candidatePosition = {};
+  final Map<String, int> _candidateCount = {};
 
   /// Resets tracked state for a fresh session (e.g. alongside a manual
   /// telemetry display reset) so a stale position from a PREVIOUS race
@@ -22,35 +35,57 @@ class RivalMonitor {
   /// spurious "rival moved" callout purely from session boundaries.
   void reset() {
     _lastKnownPosition.clear();
+    _candidatePosition.clear();
+    _candidateCount.clear();
   }
 
   /// Feeds the latest rivalPositions reading in. Returns a synthetic
-  /// prompt string for Gunther to react to if a tracked rival's
-  /// position just changed, or null if nothing changed (including the
-  /// very first reading for a given rival this session, which just
-  /// establishes a baseline rather than firing a callout -- there's
-  /// nothing to compare a first-ever reading against).
+  /// prompt for Gunther covering EVERY tracked rival whose position
+  /// change was confirmed by this reading, or null if none was.
+  ///
+  /// The very first reading for a rival this session just establishes
+  /// a baseline -- there's nothing to compare it against. A rival
+  /// missing from the map (not on screen) is skipped and keeps any
+  /// pending candidate, since a missing row isn't evidence either way.
   String? check(Map<String, int> rivalPositions) {
+    final changes = <String>[];
+
     for (final entry in rivalPositions.entries) {
       final rivalName = entry.key;
       final newPosition = entry.value;
       final lastPosition = _lastKnownPosition[rivalName];
 
-      _lastKnownPosition[rivalName] = newPosition;
-
       if (lastPosition == null) {
-        // First-ever reading for this rival this session -- nothing to
-        // compare against yet, so just establish the baseline.
+        _lastKnownPosition[rivalName] = newPosition;
         continue;
       }
 
-      if (newPosition == lastPosition) continue;
+      if (newPosition == lastPosition) {
+        // Back to (or still at) the accepted position -- any pending
+        // candidate was noise.
+        _candidatePosition.remove(rivalName);
+        _candidateCount.remove(rivalName);
+        continue;
+      }
+
+      final count = _candidatePosition[rivalName] == newPosition ? (_candidateCount[rivalName] ?? 0) + 1 : 1;
+      _candidatePosition[rivalName] = newPosition;
+      _candidateCount[rivalName] = count;
+      if (count < stabilityThreshold) continue;
+
+      _lastKnownPosition[rivalName] = newPosition;
+      _candidatePosition.remove(rivalName);
+      _candidateCount.remove(rivalName);
 
       final direction = newPosition < lastPosition ? 'moved up to' : 'dropped back to';
-      return 'Your championship rival $rivalName just $direction P$newPosition '
-          '(was P$lastPosition). Call this out briefly.';
+      changes.add('$rivalName just $direction P$newPosition (was P$lastPosition)');
     }
 
-    return null;
+    if (changes.isEmpty) return null;
+    if (changes.length == 1) {
+      return 'Your championship rival ${changes.single}. Call this out briefly.';
+    }
+    return 'Your championship rivals moved: ${changes.join('; ')}. '
+        'Call this out briefly in one transmission.';
   }
 }

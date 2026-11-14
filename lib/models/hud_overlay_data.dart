@@ -1,3 +1,6 @@
+import 'opponent_pit_stop.dart';
+import 'traffic_map.dart';
+
 /// Whether the time gap to a rival is shrinking, growing, or holding
 /// steady, as computed by the laptop OCR relay's GapTracker (a rolling
 /// comparison across several consecutive samples, not just the single
@@ -70,6 +73,20 @@ class HudOverlayData {
   /// --rival-names) at all.
   final Map<String, int> rivalPositions;
 
+  /// Drivers currently showing GT7's "P" (in pits) marker on the
+  /// leaderboard, keyed by roster PSN ID where the relay could resolve
+  /// it, with their position / tyre being fitted / fuel going in.
+  /// Excludes the driver's own car.
+  final Map<String, PitLaneEntry> driversInPit;
+
+  /// Every car's position around the lap, from GT7's course map.
+  final TrafficMap traffic;
+
+  /// True while OUR row shows GT7's "P" (in pit lane) marker, with the
+  /// tyre/fuel being put on our car when shown.
+  final bool playerInPit;
+  final PitLaneEntry? playerPitService;
+
   const HudOverlayData({
     this.gridPosition = 0,
     this.driverAhead,
@@ -86,6 +103,10 @@ class HudOverlayData {
     this.tireWearRearRightPercent,
     this.tireCompound,
     this.rivalPositions = const {},
+    this.driversInPit = const {},
+    this.traffic = TrafficMap.empty,
+    this.playerInPit = false,
+    this.playerPitService,
   });
 
   factory HudOverlayData.empty() => const HudOverlayData();
@@ -109,5 +130,12 @@ class HudOverlayData {
               (name, position) => MapEntry(name, (position as num).toInt()),
             ) ??
             const {},
+        driversInPit: (map['driversInPit'] as Map<String, dynamic>?)?.map(
+              (name, value) => MapEntry(name, PitLaneEntry.fromJson(value)),
+            ) ??
+            const {},
+        traffic: TrafficMap.fromJson(map['traffic'] as Map<String, dynamic>?),
+        playerInPit: map['playerInPit'] as bool? ?? false,
+        playerPitService: map['playerPitService'] == null ? null : PitLaneEntry.fromJson(map['playerPitService']),
       );
 }

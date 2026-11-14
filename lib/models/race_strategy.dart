@@ -34,7 +34,7 @@ class PlannedPitStop {
 /// The AI-generated race strategy produced by RaceStrategistService from
 /// a RaceBriefing -- a recommended pit-stop plan plus the reasoning
 /// behind it, informed by real practice-session telemetry when
-/// available (see ShiftAwareFuelCalculator) at generation time.
+/// available (see PracticeFuelCalculator) at generation time.
 class RaceStrategy {
   final List<PlannedPitStop> pitStops;
 
@@ -49,13 +49,13 @@ class RaceStrategy {
   /// pit-lap math was based on -- either the generic baseline, or real
   /// measured consumption from logged practice laps when enough data
   /// existed at generation time (see PitStopCalculator,
-  /// ShiftAwareFuelCalculator).
+  /// PracticeFuelCalculator).
   final double assumedPercentPerLap;
 
   /// Total estimated time lost to pit stops across the whole race
   /// (pitStops.length * per-stop time loss), in seconds -- per-stop
   /// loss is either the driver's own measured value (see
-  /// PitStopTimeRecord/PitStopTimeStore) or PitStopCalculator's generic
+  /// RaceBriefing.pitStopTimeSeconds, GT7's on-screen figure) or PitStopCalculator's generic
   /// default if nothing has been measured yet.
   final double totalEstimatedTimeLossSeconds;
 

@@ -14,6 +14,13 @@ import 'tire_wear_tracker.dart';
 import 'practice_lap_logger.dart';
 import 'practice_log_store.dart';
 import 'shift_history_tracker.dart';
+import 'pit_stop_tracker.dart';
+import 'pit_lane_monitor.dart';
+import 'rejoin_forecaster.dart';
+import '../models/app_mode.dart';
+import '../models/opponent_pit_stop.dart';
+import '../models/power_band_config.dart';
+import '../models/practice_lap_record.dart';
 
 /// Component C: Fused Race State Manager.
 ///
@@ -29,6 +36,40 @@ class FusedRaceStateManager {
   final TireWearTracker tireWearTracker;
   final PracticeLapLogger practiceLapLogger;
   final ShiftHistoryTracker shiftHistoryTracker;
+  final PitStopTracker pitStopTracker;
+  final PitLaneMonitor pitLaneMonitor;
+
+  final _opponentPittedController = StreamController<List<OpponentPitStop>>.broadcast();
+
+  /// Fires with pit stops ready to announce (see PitLaneMonitor) --
+  /// the dashboard has Gunther call these out. The full log, kept
+  /// up to date with tyre/fuel, is FusedRaceState.opponentPitStops.
+  Stream<List<OpponentPitStop>> get opponentPitted => _opponentPittedController.stream;
+
+  final _sessionEndedController = StreamController<void>.broadcast();
+
+  /// Fires when the driver leaves the track (race finished/exited,
+  /// loading into another session). Per-lap predictors are already
+  /// reset here; listeners reset their own per-session state (rival
+  /// tracking, queued callouts...).
+  Stream<void> get sessionEnded => _sessionEndedController.stream;
+
+  /// GT7's status flags are only trusted once a frame has reported
+  /// "car on track". Until then every frame is treated as driving --
+  /// the pre-flags behaviour -- so if the flag offset were ever wrong
+  /// for a game version, logging degrades to how it worked before
+  /// rather than silently stopping altogether.
+  bool _flagsTrusted = false;
+  bool _wasOnTrack = false;
+  int? _activeCarCode;
+  int? _lastLapForStartLine;
+  bool _playerWasInPit = false;
+
+  /// The pit stop time entered for the current round (GT7's on-screen
+  /// "Pit Stop Time", whole stop including service -- see
+  /// RaceBriefing.pitStopTimeSeconds); null = not entered, so the rejoin
+  /// forecast uses its default.
+  double? _pitStopTimeSeconds;
 
   final _controller = StreamController<FusedRaceState>.broadcast();
   FusedRaceState _state = FusedRaceState.initial();
@@ -44,9 +85,13 @@ class FusedRaceStateManager {
     TireWearTracker? tireWearTracker,
     PracticeLapLogger? practiceLapLogger,
     ShiftHistoryTracker? shiftHistoryTracker,
+    PitStopTracker? pitStopTracker,
+    PitLaneMonitor? pitLaneMonitor,
   })  : tireWearTracker = tireWearTracker ?? TireWearTracker(),
-        practiceLapLogger = practiceLapLogger ?? PracticeLapLogger(),
-        shiftHistoryTracker = shiftHistoryTracker ?? ShiftHistoryTracker();
+       practiceLapLogger = practiceLapLogger ?? PracticeLapLogger(),
+       shiftHistoryTracker = shiftHistoryTracker ?? ShiftHistoryTracker(),
+       pitStopTracker = pitStopTracker ?? PitStopTracker(),
+       pitLaneMonitor = pitLaneMonitor ?? PitLaneMonitor();
 
   Stream<FusedRaceState> get stream => _controller.stream;
   FusedRaceState get current => _state;
@@ -56,70 +101,243 @@ class FusedRaceStateManager {
   ConnectionStatus get telemetryStatus => telemetryService.status;
   ConnectionStatus get hudStatus => hudService.status;
 
-  Future<void> start(String consoleIp) async {
-    await sectorCalculator.loadTrackDatabase();
+  Future<void>? _persistedDataLoad;
 
-    // Restore any practice laps already logged for the current round
-    // (see PracticeLogStore) -- answers "is the data stored
-    // indefinitely": yes, this is what makes it survive an app
-    // restart rather than starting back at zero laps every launch.
+  /// Practice-log writes, run strictly one after another. Saves aren't
+  /// awaited by the telemetry handler, and two in flight could finish
+  /// out of order -- observed: the first save of a session completing
+  /// AFTER the next one, leaving the stored log a lap short.
+  Future<void> _lapWrites = Future.value();
+
+  Future<void> _persistLaps(Future<void> Function(List<PracticeLapRecord> laps) write) {
+    final snapshot = practiceLapLogger.laps;
+    return _lapWrites = _lapWrites.then((_) => write(snapshot)).catchError((Object _) {});
+  }
+
+  /// Restores the practice laps saved for the current round (see
+  /// PracticeLogStore). Call when
+  /// the app opens, so the lap count and practice log are right without
+  /// connecting to the console first -- it used to happen only on
+  /// ENGAGE TELEMETRY, so every launch showed 0 laps until then. Runs
+  /// once; later calls (start() makes one) wait for the same load.
+  Future<void> loadPersistedData() => _persistedDataLoad ??= _loadPersistedData();
+
+  Future<void> _loadPersistedData() async {
     final persistedLaps = await PracticeLogStore.load();
     if (persistedLaps.isNotEmpty) {
       practiceLapLogger.seedWithPersistedLaps(persistedLaps);
       _state = _state.copyWith(practiceLaps: practiceLapLogger.laps);
       _controller.add(_state);
     }
+  }
 
-    _telemetrySub = telemetryService.stream.listen((frame) {
-      final sectorState = sectorCalculator.evaluate(frame);
-      final fuelPrediction = fuelPredictor.update(frame);
-      final tireWearEstimate = tireWearTracker.update(frame);
-      final lapCountBefore = practiceLapLogger.laps.length;
-      practiceLapLogger.update(frame);
-      shiftHistoryTracker.update(frame);
-      _state = _state.copyWith(
-        telemetry: frame,
-        sectors: sectorState,
-        fuelPrediction: fuelPrediction,
-        tireWearEstimate: tireWearEstimate,
-        recentShifts: shiftHistoryTracker.recentShifts,
-        practiceLaps: practiceLapLogger.laps,
-      );
-      _controller.add(_state);
+  Future<void> start(String consoleIp) async {
+    await sectorCalculator.loadTrackDatabase();
+    await loadPersistedData();
 
-      // Persist as soon as a new lap is logged (rather than on some
-      // timer) so a crash/forced-quit mid-session loses at most the
-      // CURRENT in-progress lap, never a previously completed one.
-      if (practiceLapLogger.laps.length > lapCountBefore) {
-        PracticeLogStore.save(practiceLapLogger.laps);
-      }
-    });
+    _telemetrySub = telemetryService.stream.listen(handleTelemetryFrame);
 
-    _hudSub = hudService.stream.listen((hud) {
-      // Keeps PracticeLapLogger's auto-attached tire-wear reading
-      // current so it reflects whatever the OCR relay most recently
-      // read at the moment a lap actually completes, the same way
-      // setPracticeTireCompound keeps currentTireCompound current from
-      // the dashboard's manual picker -- see
-      // PracticeLapLogger.currentTireWearPercent.
-      final wearReadings = [
-        hud.tireWearFrontLeftPercent,
-        hud.tireWearFrontRightPercent,
-        hud.tireWearRearLeftPercent,
-        hud.tireWearRearRightPercent,
-      ].whereType<double>();
-      if (wearReadings.isNotEmpty) {
-        practiceLapLogger.currentTireWearPercent =
-            wearReadings.reduce((a, b) => a + b) / wearReadings.length;
-      }
-
-      _state = _state.copyWith(hud: hud);
-      _controller.add(_state);
-    });
+    _hudSub = hudService.stream.listen(handleHudData);
 
     await telemetryService.start(consoleIp);
     await hudService.start();
   }
+
+  /// Processes one telemetry frame. Public so the session/pit logic can
+  /// be tested without sockets; in the app it's fed by [start].
+  void handleTelemetryFrame(TelemetryFrame frame) {
+    if (frame.isCarOnTrack) _flagsTrusted = true;
+    final onTrack = !_flagsTrusted || (frame.isCarOnTrack && !frame.isLoading);
+    final driving = !_flagsTrusted || frame.isDriving;
+
+    if (_wasOnTrack && !onTrack) _endSession();
+    _wasOnTrack = onTrack;
+
+    if (!onTrack) {
+      // In menus GT7 keeps streaming the last values, frozen. Show a
+      // blank frame instead (once -- not 60 times a second).
+      if (_state.sessionPhase != SessionPhase.offTrack) {
+        _state = _state.copyWith(telemetry: TelemetryFrame.empty(), sessionPhase: SessionPhase.offTrack);
+        _controller.add(_state);
+      }
+      return;
+    }
+
+    if (!driving) {
+      // Paused: keep showing the frozen values, but don't feed them to
+      // anything that accumulates per-lap data.
+      _state = _state.copyWith(telemetry: frame, sessionPhase: SessionPhase.paused);
+      _controller.add(_state);
+      return;
+    }
+
+    _updateActiveCar(frame);
+    _learnStartFinishLine(frame);
+    _applyPitStopUpdate(pitStopTracker.update(frame));
+
+    final sectorState = sectorCalculator.evaluate(frame);
+    final fuelPrediction = fuelPredictor.update(frame);
+    final tireWearEstimate = tireWearTracker.update(frame);
+    final lapCountBefore = practiceLapLogger.laps.length;
+    practiceLapLogger.update(frame);
+    shiftHistoryTracker.update(frame);
+    _state = _state.copyWith(
+      telemetry: frame,
+      sectors: sectorState,
+      fuelPrediction: fuelPrediction,
+      tireWearEstimate: tireWearEstimate,
+      recentShifts: shiftHistoryTracker.recentShifts,
+      practiceLaps: practiceLapLogger.laps,
+      sessionPhase: _flagsTrusted ? SessionPhase.driving : SessionPhase.unknown,
+    );
+    _controller.add(_state);
+
+    // Persist as soon as a new lap is logged (rather than on some
+    // timer) so a crash/forced-quit mid-session loses at most the
+    // CURRENT in-progress lap, never a previously completed one.
+    if (practiceLapLogger.laps.length > lapCountBefore) {
+      _persistLaps((laps) => PracticeLogStore.save(laps));
+    }
+  }
+
+  /// Processes one HUD OCR update -- see [handleTelemetryFrame].
+  void handleHudData(HudOverlayData hud) {
+    // Keeps PracticeLapLogger's auto-attached tire-wear reading
+    // current so it reflects whatever the OCR relay most recently
+    // read at the moment a lap actually completes, the same way
+    // setPracticeTireCompound keeps currentTireCompound current from
+    // the dashboard's manual picker -- see
+    // PracticeLapLogger.currentTireWearPercent.
+    final wearReadings = [
+      hud.tireWearFrontLeftPercent,
+      hud.tireWearFrontRightPercent,
+      hud.tireWearRearLeftPercent,
+      hud.tireWearRearRightPercent,
+    ].whereType<double>();
+    if (wearReadings.isNotEmpty) {
+      final averageWear = wearReadings.reduce((a, b) => a + b) / wearReadings.length;
+      practiceLapLogger.currentTireWearPercent = averageWear;
+      _applyPitStopUpdate(pitStopTracker.reportTireWear(averageWear));
+    }
+
+    if (hud.playerInPit) {
+      if (!_playerWasInPit) _applyPitStopUpdate(pitStopTracker.reportPlayerInPit());
+      final progress = hud.traffic.playerLapProgress;
+      if (hud.traffic.trackReady && progress != null) _state = _state.copyWith(pitLapProgress: progress);
+    }
+    _playerWasInPit = hud.playerInPit;
+
+    final pitted = pitLaneMonitor.check(hud.driversInPit, ourLap: _state.telemetry.currentLap);
+    _state = _state.copyWith(
+      hud: hud,
+      opponentPitStops: hud.driversInPit.isEmpty && pitted.isEmpty ? null : pitLaneMonitor.stops,
+      rejoinForecast: RejoinForecaster.forecast(hud.traffic, measuredPitLossSeconds: _pitStopTimeSeconds),
+    );
+    _controller.add(_state);
+    if (pitted.isNotEmpty) _opponentPittedController.add(pitted);
+  }
+
+  /// The lap counter ticks over exactly as we cross the start/finish
+  /// line, so wherever the course map has our marker at that moment IS
+  /// the line. The relay updates about once a second, so this can be
+  /// slightly behind the true line; good enough for traffic around the
+  /// pits (see FusedRaceState.startFinishLapProgress).
+  void _learnStartFinishLine(TelemetryFrame frame) {
+    final last = _lastLapForStartLine;
+    _lastLapForStartLine = frame.currentLap;
+    if (last == null || frame.currentLap != last + 1) return;
+    final traffic = _state.hud.traffic;
+    final progress = traffic.playerLapProgress;
+    if (!traffic.trackReady || progress == null) return;
+    _state = _state.copyWith(startFinishLapProgress: progress);
+  }
+
+  /// Picks the shift window for whichever car GT7 says is being driven.
+  void _updateActiveCar(TelemetryFrame frame) {
+    if (frame.carCode == 0 || frame.carCode == _activeCarCode) return;
+    _activeCarCode = frame.carCode;
+    final config = PowerBandConfig.forCar(
+      frame.carCode,
+      minAlertRpm: frame.minAlertRpm,
+      maxAlertRpm: frame.maxAlertRpm,
+    );
+    shiftHistoryTracker.config = config;
+    practiceLapLogger.powerBandConfig = config;
+    _state = _state.copyWith(powerBand: config);
+  }
+
+  void _applyPitStopUpdate(PitStopUpdate? update) {
+    if (update == null) return;
+
+    final stopLap = update.stopDetectedOnLap;
+    if (stopLap != null) {
+      final pitLaps = {stopLap, stopLap + 1};
+      tireWearTracker.excludeLaps(pitLaps);
+      practiceLapLogger.markPitLaps(pitLaps);
+      // New tyres and/or fuel: what follows is a new stint.
+      practiceLapLogger.startNewStint(automatic: true);
+    }
+
+    if (update.tiresChanged) {
+      // New stint: degradation is measured against the fresh set only.
+      tireWearTracker
+        ..reset()
+        ..excludeLaps(pitStopTracker.pitLaps);
+      _state = _state.copyWith(tireWearEstimate: TireWearEstimate.insufficientData());
+    }
+    _controller.add(_state);
+  }
+
+  /// The driver left the track: everything measured per session starts
+  /// over. Recorded practice laps are kept.
+  void _endSession() {
+    fuelPredictor.reset();
+    tireWearTracker.reset();
+    shiftHistoryTracker.reset();
+    pitStopTracker.reset();
+    pitLaneMonitor.reset();
+    practiceLapLogger.startNewSession();
+    _lastLapForStartLine = null;
+    _state = _state.copyWith(
+      // The next session may be on a different circuit.
+      clearStartFinishLapProgress: true,
+      opponentPitStops: const [],
+      fuelPrediction: FuelPrediction.insufficientData(),
+      tireWearEstimate: TireWearEstimate.insufficientData(),
+      recentShifts: const [],
+    );
+    _controller.add(_state);
+    _sessionEndedController.add(null);
+  }
+
+  /// The current round's pit stop time as entered on the strategy screen
+  /// (null = not entered) -- used for the rejoin forecast and pit calls.
+  void setPitStopTime(double? seconds) => _pitStopTimeSeconds = seconds;
+
+  /// Practice or race -- see AppMode. Recording is the same in both.
+  void setMode(AppMode mode) {
+    practiceLapLogger.isRaceMode = mode == AppMode.race;
+    _state = _state.copyWith(mode: mode);
+    _controller.add(_state);
+  }
+
+  /// The dashboard's NEW STINT button: laps from now on count as a new
+  /// stint (e.g. you reset tyres/fuel in the garage without a pit stop
+  /// the app could see).
+  void startNewStint() {
+    practiceLapLogger.startNewStint();
+    _controller.add(_state);
+  }
+
+  /// The driver is starting planned test [testNumber] (see TestPlan):
+  /// laps from now on are a new stint, counted towards that test.
+  void startTestStint(int testNumber) {
+    practiceLapLogger.startNewStint(testNumber: testNumber);
+    _controller.add(_state);
+  }
+
+  /// Clears pit-stop detection state -- part of a manual telemetry reset.
+  void resetPitStopTracking() => pitStopTracker.reset();
 
   Future<void> stop() async {
     await telemetryService.stop();
@@ -182,7 +400,7 @@ class FusedRaceStateManager {
   /// called under a genuinely new round name.
   Future<void> clearPracticeLaps() async {
     practiceLapLogger.reset();
-    await PracticeLogStore.clear();
+    await _persistLaps((_) => PracticeLogStore.clear());
     _state = _state.copyWith(practiceLaps: const []);
     _controller.add(_state);
   }
@@ -193,7 +411,7 @@ class FusedRaceStateManager {
   /// up by traffic) without wiping the whole practice log.
   Future<void> removePracticeLap(DateTime recordedAt) async {
     practiceLapLogger.removeLap(recordedAt);
-    await PracticeLogStore.save(practiceLapLogger.laps);
+    await _persistLaps((laps) => PracticeLogStore.save(laps));
     _state = _state.copyWith(practiceLaps: practiceLapLogger.laps);
     _controller.add(_state);
   }
@@ -201,5 +419,7 @@ class FusedRaceStateManager {
   void dispose() {
     stop();
     _controller.close();
+    _sessionEndedController.close();
+    _opponentPittedController.close();
   }
 }

@@ -44,6 +44,11 @@ Formatting rule: Never exceed 12 words per transmission. Use rapid, blunt struct
 Gap calls: the driver can already see who is ahead/behind by name on their own screen, so NEVER just read out a rival's name with no context. The useful call is whether gapAheadTrend/gapBehindTrend is "closing" (we are catching them / they are catching us -- urgent), "losing" (gap growing -- also urgent if it is the car behind catching up), or "steady" (no material change, skip a status callout, stay quiet unless asked). gapToLeaderSeconds/gapToLeaderTrend is our own gap to the race leader (P1), a different number from gapAheadSeconds (gap to the very next car) -- useful when asked specifically about the leader or the overall race picture, not every lap.
 Fuel calls: predictedEmptyLap is the lap we calculate we'll run dry on at current consumption, currentLap is the lap we're on now. If predictedEmptyLap minus currentLap is 2 or less, call it out urgently as a pit warning (e.g. "box this lap or next, fuel's fucked"). If predictedEmptyLap is null, we don't have enough data yet -- don't guess at a lap number.
 Shift calls: shiftZone is the instantaneous state right now ("building"/"shiftNow"/"overRev" -- only call out "overRev" live, and only occasionally, don't spam every frame). recentShiftTimings is the last several upshifts' actual timing ("early"=short-shifted, "good"=on point, "late"=over-revved before shifting) -- if this list is consistently "early" or consistently "late", call out the pattern as a habit, not a one-off (e.g. "you keep short-shifting third, let it breathe" or "stop riding the limiter into every gear"). Don't comment if the list is empty or mixed with no clear pattern.
+Mode: mode is "practice" or "race". In practice, focus on the driver's own pace, consistency, fuel and tyres -- the opponents around them don't matter. In race, racecraft and strategy against the field matter.
+Session calls: sessionPhase is "driving", "paused", "offTrack" or "unknown". If it is "paused" or "offTrack" the driver is not on track -- no fuel, gap or shift calls; answer questions about the last stint instead. throttlePercent/brakePercent are the pedal inputs at this instant.
+Opponent pit calls: driversInPitNow is who is in the pit lane right now; opponentPitStops is every stop seen this race (driver, their position, OUR lap number at the time, the tyre they fitted and the fuel they took on, when read). Use it for undercut/overcut calls and when asked who has pitted. A rival who pitted ahead of us will drop back and then come at us on fresher tyres.
+Traffic: traffic covers EVERY car on the course map, including ones not on the leaderboard (they're anonymous). nearestCars gives each car's gap in seconds around the lap: positive = behind us, negative = ahead; "count" means several cars bunched together. Use it for "is there traffic" questions and for judging where we'd rejoin after a pit stop (we rejoin roughly a pit-stop's time loss further back, i.e. near the cars that many seconds behind us).
+Pit rejoin: rejoinForecast is where we'd come out if we pitted now -- rejoinTraffic lists cars within 3s of us after the stop (positive = behind us, negative = ahead), clearAir says nobody within 1.5s, carsPassingWhileStopped counts cars (including lapped ones) that go by while we're stopped. playerInPit is true while we're in the pit lane. When asked "should I box"/"where do I come out", use this; prefer stopping into clear air over coming out just behind a car.
 
 Current race state: {RACE_STATE}
 ''';
@@ -81,23 +86,33 @@ Current race state: {RACE_STATE}
       throw Exception('Groq chat completion failed: $body');
     }
 
-    await for (final chunk in streamedResponse.stream.transform(utf8.decoder)) {
-      for (final line in const LineSplitter().convert(chunk)) {
-        if (!line.startsWith('data: ')) continue;
-        final payload = line.substring(6).trim();
-        if (payload == '[DONE]') return;
-        if (payload.isEmpty) continue;
+    yield* parseSseTokens(streamedResponse.stream);
+  }
 
-        try {
-          final json = jsonDecode(payload) as Map<String, dynamic>;
-          final delta = json['choices']?[0]?['delta']?['content'] as String?;
-          if (delta != null && delta.isNotEmpty) {
-            yield delta;
-          }
-        } on FormatException {
-          // Ignore malformed/partial SSE fragments mid-stream.
-          continue;
+  /// Extracts content tokens from an OpenAI-style SSE byte stream.
+  ///
+  /// The LineSplitter MUST run over the whole decoded stream, not over
+  /// each network chunk separately: one `data: {...}` line is regularly
+  /// split across two TCP chunks, and splitting per chunk turned that
+  /// into two fragments that were both discarded (the first failed JSON
+  /// parsing, the second didn't start with `data: `) -- silently
+  /// dropping words from Gunther's reply.
+  static Stream<String> parseSseTokens(Stream<List<int>> bytes) async* {
+    await for (final line in bytes.transform(utf8.decoder).transform(const LineSplitter())) {
+      if (!line.startsWith('data: ')) continue;
+      final payload = line.substring(6).trim();
+      if (payload == '[DONE]') return;
+      if (payload.isEmpty) continue;
+
+      try {
+        final json = jsonDecode(payload) as Map<String, dynamic>;
+        final delta = json['choices']?[0]?['delta']?['content'] as String?;
+        if (delta != null && delta.isNotEmpty) {
+          yield delta;
         }
+      } on FormatException {
+        // A genuinely malformed event -- skip it.
+        continue;
       }
     }
   }

@@ -18,7 +18,7 @@ class PitStopCalculator {
   /// medium-length circuit (~4-5km). This is a deliberately simple,
   /// fixed prior -- used only when no real measured practice-session
   /// consumption is available yet (see measuredPercentPerLap/
-  /// ShiftAwareFuelCalculator), so it only needs to be a reasonable,
+  /// PracticeFuelCalculator), so it only needs to be a reasonable,
   /// CONSISTENT starting point, not a perfect one.
   static const double _basePercentPerLapAt1x = 2.5;
 
@@ -66,7 +66,7 @@ class PitStopCalculator {
   ///
   /// measuredPitStopTimeLossSeconds, when provided, is the driver's own
   /// measured in-lap+stationary+out-lap time loss (see
-  /// PitStopTimeRecord) -- used to compute totalEstimatedTimeLossSeconds
+  /// RaceBriefing.pitStopTimeSeconds) -- used to compute totalEstimatedTimeLossSeconds
   /// on the returned RaceStrategy so the driver can see the real total
   /// cost of their stop count, not just an assumed number.
   static RaceStrategy calculate(

@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/race_briefing.dart';
 import '../models/race_strategy.dart';
 import 'practice_log_store.dart';
-import 'pit_stop_time_store.dart';
 
 /// Persists exactly one saved weekly briefing (+ its last-generated
 /// strategy, if any) to on-device storage via SharedPreferences, so the
@@ -18,7 +17,7 @@ import 'pit_stop_time_store.dart';
 /// Previously also persisted a practice-session "validation" snapshot
 /// alongside the briefing -- removed as redundant: the generated
 /// strategy already incorporates whatever practice laps exist at
-/// generation time (see ShiftAwareFuelCalculator), so re-comparing
+/// generation time (see PracticeFuelCalculator), so re-comparing
 /// against live telemetry after the fact added little beyond what
 /// simply regenerating the strategy already does. Practice laps
 /// themselves (see PracticeLogStore) persist INDEFINITELY, across app
@@ -56,7 +55,6 @@ class SavedBriefingStore {
 
     if (isNewRound) {
       await PracticeLogStore.clear();
-      await PitStopTimeStore.clear();
     }
   }
 
@@ -88,6 +86,5 @@ class SavedBriefingStore {
     await prefs.remove(_briefingKey);
     await prefs.remove(_strategyKey);
     await PracticeLogStore.clear();
-    await PitStopTimeStore.clear();
   }
 }

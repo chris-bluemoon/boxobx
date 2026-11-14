@@ -61,6 +61,12 @@ class RaceBriefing {
   /// how much time a pit stop costs beyond the fixed pit-lane loss.
   final double refuelingSpeedLitersPerSec;
 
+  /// GT7's on-screen "Pit Stop Time" for this track, entered by the
+  /// driver: the whole stop including service. Used as-is as the cost of
+  /// a stop by the strategy, the rejoin forecast and the pit calls.
+  /// Null = not entered (a default is assumed).
+  final double? pitStopTimeSeconds;
+
   /// Starting fuel load, as a percentage of the tank (GT7's own
   /// in-race fuel display convention) -- APRL briefings specify this
   /// directly (e.g. "start on 100% fuel, no fuel multiplier").
@@ -122,6 +128,7 @@ class RaceBriefing {
     this.tyreWearMultiplier = 1.0,
     this.fuelConsumptionMultiplier = 1.0,
     this.refuelingSpeedLitersPerSec = 8.0,
+    this.pitStopTimeSeconds,
     required this.startingFuelPercent,
     this.finishFuelReservePercent = 0.0,
     this.maxTyreStintLaps = 0,
@@ -143,6 +150,7 @@ class RaceBriefing {
         tyreWearMultiplier: (map['tyreWearMultiplier'] as num?)?.toDouble() ?? 1.0,
         fuelConsumptionMultiplier: (map['fuelConsumptionMultiplier'] as num?)?.toDouble() ?? 1.0,
         refuelingSpeedLitersPerSec: (map['refuelingSpeedLitersPerSec'] as num?)?.toDouble() ?? 8.0,
+        pitStopTimeSeconds: (map['pitStopTimeSeconds'] as num?)?.toDouble(),
         startingFuelPercent: (map['startingFuelPercent'] as num).toDouble(),
         finishFuelReservePercent: (map['finishFuelReservePercent'] as num?)?.toDouble() ?? 0.0,
         maxTyreStintLaps: map['maxTyreStintLaps'] as int? ?? 0,
@@ -164,6 +172,7 @@ class RaceBriefing {
         'tyreWearMultiplier': tyreWearMultiplier,
         'fuelConsumptionMultiplier': fuelConsumptionMultiplier,
         'refuelingSpeedLitersPerSec': refuelingSpeedLitersPerSec,
+        'pitStopTimeSeconds': pitStopTimeSeconds,
         'startingFuelPercent': startingFuelPercent,
         'finishFuelReservePercent': finishFuelReservePercent,
         'maxTyreStintLaps': maxTyreStintLaps,

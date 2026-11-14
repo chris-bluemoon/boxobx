@@ -20,7 +20,8 @@ import '../models/power_band_config.dart';
 /// real input to how much a given lap's fuel-per-lap reading should be
 /// trusted when predicting stint length, not just a display metric.
 class PracticeLapLogger {
-  final PowerBandConfig powerBandConfig;
+  /// Swapped by FusedRaceStateManager when GT7 reports a different car.
+  PowerBandConfig powerBandConfig;
 
   PracticeLapLogger({this.powerBandConfig = PowerBandConfig.bmwM6Gt3Endurance});
 
@@ -115,13 +116,20 @@ class PracticeLapLogger {
           goodShiftCount: _currentLapGoodShifts,
           overRevShiftCount: _currentLapOverRevShifts,
           recordedAt: DateTime.now(),
+          isPitLap: _pitLapNumbers.contains(_lastSeenLap),
+          stintNumber: _stintForNextLap(),
+          isRaceLap: isRaceMode,
+          testNumber: _currentTestNumber,
         ));
-      } else {
-        // Lap count went backwards, jumped by more than 1, or missing
-        // data -- treat as a new session and reset rather than mixing
-        // laps from two different sessions/restarts together.
-        _laps.clear();
       }
+      // Otherwise the lap count went backwards, jumped by more than 1,
+      // or data was missing -- a new session/restart (e.g. leaving a
+      // race and starting another, which takes the counter from N back
+      // to 1). Only the lap-boundary baseline is re-established below;
+      // already-recorded laps are deliberately KEPT. They're the
+      // persisted log for the current round (see PracticeLogStore), and
+      // clearing them here used to wipe every stored lap the first time
+      // the driver started a second session.
       _lastSeenLap = frame.currentLap;
       _fuelPercentAtLapStart = frame.fuelPercent;
       // The new lap starts with a clean slate of shift counts,
@@ -156,7 +164,91 @@ class PracticeLapLogger {
     _lastShiftRpm = frame.rpm;
   }
 
+  /// True in Race Mode -- tags laps as race laps (see AppMode).
+  bool isRaceMode = false;
+
+  /// The stint laps are currently being added to; 0 = none yet.
+  int _currentStint = 0;
+  bool _newStintRequested = true;
+
+  /// The planned test the current (or requested) stint is for, if the
+  /// driver started one -- see startNewStint.
+  int? _currentTestNumber;
+  int? _requestedTestNumber;
+
+  /// The test being run right now: the one just started from the
+  /// dashboard (even before its first lap completes), or the current
+  /// stint's. Null when not running a test.
+  int? get activeTestNumber => _newStintRequested ? _requestedTestNumber : _currentTestNumber;
+
+  /// The stint the next recorded lap belongs to (0 before any lap).
+  int get currentStint => _currentStint;
+
+  /// True when a new stint has been asked for but no lap of it has been
+  /// recorded yet (so [currentStint] still names the previous one).
+  bool get newStintPending => _newStintRequested;
+
+  /// Starts a new stint with the next recorded lap (fresh tyres/fuel,
+  /// a new run). Called automatically when going out on track and after
+  /// a pit stop, and from the dashboard's NEW STINT button. Numbering
+  /// only advances once a lap is actually recorded, so repeated calls
+  /// never create empty stints.
+  ///
+  /// [testNumber]: the planned test the driver says this stint is for
+  /// (see TestPlan). A stint started any other way -- automatically, or
+  /// NEW STINT -- isn't a test, which is also how a test ends.
+  ///
+  /// [automatic]: started by the app (a pit stop, going out on track)
+  /// rather than the driver. That never cancels a test the driver has
+  /// just started but not yet driven a lap of -- the usual sequence is
+  /// "start test", then pit to fit the tyres, and the pit stop must not
+  /// undo the tap.
+  void startNewStint({int? testNumber, bool automatic = false}) {
+    if (automatic && _newStintRequested && _requestedTestNumber != null) return;
+    _newStintRequested = true;
+    _requestedTestNumber = testNumber;
+  }
+
+  int _stintForNextLap() {
+    if (_newStintRequested || _currentStint == 0) {
+      final highest = _laps.fold<int>(0, (m, l) => l.stintNumber > m ? l.stintNumber : m);
+      _currentStint = highest + 1;
+      _currentTestNumber = _requestedTestNumber;
+      _newStintRequested = false;
+    }
+    return _currentStint;
+  }
+
+  /// GT7 lap numbers (this session) that had a pit stop -- see
+  /// markPitLaps.
+  final Set<int> _pitLapNumbers = {};
+
+  /// Flags the given GT7 lap numbers as pit laps, so their records get
+  /// isPitLap = true when they complete. Called by FusedRaceStateManager
+  /// when PitStopTracker detects a stop.
+  void markPitLaps(Iterable<int> gameLapNumbers) => _pitLapNumbers.addAll(gameLapNumbers);
+
+  /// Starts tracking a new GT7 session (e.g. after leaving the track)
+  /// without touching recorded laps: the next lap boundary establishes
+  /// a fresh baseline instead of being compared across sessions.
+  void startNewSession() {
+    startNewStint(automatic: true);
+    _lastSeenLap = null;
+    _fuelPercentAtLapStart = null;
+    _lastShiftGear = null;
+    _lastShiftRpm = null;
+    _currentLapShortShifts = 0;
+    _currentLapGoodShifts = 0;
+    _currentLapOverRevShifts = 0;
+    _pitLapNumbers.clear();
+  }
+
   void reset() {
+    _currentStint = 0;
+    _newStintRequested = true;
+    _currentTestNumber = null;
+    _requestedTestNumber = null;
+    _pitLapNumbers.clear();
     _lastSeenLap = null;
     _fuelPercentAtLapStart = null;
     _lastShiftGear = null;

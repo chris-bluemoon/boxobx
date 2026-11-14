@@ -6,7 +6,7 @@ import '../models/championship_standing.dart';
 
 /// Persists the LATEST weekly championship standings snapshot (one
 /// entry per driver, see ChampionshipStanding) via SharedPreferences,
-/// mirroring PitStopTimeStore/SavedBriefingStore's persistence style.
+/// mirroring SavedBriefingStore's persistence style.
 ///
 /// Deliberately keeps only the MOST RECENT week's standings, not a
 /// history across weeks -- overwriting entirely on every save() is

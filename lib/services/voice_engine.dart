@@ -11,6 +11,7 @@ import 'groq_service.dart';
 import 'tts_streaming_service.dart';
 import 'push_to_talk_service.dart';
 import 'native_audio_session_service.dart';
+import 'proactive_callout_queue.dart';
 
 /// Orchestrates the full low-latency voice pipeline (Section 4):
 /// PTT release -> Whisper STT -> streamed Llama "Gunther" response ->
@@ -32,9 +33,22 @@ class VoiceEngine {
   Stream<VoiceEngineStatus> get statusStream => _statusController.stream;
   VoiceEngineStatus get status => _status;
 
+  /// Callouts that arrived while Gunther was busy -- see
+  /// ProactiveCalloutQueue and speakProactively.
+  final ProactiveCalloutQueue _proactiveQueue;
+
+  /// Supplies the freshest race state when a queued callout is finally
+  /// spoken, so Gunther reacts to the race as it is now rather than to
+  /// the state captured when the callout was queued.
+  FusedRaceState Function()? latestRaceState;
+
   void _setStatus(VoiceEngineStatus status) {
     _status = status;
     _statusController.add(status);
+    if (status == VoiceEngineStatus.idle) {
+      // Deferred so whatever just set idle finishes unwinding first.
+      scheduleMicrotask(_speakNextQueued);
+    }
   }
 
   VoiceEngine({
@@ -42,7 +56,21 @@ class VoiceEngine {
     required this.groqService,
     required this.ttsService,
     required this.audioSession,
-  });
+    this.latestRaceState,
+    ProactiveCalloutQueue? proactiveQueue,
+  }) : _proactiveQueue = proactiveQueue ?? ProactiveCalloutQueue();
+
+  void _speakNextQueued() {
+    if (_status != VoiceEngineStatus.idle) return;
+    final prompt = _proactiveQueue.takeNext();
+    final state = latestRaceState?.call();
+    if (prompt == null || state == null) return;
+    speakProactively(prompt, state);
+  }
+
+  /// Drops any callouts still waiting to be spoken -- call alongside a
+  /// manual session reset so nothing from the previous race is heard.
+  void clearQueuedCallouts() => _proactiveQueue.clear();
 
   Future<void> initialize() async {
     await audioSession.configureForVoiceEngineer();
@@ -63,11 +91,15 @@ class VoiceEngine {
   /// the same streamResponse() plumbing can be reused, instructing him
   /// on what to proactively call out this time.
   ///
-  /// Silently does nothing if Gunther is already mid-response/listening,
-  /// so a proactive callout never interrupts or collides with the
-  /// driver actively using push-to-talk.
+  /// If Gunther is already listening/mid-response, the callout is
+  /// queued and spoken once he's idle again (unless it goes stale
+  /// first -- see ProactiveCalloutQueue), so it never interrupts the
+  /// driver's push-to-talk but isn't lost either.
   Future<void> speakProactively(String syntheticPrompt, FusedRaceState raceState) async {
-    if (_status != VoiceEngineStatus.idle) return;
+    if (_status != VoiceEngineStatus.idle) {
+      _proactiveQueue.add(syntheticPrompt);
+      return;
+    }
     try {
       await _streamGuntherResponse(syntheticPrompt, raceState);
     } catch (error, stackTrace) {

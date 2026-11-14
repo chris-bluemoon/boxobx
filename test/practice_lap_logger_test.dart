@@ -68,4 +68,26 @@ void main() {
     expect(logger.laps[0].tireWearPercent, 90.0);
     expect(logger.laps[1].tireWearPercent, 90.0);
   });
+
+  test('starting a new session (lap counter drops back to 1) keeps previously logged laps', () {
+    final logger = PracticeLapLogger();
+    // Laps restored from storage, from an earlier session.
+    logger.update(frame(currentLap: 1, lastLapTimeMs: -1, fuelPercent: 100));
+    logger.update(frame(currentLap: 2, lastLapTimeMs: 92000, fuelPercent: 95));
+    logger.update(frame(currentLap: 3, lastLapTimeMs: 91000, fuelPercent: 90));
+    final restored = PracticeLapLogger()..seedWithPersistedLaps(logger.laps);
+    expect(restored.laps, hasLength(2));
+
+    // Previous run ended on lap 3; a menu (lap 0) frame comes through,
+    // then a brand-new session starts back on lap 1.
+    restored.update(frame(currentLap: 3, lastLapTimeMs: 91000, fuelPercent: 90));
+    restored.update(frame(currentLap: 0, lastLapTimeMs: -1, fuelPercent: 100));
+    restored.update(frame(currentLap: 1, lastLapTimeMs: -1, fuelPercent: 100));
+    expect(restored.laps, hasLength(2), reason: 'the session boundary must not wipe stored laps');
+
+    restored.update(frame(currentLap: 2, lastLapTimeMs: 90500, fuelPercent: 95));
+    expect(restored.laps, hasLength(3));
+    expect(restored.laps.last.lapNumber, 3);
+    expect(restored.laps.last.lapTimeMs, 90500);
+  });
 }

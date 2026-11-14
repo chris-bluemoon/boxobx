@@ -60,10 +60,12 @@ void main() {
   // --- formattedLapTime renders minutes:seconds.millis ---
   check('formattedLapTime renders as M:SS.mmm', logger.laps.first.formattedLapTime == '1:30.000');
 
-  // --- A lap-count jump resets the log (new session) ---
+  // --- A lap-count jump (new session) keeps already-logged laps ---
   final jumpedLap = frameFor(lap: 1, lastLapTimeMs: -1, fuelPercent: 100);
   logger.update(jumpedLap);
-  check('a lap-count jump clears the in-progress log', logger.laps.isEmpty);
+  check('a lap-count jump keeps the already-logged laps', logger.laps.length == 2);
+  logger.update(frameFor(lap: 2, lastLapTimeMs: 89000, fuelPercent: 97));
+  check('laps from the new session append after the old ones', logger.laps.length == 3 && logger.laps.last.lapNumber == 3);
 
   // --- seedWithPersistedLaps restores prior laps without losing them on the next update ---
   final seeded = PracticeLapLogger();
@@ -175,11 +177,6 @@ void main() {
   check('lap 1 recorded exactly 1 short-shift', shiftLogger.laps.first.shortShiftCount == 1);
   check('lap 1 recorded exactly 1 good shift', shiftLogger.laps.first.goodShiftCount == 1);
   check('lap 1 recorded exactly 1 over-rev', shiftLogger.laps.first.overRevShiftCount == 1);
-  check('lap 1 totalShiftCount sums all three categories', shiftLogger.laps.first.totalShiftCount == 3);
-  check(
-    'lap 1 cleanShiftRatio is 1/3 (one good shift out of three total)',
-    (shiftLogger.laps.first.cleanShiftRatio! - (1 / 3)).abs() < 0.001,
-  );
 
   // --- Shift counts reset to zero at the next lap boundary, not
   // carried over or accumulated across laps. ---
@@ -191,16 +188,6 @@ void main() {
   check('lap 2 only counts shifts that happened during lap 2 (1 good shift)', shiftLogger.laps[1].goodShiftCount == 1);
   check('lap 2 has zero short-shifts (none happened during lap 2)', shiftLogger.laps[1].shortShiftCount == 0);
   check('lap 2 has zero over-revs (none happened during lap 2)', shiftLogger.laps[1].overRevShiftCount == 0);
-
-  // --- A lap with no shifts at all has a null cleanShiftRatio (not
-  // zero, which would wrongly look "fully dirty"). ---
-  final noShiftLogger = PracticeLapLogger();
-  noShiftLogger.update(frameFor(lap: 1, lastLapTimeMs: -1, fuelPercent: 100, gear: 4, rpm: 6000));
-  noShiftLogger.update(frameFor(lap: 2, lastLapTimeMs: 90000, fuelPercent: 97, gear: 4, rpm: 6000));
-  check(
-    'a lap with zero recorded shifts has a null cleanShiftRatio, not zero',
-    noShiftLogger.laps.first.cleanShiftRatio == null,
-  );
 
   print('\nAll PracticeLapLogger checks passed.');
 }

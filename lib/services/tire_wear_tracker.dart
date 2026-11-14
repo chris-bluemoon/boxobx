@@ -41,7 +41,8 @@ class TireWearTracker {
 
     if (frame.currentLap != _lastSeenLap) {
       if (frame.currentLap == _lastSeenLap! + 1 && frame.lastLapTimeMs > 0) {
-        _recordLap(frame.lastLapTimeMs);
+        // A pit lap is slow because of the stop, not the tyres.
+        if (!_excludedLaps.contains(_lastSeenLap)) _recordLap(frame.lastLapTimeMs);
       } else {
         // Lap count went backwards, jumped by more than 1, or the lap
         // time wasn't valid -- treat as a new stint/session and reset
@@ -93,7 +94,14 @@ class TireWearTracker {
   /// starts (a real pit stop for tires) or alongside a manual telemetry
   /// reset, so degradation data from a different/old set of tires
   /// doesn't linger and contaminate the new stint's baseline.
+  final Set<int> _excludedLaps = {};
+
+  /// GT7 lap numbers to leave out of degradation tracking (pit laps --
+  /// see PitStopTracker). Cleared by reset().
+  void excludeLaps(Iterable<int> gameLapNumbers) => _excludedLaps.addAll(gameLapNumbers);
+
   void reset() {
+    _excludedLaps.clear();
     _lastSeenLap = null;
     _bestLapThisStintMs = null;
     _consecutiveDegradingLaps = 0;
