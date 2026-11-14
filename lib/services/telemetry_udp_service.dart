@@ -64,10 +64,7 @@ class TelemetryUdpService {
     _receivePort = ReceivePort();
     _setStatus(ConnectionStatus.connecting);
 
-    _isolate = await Isolate.spawn(
-      _telemetryIsolateEntry,
-      _TelemetryIsolateArgs(_receivePort!.sendPort, consoleIp),
-    );
+    _isolate = await Isolate.spawn(_telemetryIsolateEntry, _TelemetryIsolateArgs(_receivePort!.sendPort, consoleIp));
 
     _receivePort!.listen((message) {
       if (message is Map<String, dynamic>) {
@@ -156,13 +153,9 @@ Future<void> _telemetryIsolateEntry(_TelemetryIsolateArgs args) async {
 /// protocol (see PDTools / gt7dashboard / raw-sim-telemetry projects).
 ///
 /// NOTE: GT7's packet does not include total track length or cumulative
-/// lap distance directly, so [TelemetryFrame.trackLength] and
-/// [TelemetryFrame.lapDistance] are left at 0 here. This means the
-/// bounding-box [SectorCalculator]'s track-database matching and
-/// equal-thirds fallback (both of which require a nonzero track length)
-/// will not trigger from GT7 telemetry alone — sector splitting would
-/// need to be re-derived purely from the live X/Z position stream
-/// instead, which is a follow-up task.
+/// lap distance, so [TelemetryFrame.trackLength] and
+/// [TelemetryFrame.lapDistance] are left at 0 here. Sectors are worked
+/// out from the X/Z position stream instead (see SectorCalculator).
 @visibleForTesting
 TelemetryFrame? decodeGt7Packet(Uint8List data) {
   const expectedPacketSize = 0x128; // 296 bytes, GT7 "packet A"
@@ -217,6 +210,9 @@ TelemetryFrame? decodeGt7Packet(Uint8List data) {
 
   final carCode = buffer.getInt32(0x124, Endian.little);
 
+  // Packet counter, +1 every 1/60 s of game time.
+  final packetId = buffer.getInt32(0x70, Endian.little);
+
   return TelemetryFrame(
     rpm: rpm,
     speedKmh: speedMs * 3.6, // convert meters/second to km/h
@@ -239,6 +235,7 @@ TelemetryFrame? decodeGt7Packet(Uint8List data) {
     carCode: carCode,
     minAlertRpm: minAlertRpm,
     maxAlertRpm: maxAlertRpm,
+    packetId: packetId,
   );
 }
 
@@ -260,9 +257,7 @@ Uint8List? _decryptGt7Packet(Uint8List data) {
     ..setUint32(0, xoredIv, Endian.little)
     ..setUint32(4, seedIv, Endian.little);
 
-  final decrypted = Uint8List.fromList(
-    Salsa20(keyBytes, nonce.buffer.asUint8List()).convert(data),
-  );
+  final decrypted = Uint8List.fromList(Salsa20(keyBytes, nonce.buffer.asUint8List()).convert(data));
 
   final magic = ByteData.sublistView(decrypted, 0, 4).getUint32(0, Endian.little);
   if (magic != _gt7Magic) return null;

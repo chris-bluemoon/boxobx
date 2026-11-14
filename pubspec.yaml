@@ -31,5 +31,6 @@ flutter:
   assets:
     - assets/config/tracks_db.json
     - assets/config/all_tracks.json
+    - assets/config/track_outlines.json
     - assets/audio/click_pshh.mp3
     - .env

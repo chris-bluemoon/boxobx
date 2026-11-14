@@ -57,14 +57,9 @@ class PracticeLapLogger {
   /// source of real (not proxied) wear data available.
   double? currentTireWearPercent;
 
-  /// When false, update() is a complete no-op -- nothing is recorded or
-  /// persisted, and no lap is tagged to whichever round is currently
-  /// saved. This is what makes "free practice" (not tied to any round)
-  /// possible: flip logging off before driving, and those laps simply
-  /// never enter the log at all. Defaults to true (logging-on) so
-  /// existing behavior is unchanged unless the driver explicitly opts
-  /// out via the dashboard's toggle.
-  bool loggingEnabled = true;
+  /// Sector times of the lap completing on the current frame (set by
+  /// FusedRaceStateManager from SectorCalculator just before [update]).
+  List<int>? completedLapSectorsMs;
 
   List<PracticeLapRecord> get laps => List.unmodifiable(_laps);
 
@@ -83,9 +78,7 @@ class PracticeLapLogger {
 
   /// Feeds a new telemetry frame in; appends a new PracticeLapRecord
   /// whenever it detects a completed lap. Call this on every frame.
-  /// Does nothing at all while loggingEnabled is false (free practice).
   void update(TelemetryFrame frame) {
-    if (!loggingEnabled) return;
     if (frame.currentLap <= 0) return;
 
     _trackShift(frame);
@@ -97,30 +90,33 @@ class PracticeLapLogger {
     }
 
     if (frame.currentLap != _lastSeenLap) {
-      if (frame.currentLap == _lastSeenLap! + 1 &&
-          frame.lastLapTimeMs > 0 &&
-          _fuelPercentAtLapStart != null) {
-        _laps.add(PracticeLapRecord(
-          lapNumber: _laps.length + 1,
-          lapTimeMs: frame.lastLapTimeMs,
-          tireCompound: currentTireCompound,
-          fuelPercentAtLapStart: _fuelPercentAtLapStart!,
-          fuelPercentAtLapEnd: frame.fuelPercent,
-          // Whatever the OCR relay most recently read off the HUD
-          // tire-wear widget at the moment this lap crossed the line --
-          // null if the relay isn't running/hasn't produced a
-          // confident reading yet, same as currentTireWearPercent
-          // itself.
-          tireWearPercent: currentTireWearPercent,
-          shortShiftCount: _currentLapShortShifts,
-          goodShiftCount: _currentLapGoodShifts,
-          overRevShiftCount: _currentLapOverRevShifts,
-          recordedAt: DateTime.now(),
-          isPitLap: _pitLapNumbers.contains(_lastSeenLap),
-          stintNumber: _stintForNextLap(),
-          isRaceLap: isRaceMode,
-          testNumber: _currentTestNumber,
-        ));
+      if (frame.currentLap == _lastSeenLap! + 1 && frame.lastLapTimeMs > 0 && _fuelPercentAtLapStart != null) {
+        _laps.add(
+          PracticeLapRecord(
+            lapNumber: _laps.length + 1,
+            lapTimeMs: frame.lastLapTimeMs,
+            tireCompound: currentTireCompound,
+            fuelPercentAtLapStart: _fuelPercentAtLapStart!,
+            fuelPercentAtLapEnd: frame.fuelPercent,
+            // Whatever the OCR relay most recently read off the HUD
+            // tire-wear widget at the moment this lap crossed the line --
+            // null if the relay isn't running/hasn't produced a
+            // confident reading yet, same as currentTireWearPercent
+            // itself.
+            tireWearPercent: currentTireWearPercent,
+            shortShiftCount: _currentLapShortShifts,
+            goodShiftCount: _currentLapGoodShifts,
+            overRevShiftCount: _currentLapOverRevShifts,
+            recordedAt: DateTime.now(),
+            isPitLap: _pitLapNumbers.contains(_lastSeenLap),
+            stintNumber: _stintForNextLap(),
+            isRaceLap: isRaceMode,
+            testNumber: _currentTestNumber,
+            raceNumber: isRaceMode ? _raceForNextLap() : null,
+            position: currentPosition,
+            sectorsMs: completedLapSectorsMs,
+          ),
+        );
       }
       // Otherwise the lap count went backwards, jumped by more than 1,
       // or data was missing -- a new session/restart (e.g. leaving a
@@ -164,8 +160,32 @@ class PracticeLapLogger {
     _lastShiftRpm = frame.rpm;
   }
 
-  /// True in Race Mode -- tags laps as race laps (see AppMode).
-  bool isRaceMode = false;
+  /// True in Race Mode -- tags laps as race laps (see AppMode). Turning
+  /// it on starts a new race with the next lap.
+  bool get isRaceMode => _isRaceMode;
+  set isRaceMode(bool value) {
+    if (value && !_isRaceMode) _newRaceRequested = true;
+    _isRaceMode = value;
+  }
+
+  bool _isRaceMode = false;
+
+  /// The race laps are being added to (see PracticeLapRecord.raceNumber).
+  int _currentRace = 0;
+  bool _newRaceRequested = true;
+
+  /// Latest race position read off the leaderboard -- attached to each
+  /// lap as it completes (kept current by FusedRaceStateManager).
+  int? currentPosition;
+
+  int _raceForNextLap() {
+    if (_newRaceRequested || _currentRace == 0) {
+      final highest = _laps.fold<int>(0, (m, l) => (l.raceNumber ?? 0) > m ? l.raceNumber! : m);
+      _currentRace = highest + 1;
+      _newRaceRequested = false;
+    }
+    return _currentRace;
+  }
 
   /// The stint laps are currently being added to; 0 = none yet.
   int _currentStint = 0;
@@ -209,6 +229,23 @@ class PracticeLapLogger {
     _requestedTestNumber = testNumber;
   }
 
+  /// The running test has reached its target: marks the test's last
+  /// recorded lap (so the test counts as done even if the current lap is
+  /// abandoned) and ends the test -- the next lap starts a normal stint.
+  /// Returns false if there was no running test.
+  bool completeActiveTest() {
+    final test = activeTestNumber;
+    if (test == null) return false;
+    if (!_newStintRequested && _laps.isNotEmpty) {
+      final last = _laps.last;
+      if (last.testNumber == test && last.stintNumber == _currentStint) {
+        _laps[_laps.length - 1] = last.withTestTargetReached();
+      }
+    }
+    startNewStint();
+    return true;
+  }
+
   int _stintForNextLap() {
     if (_newStintRequested || _currentStint == 0) {
       final highest = _laps.fold<int>(0, (m, l) => l.stintNumber > m ? l.stintNumber : m);
@@ -233,6 +270,8 @@ class PracticeLapLogger {
   /// a fresh baseline instead of being compared across sessions.
   void startNewSession() {
     startNewStint(automatic: true);
+    // Each time out on track in Race Mode is a new race.
+    _newRaceRequested = true;
     _lastSeenLap = null;
     _fuelPercentAtLapStart = null;
     _lastShiftGear = null;
@@ -244,6 +283,8 @@ class PracticeLapLogger {
   }
 
   void reset() {
+    _currentRace = 0;
+    _newRaceRequested = true;
     _currentStint = 0;
     _newStintRequested = true;
     _currentTestNumber = null;
@@ -276,16 +317,5 @@ class PracticeLapLogger {
         _laps[i] = _laps[i].withLapNumber(i + 1);
       }
     }
-  }
-
-  /// Toggles loggingEnabled and clears the in-progress lap-boundary
-  /// tracking (NOT the already-recorded laps) -- so flipping logging
-  /// off mid-lap and back on later doesn't compute a bogus lap-time
-  /// delta across the gap; the next completed lap after re-enabling
-  /// simply establishes a fresh baseline instead.
-  void setLoggingEnabled(bool enabled) {
-    loggingEnabled = enabled;
-    _lastSeenLap = null;
-    _fuelPercentAtLapStart = null;
   }
 }

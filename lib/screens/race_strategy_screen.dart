@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../models/race_briefing.dart';
+import '../models/league_calendar.dart';
 import '../models/race_strategy.dart';
 import '../models/fuel_prediction.dart';
 import '../models/track_info.dart';
@@ -34,11 +35,7 @@ class RaceStrategyScreen extends StatefulWidget {
   /// rolling average once enough laps exist.
   final List<PracticeLapRecord> Function() getPracticeLaps;
 
-  const RaceStrategyScreen({
-    super.key,
-    required this.getCurrentFuelPrediction,
-    required this.getPracticeLaps,
-  });
+  const RaceStrategyScreen({super.key, required this.getCurrentFuelPrediction, required this.getPracticeLaps});
 
   @override
   State<RaceStrategyScreen> createState() => _RaceStrategyScreenState();
@@ -73,7 +70,9 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   late final RaceStrategistService _strategist;
   late final Future<List<TrackInfo>> _tracksFuture;
 
-  final _roundNameController = TextEditingController(text: 'Round 1');
+  /// The round's saved name -- set by picking a round from the league
+  /// calendar dropdown (see LeagueCalendar).
+  final _roundNameController = TextEditingController(text: LeagueCalendar.rounds.first.name);
   final _raceLengthMinutesController = TextEditingController();
   final _fuelController = TextEditingController(text: '100');
   final _notesController = TextEditingController();
@@ -214,9 +213,9 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       strategy: _strategy,
     );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Saved as "${_roundNameController.text.trim()}"')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Saved as "${_roundNameController.text.trim()}"')));
   }
 
   Future<void> _generateStrategy() async {
@@ -251,8 +250,8 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       final practiceLaps = widget.getPracticeLaps();
       final practiceLapAverage = PracticeFuelCalculator.averagePercentPerLap(practiceLaps);
       final practiceFuelPrediction = widget.getCurrentFuelPrediction();
-      final measuredPercentPerLap = practiceLapAverage ??
-          (practiceFuelPrediction.hasEnoughData ? practiceFuelPrediction.percentPerLap : null);
+      final measuredPercentPerLap =
+          practiceLapAverage ?? (practiceFuelPrediction.hasEnoughData ? practiceFuelPrediction.percentPerLap : null);
 
       // GT7's own pit stop time for this track, if entered.
       final measuredPitStopTimeLossSeconds = briefing.pitStopTimeSeconds;
@@ -281,10 +280,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        title: const Text('RACE STRATEGY'),
-      ),
+      appBar: AppBar(backgroundColor: Colors.black, title: const Text('RACE STRATEGY')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -293,7 +289,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
             children: [
               _sectionLabel('WEEKLY DRIVER BRIEFING'),
               const SizedBox(height: 8),
-              _textField(_roundNameController, 'Round name (e.g. "Round 5")'),
+              _roundPicker(),
               if (_savedBriefingLoaded) ...[
                 const SizedBox(height: 4),
                 Text(
@@ -496,10 +492,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                         width: 20,
                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                       )
-                    : const Text(
-                        'GENERATE STRATEGY',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
+                    : const Text('GENERATE STRATEGY', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
@@ -532,21 +525,11 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   }
 
   Widget _sectionLabel(String text) => Text(
-        text,
-        style: TextStyle(
-          color: Colors.grey.shade400,
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 1.2,
-        ),
-      );
+    text,
+    style: TextStyle(color: Colors.grey.shade400, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 1.2),
+  );
 
-  Widget _textField(
-    TextEditingController controller,
-    String label, {
-    TextInputType? keyboardType,
-    int maxLines = 1,
-  }) {
+  Widget _textField(TextEditingController controller, String label, {TextInputType? keyboardType, int maxLines = 1}) {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
@@ -557,10 +540,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
         labelStyle: TextStyle(color: Colors.grey.shade500),
         filled: true,
         fillColor: Colors.grey.shade900,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide.none,
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
       ),
     );
   }
@@ -568,6 +548,47 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   /// All tire compound options + "N/A" -- GT7 allows no mandatory
   /// compound at all for a given week, so "N/A" is always offered.
   List<String> get _mandatoryTyreOptions => ['N/A', ..._tireCompoundOptions];
+
+  /// The league calendar's rounds. Picking one names the briefing after
+  /// it and fills in what the calendar says: the track, wet/changeable
+  /// weather, and a timed race length for enduros. A briefing saved
+  /// under some other name still shows, as an extra entry.
+  Widget _roundPicker() {
+    final current = _roundNameController.text;
+    final names = [
+      for (final round in LeagueCalendar.rounds) round.name,
+      if (LeagueCalendar.byName(current) == null && current.isNotEmpty) current,
+    ];
+    final selected = LeagueCalendar.byName(current);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _dropdown<String>(
+          label: 'Round (${LeagueCalendar.season})',
+          value: current.isEmpty ? names.first : current,
+          items: names,
+          labelOf: (name) => name,
+          onChanged: (name) {
+            if (name == null) return;
+            final round = LeagueCalendar.byName(name);
+            setState(() {
+              _roundNameController.text = name;
+              if (round == null) return;
+              _trackName = round.gt7Track;
+              _wetOrChangeableWeather = round.variableWeather;
+              if (round.raceLengthMinutes != null) {
+                _raceLengthMinutesController.text = round.raceLengthMinutes.toString();
+              }
+            });
+          },
+        ),
+        if (selected != null) ...[
+          const SizedBox(height: 4),
+          Text(selected.details, style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
+        ],
+      ],
+    );
+  }
 
   Widget _dropdown<T>({
     required String label,
@@ -582,10 +603,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
         labelStyle: TextStyle(color: Colors.grey.shade500),
         filled: true,
         fillColor: Colors.grey.shade900,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide.none,
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       ),
       child: DropdownButtonHideUnderline(
@@ -594,9 +612,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
           isExpanded: true,
           dropdownColor: Colors.grey.shade900,
           style: const TextStyle(color: Colors.white),
-          items: items
-              .map((item) => DropdownMenuItem<T>(value: item, child: Text(labelOf(item))))
-              .toList(),
+          items: items.map((item) => DropdownMenuItem<T>(value: item, child: Text(labelOf(item)))).toList(),
           onChanged: onChanged,
         ),
       ),
@@ -632,10 +648,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 const SizedBox(width: 6),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.green.shade900,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
+                  decoration: BoxDecoration(color: Colors.green.shade900, borderRadius: BorderRadius.circular(4)),
                   child: Text(
                     _usedPracticeLapFuelData ? 'FROM PRACTICE LAPS' : 'FROM LIVE FUEL AVERAGE',
                     style: const TextStyle(color: Colors.greenAccent, fontSize: 9, fontWeight: FontWeight.bold),
@@ -658,10 +671,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                   const SizedBox(width: 6),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.green.shade900,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
+                    decoration: BoxDecoration(color: Colors.green.shade900, borderRadius: BorderRadius.circular(4)),
                     child: const Text(
                       'FROM GT7 PIT STOP TIME',
                       style: TextStyle(color: Colors.greenAccent, fontSize: 9, fontWeight: FontWeight.bold),
@@ -680,10 +690,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.purple.shade900,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
+                    decoration: BoxDecoration(color: Colors.purple.shade900, borderRadius: BorderRadius.circular(6)),
                     child: Text('LAP ${stop.lap}', style: const TextStyle(color: Colors.white, fontSize: 12)),
                   ),
                   const SizedBox(width: 8),

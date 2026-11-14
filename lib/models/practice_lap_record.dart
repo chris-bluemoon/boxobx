@@ -65,6 +65,23 @@ class PracticeLapRecord {
   /// by the driver starting a test from the dashboard -- never inferred.
   final int? testNumber;
 
+  /// Set on the last recorded lap of a test stint when the app called
+  /// the test complete (see PracticeLapLogger.completeActiveTest) --
+  /// the target can be reached mid-lap, after the last saved lap.
+  final bool testTargetReached;
+
+  /// Race Mode laps: which race of the round this lap belongs to (1, 2,
+  /// ...) -- a race is one run in Race Mode from going out on track to
+  /// leaving it, test race or real (see RaceReport). Null otherwise.
+  final int? raceNumber;
+
+  /// Race position at the end of this lap (from the leaderboard), if read.
+  final int? position;
+
+  /// S1/S2/S3 times (ms) from our own sector lines (see
+  /// SectorCalculator), adding up to [lapTimeMs]; null if not split.
+  final List<int>? sectorsMs;
+
   const PracticeLapRecord({
     required this.lapNumber,
     required this.lapTimeMs,
@@ -80,6 +97,10 @@ class PracticeLapRecord {
     this.stintNumber = 0,
     this.isRaceLap = false,
     this.testNumber,
+    this.testTargetReached = false,
+    this.raceNumber,
+    this.position,
+    this.sectorsMs,
   });
 
   /// Fuel percent actually consumed over this lap -- negative values
@@ -96,78 +117,117 @@ class PracticeLapRecord {
   }
 
   factory PracticeLapRecord.fromMap(Map<String, dynamic> map) => PracticeLapRecord(
-        lapNumber: (map['lapNumber'] as num).toInt(),
-        lapTimeMs: (map['lapTimeMs'] as num).toInt(),
-        tireCompound: map['tireCompound'] as String,
-        fuelPercentAtLapStart: (map['fuelPercentAtLapStart'] as num).toDouble(),
-        fuelPercentAtLapEnd: (map['fuelPercentAtLapEnd'] as num).toDouble(),
-        tireWearPercent: (map['tireWearPercent'] as num?)?.toDouble(),
-        shortShiftCount: (map['shortShiftCount'] as num?)?.toInt() ?? 0,
-        goodShiftCount: (map['goodShiftCount'] as num?)?.toInt() ?? 0,
-        overRevShiftCount: (map['overRevShiftCount'] as num?)?.toInt() ?? 0,
-        recordedAt: DateTime.parse(map['recordedAt'] as String),
-        isPitLap: map['isPitLap'] as bool? ?? false,
-        stintNumber: (map['stintNumber'] as num?)?.toInt() ?? 0,
-        isRaceLap: map['isRaceLap'] as bool? ?? false,
-        testNumber: (map['testNumber'] as num?)?.toInt(),
-      );
+    lapNumber: (map['lapNumber'] as num).toInt(),
+    lapTimeMs: (map['lapTimeMs'] as num).toInt(),
+    tireCompound: map['tireCompound'] as String,
+    fuelPercentAtLapStart: (map['fuelPercentAtLapStart'] as num).toDouble(),
+    fuelPercentAtLapEnd: (map['fuelPercentAtLapEnd'] as num).toDouble(),
+    tireWearPercent: (map['tireWearPercent'] as num?)?.toDouble(),
+    shortShiftCount: (map['shortShiftCount'] as num?)?.toInt() ?? 0,
+    goodShiftCount: (map['goodShiftCount'] as num?)?.toInt() ?? 0,
+    overRevShiftCount: (map['overRevShiftCount'] as num?)?.toInt() ?? 0,
+    recordedAt: DateTime.parse(map['recordedAt'] as String),
+    isPitLap: map['isPitLap'] as bool? ?? false,
+    stintNumber: (map['stintNumber'] as num?)?.toInt() ?? 0,
+    isRaceLap: map['isRaceLap'] as bool? ?? false,
+    testNumber: (map['testNumber'] as num?)?.toInt(),
+    testTargetReached: map['testTargetReached'] as bool? ?? false,
+    raceNumber: (map['raceNumber'] as num?)?.toInt(),
+    position: (map['position'] as num?)?.toInt(),
+    sectorsMs: (map['sectorsMs'] as List?)?.map((s) => (s as num).toInt()).toList(),
+  );
 
   Map<String, dynamic> toMap() => {
-        'lapNumber': lapNumber,
-        'lapTimeMs': lapTimeMs,
-        'tireCompound': tireCompound,
-        'fuelPercentAtLapStart': fuelPercentAtLapStart,
-        'fuelPercentAtLapEnd': fuelPercentAtLapEnd,
-        'tireWearPercent': tireWearPercent,
-        'shortShiftCount': shortShiftCount,
-        'goodShiftCount': goodShiftCount,
-        'overRevShiftCount': overRevShiftCount,
-        'recordedAt': recordedAt.toIso8601String(),
-        'isPitLap': isPitLap,
-        'stintNumber': stintNumber,
-        'isRaceLap': isRaceLap,
-        'testNumber': testNumber,
-      };
+    'lapNumber': lapNumber,
+    'lapTimeMs': lapTimeMs,
+    'tireCompound': tireCompound,
+    'fuelPercentAtLapStart': fuelPercentAtLapStart,
+    'fuelPercentAtLapEnd': fuelPercentAtLapEnd,
+    'tireWearPercent': tireWearPercent,
+    'shortShiftCount': shortShiftCount,
+    'goodShiftCount': goodShiftCount,
+    'overRevShiftCount': overRevShiftCount,
+    'recordedAt': recordedAt.toIso8601String(),
+    'isPitLap': isPitLap,
+    'stintNumber': stintNumber,
+    'isRaceLap': isRaceLap,
+    'testNumber': testNumber,
+    'testTargetReached': testTargetReached,
+    'raceNumber': raceNumber,
+    'position': position,
+    'sectorsMs': sectorsMs,
+  };
 
   /// Returns a copy with tireWearPercent set -- used by the Practice
   /// Log screen's "log tire wear" action to attach a reading to an
   /// already-recorded lap after the fact (the driver typically checks
   /// the pause-menu tire display AFTER completing the lap, not during).
   PracticeLapRecord withTireWearPercent(double value) => PracticeLapRecord(
-        lapNumber: lapNumber,
-        lapTimeMs: lapTimeMs,
-        tireCompound: tireCompound,
-        fuelPercentAtLapStart: fuelPercentAtLapStart,
-        fuelPercentAtLapEnd: fuelPercentAtLapEnd,
-        tireWearPercent: value,
-        shortShiftCount: shortShiftCount,
-        goodShiftCount: goodShiftCount,
-        overRevShiftCount: overRevShiftCount,
-        recordedAt: recordedAt,
-        isPitLap: isPitLap,
-        stintNumber: stintNumber,
-        isRaceLap: isRaceLap,
-        testNumber: testNumber,
-      );
+    lapNumber: lapNumber,
+    lapTimeMs: lapTimeMs,
+    tireCompound: tireCompound,
+    fuelPercentAtLapStart: fuelPercentAtLapStart,
+    fuelPercentAtLapEnd: fuelPercentAtLapEnd,
+    tireWearPercent: value,
+    shortShiftCount: shortShiftCount,
+    goodShiftCount: goodShiftCount,
+    overRevShiftCount: overRevShiftCount,
+    recordedAt: recordedAt,
+    isPitLap: isPitLap,
+    stintNumber: stintNumber,
+    isRaceLap: isRaceLap,
+    testNumber: testNumber,
+    testTargetReached: testTargetReached,
+    raceNumber: raceNumber,
+    position: position,
+    sectorsMs: sectorsMs,
+  );
+
+  /// Returns a copy marked as the lap on which its test was called
+  /// complete.
+  PracticeLapRecord withTestTargetReached() => PracticeLapRecord(
+    lapNumber: lapNumber,
+    lapTimeMs: lapTimeMs,
+    tireCompound: tireCompound,
+    fuelPercentAtLapStart: fuelPercentAtLapStart,
+    fuelPercentAtLapEnd: fuelPercentAtLapEnd,
+    tireWearPercent: tireWearPercent,
+    shortShiftCount: shortShiftCount,
+    goodShiftCount: goodShiftCount,
+    overRevShiftCount: overRevShiftCount,
+    recordedAt: recordedAt,
+    isPitLap: isPitLap,
+    stintNumber: stintNumber,
+    isRaceLap: isRaceLap,
+    testNumber: testNumber,
+    testTargetReached: true,
+    raceNumber: raceNumber,
+    position: position,
+    sectorsMs: sectorsMs,
+  );
 
   /// Returns a copy with a different lapNumber -- used by
   /// PracticeLapLogger.removeLap to renumber the remaining laps
   /// sequentially after a deletion, so there are never gaps/duplicates
   /// in the displayed lap numbers.
   PracticeLapRecord withLapNumber(int newLapNumber) => PracticeLapRecord(
-        lapNumber: newLapNumber,
-        lapTimeMs: lapTimeMs,
-        tireCompound: tireCompound,
-        fuelPercentAtLapStart: fuelPercentAtLapStart,
-        fuelPercentAtLapEnd: fuelPercentAtLapEnd,
-        tireWearPercent: tireWearPercent,
-        shortShiftCount: shortShiftCount,
-        goodShiftCount: goodShiftCount,
-        overRevShiftCount: overRevShiftCount,
-        recordedAt: recordedAt,
-        isPitLap: isPitLap,
-        stintNumber: stintNumber,
-        isRaceLap: isRaceLap,
-        testNumber: testNumber,
-      );
+    lapNumber: newLapNumber,
+    lapTimeMs: lapTimeMs,
+    tireCompound: tireCompound,
+    fuelPercentAtLapStart: fuelPercentAtLapStart,
+    fuelPercentAtLapEnd: fuelPercentAtLapEnd,
+    tireWearPercent: tireWearPercent,
+    shortShiftCount: shortShiftCount,
+    goodShiftCount: goodShiftCount,
+    overRevShiftCount: overRevShiftCount,
+    recordedAt: recordedAt,
+    isPitLap: isPitLap,
+    stintNumber: stintNumber,
+    isRaceLap: isRaceLap,
+    testNumber: testNumber,
+    testTargetReached: testTargetReached,
+    raceNumber: raceNumber,
+    position: position,
+    sectorsMs: sectorsMs,
+  );
 }

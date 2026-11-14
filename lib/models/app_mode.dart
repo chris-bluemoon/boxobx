@@ -1,10 +1,18 @@
-/// Practice vs race: decides which UNPROMPTED calls Gunther makes and
-/// which race-only widgets show. Laps, fuel, tyre wear and pit loss are
-/// recorded in both modes, so race data feeds the strategy calculator
-/// too, and push-to-talk works the same in both.
+/// Which of the app's three screens/jobs is active: decides which
+/// unprompted calls Gunther makes, which widgets show, and where laps are
+/// recorded.
+///
+/// * [race]: race calls and widgets; laps logged as stints too, so race
+///   data feeds the strategy calculator.
+/// * [practice] ("Stint Testing"): the test plan -- full-tank stints per
+///   compound, logged as stints.
+/// * [timeTrial] ("Time Trialing"): pure qualifying pace -- lap times
+///   only, kept separate from the stint data (a low-fuel qualifying lap
+///   would skew fuel and wear figures), as the pace baseline.
 enum AppMode {
+  race,
   practice,
-  race;
+  timeTrial;
 
   /// Unprompted calls and race widgets that only make sense in a race.
   bool get pitCalls => this == race;
@@ -12,11 +20,25 @@ enum AppMode {
   bool get opponentPitCallouts => this == race;
   bool get trafficChip => this == race;
 
-  /// The practice test plan's chip and Gunther's test calls (target
-  /// reached / wrong tyre or fuel for the planned test).
+  /// Gunther's "biggest loss" call after each lap (see CornerReport).
+  bool get cornerCalls => this == timeTrial;
+
+  /// The test plan and Gunther's "test complete" call.
   bool get testPlan => this == practice;
 
-  String get label => this == race ? 'RACE MODE' : 'PRACTICE MODE';
+  /// Where completed laps go: stints (practice log) or time-trial laps.
+  bool get logsStintLaps => this != timeTrial;
+  bool get logsTimeTrialLaps => this == timeTrial;
 
-  static AppMode fromName(String? name) => name == 'race' ? race : practice;
+  String get label => switch (this) {
+    race => 'RACE MODE',
+    practice => 'STINT TESTING',
+    timeTrial => 'TIME TRIALING',
+  };
+
+  static AppMode fromName(String? name) => switch (name) {
+    'race' => race,
+    'timeTrial' => timeTrial,
+    _ => practice,
+  };
 }

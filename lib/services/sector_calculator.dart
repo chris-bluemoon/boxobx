@@ -1,164 +1,280 @@
-import 'dart:convert';
-import 'package:flutter/services.dart' show rootBundle;
+import 'dart:math' as math;
 
+import '../models/corner.dart';
+import '../models/reference_lap.dart';
+import '../models/sector_map.dart';
 import '../models/sector_state.dart';
 import '../models/telemetry_frame.dart';
+import 'corner_detector.dart';
+import 'saved_briefing_store.dart';
+import 'sector_map_store.dart';
 
-class _BoundingBox {
-  final double minX, maxX, minZ, maxZ;
-  _BoundingBox({required this.minX, required this.maxX, required this.minZ, required this.maxZ});
-
-  bool contains(double x, double z) => x >= minX && x <= maxX && z >= minZ && z <= maxZ;
-
-  factory _BoundingBox.fromMap(Map<String, dynamic> map) => _BoundingBox(
-        minX: (map['minX'] as num).toDouble(),
-        maxX: (map['maxX'] as num).toDouble(),
-        minZ: (map['minZ'] as num).toDouble(),
-        maxZ: (map['maxZ'] as num).toDouble(),
-      );
-}
-
-class _TrackDefinition {
-  final String name;
-  final double trackLengthMeters;
-  final _BoundingBox sector1;
-  final _BoundingBox sector2;
-
-  _TrackDefinition({
-    required this.name,
-    required this.trackLengthMeters,
-    required this.sector1,
-    required this.sector2,
-  });
-
-  factory _TrackDefinition.fromMap(Map<String, dynamic> map) => _TrackDefinition(
-        name: map['name'] as String,
-        trackLengthMeters: (map['trackLengthMeters'] as num).toDouble(),
-        sector1: _BoundingBox.fromMap(map['sector1Boundary']),
-        sector2: _BoundingBox.fromMap(map['sector2Boundary']),
-      );
-}
-
-/// Component A (Section 3): Bounding Box Sector Calculator.
+/// Our own sector times. GT7 sends no sector data (nor track length or
+/// lap distance), so the lines are learned from the driver's own
+/// driving: the first full lap at a layout records the path, and lines
+/// go a third and two thirds of the way round it by distance (see
+/// SectorMap). They're saved for good, so the same lines -- and
+/// comparable sector times -- are used every visit. The learning lap
+/// itself is split too, once its lines exist.
 ///
-/// Cross-references the live track length against tracks_db.json. If a
-/// match is found, live X/Z coordinates are evaluated against the mapped
-/// sector bounding boxes to trigger sector splits with millisecond
-/// precision. If no match is found, falls back to dividing the track
-/// into three mathematically equal distance slices.
-///
-/// tracks_db.json is generated (see tools/generate_tracks_db.py) from the
-/// public domain (CC0) GT7 track dataset at
-/// github.com/jbhoorasingh/gt7-datalogger-track-data. That project does
-/// not publish GT7's actual (undocumented, not exposed via telemetry or
-/// any public API) in-game sector boundaries, so the sector1/sector2
-/// bounding boxes here are *approximated*: small boxes centered on the
-/// points 1/3 and 2/3 of the way around each track's surveyed/captured
-/// racing-line path. This is more accurate than a blind hand-guessed box
-/// (it's anchored to the real track shape) but will not line up exactly
-/// with GT7's own sector timing lines.
+/// Times come from GT7's packet counter (60 packets per second of game
+/// time, unaffected by Wi-Fi drops), with each crossing interpolated
+/// between packets, then squared up with GT7's official lap time so the
+/// three sectors add up to it exactly. A lap whose clock disagrees with
+/// GT7's by more than [_maxClockDriftMs] (e.g. paused mid-lap) gets no
+/// sectors rather than wrong ones.
 class SectorCalculator {
-  List<_TrackDefinition> _tracks = [];
-  bool _loaded = false;
+  final Future<void> Function(List<SectorMap> maps) _persist;
 
-  final Stopwatch _stopwatch = Stopwatch();
+  SectorCalculator({Future<void> Function(List<SectorMap> maps)? persist}) : _persist = persist ?? SectorMapStore.save;
+
+  static const int _maxClockDriftMs = 1500;
+
+  /// Samples into a lap before its heading is known well enough to
+  /// recognise the layout.
+  static const int _samplesToRecognise = 10;
+
+  final List<SectorMap> _maps = [];
+  SectorMap? _map;
+
+  int _frames = 0;
+  int? _lastSeenLap;
+  PathSample? _previous;
+
+  /// The lap in progress: its path, start time and the S1/S2 lines'
+  /// crossing times so far. Not valid if we joined it part-way round.
+  final List<PathSample> _path = [];
+  double _lapStart = 0;
+  bool _lapValid = false;
+  final List<double> _crossings = [];
+
+  /// Live delta: the car being driven, and how far along its reference
+  /// lap we've got (see ReferenceLap.locate).
+  int _carCode = 0;
+  int _referenceIndex = 0;
+  int? _liveDeltaMs;
+
+  /// The last clean lap's trace, and the reference it was driven
+  /// against (before it replaced it, if it did) -- for the corner report.
+  ReferenceLap? lastLapTrace;
+  ReferenceLap? lastLapComparedTo;
+
+  /// Corners of the layout being driven (empty until found).
+  List<Corner> get corners => _map?.corners ?? const [];
+
+  /// Whether completed laps may become the reference. Only Time
+  /// Trialing laps do (always full grip and fuel, so comparable); stint
+  /// and race laps are still split and compared, but never set it.
+  bool recordsReference = true;
+
+  /// The current round. References belong to the round they were set in,
+  /// so a new round starts the delta afresh (its first clean Time
+  /// Trialing lap becomes the reference).
+  String? round;
+
   SectorState _state = const SectorState();
-  bool _hasEnteredSector1 = false;
-  bool _hasEnteredSector2 = false;
-
-  static const double _trackLengthToleranceMeters = 15.0;
-
-  Future<void> loadTrackDatabase() async {
-    if (_loaded) return;
-    final raw = await rootBundle.loadString('assets/config/tracks_db.json');
-    final json = jsonDecode(raw) as Map<String, dynamic>;
-    _tracks = (json['tracks'] as List)
-        .map((e) => _TrackDefinition.fromMap(e as Map<String, dynamic>))
-        .toList();
-    _loaded = true;
-  }
-
   SectorState get state => _state;
 
-  /// Feeds a new telemetry frame into the calculator and returns the
-  /// (possibly updated) [SectorState].
+  List<SectorMap> get maps => List.unmodifiable(_maps);
+
+  Future<void> loadSectorMaps() async {
+    final stored = await SectorMapStore.load();
+    _maps
+      ..clear()
+      ..addAll(stored);
+  }
+
+  /// For tests: start with these layouts already learned.
+  void seedMaps(List<SectorMap> maps) => _maps
+    ..clear()
+    ..addAll(maps);
+
+  /// Feeds one (driving) frame in.
   SectorState evaluate(TelemetryFrame frame) {
-    if (!_stopwatch.isRunning) _stopwatch.start();
+    _frames++;
+    final sample = (
+      x: frame.posX,
+      z: frame.posZ,
+      t: frame.packetId > 0 ? frame.packetId / 60.0 : _frames / 60.0,
+      v: frame.speedKmh,
+      brake: frame.brakePercent,
+    );
+    final previous = _previous;
+    _previous = sample;
+    _carCode = frame.carCode;
+    var completed = false;
 
-    final matchedTrack = _matchTrack(frame.trackLength);
-
-    if (matchedTrack != null) {
-      _state = _state.copyWith(activeTrackName: matchedTrack.name);
-      _evaluateBoundingBoxes(frame, matchedTrack);
+    final last = _lastSeenLap;
+    _lastSeenLap = frame.currentLap;
+    if (last == null) {
+      _startLap(sample, null, valid: false);
+    } else if (frame.currentLap != last) {
+      if (frame.currentLap == last + 1) {
+        completed = _completeLap(frame, sample, previous);
+      }
+      _startLap(sample, previous, valid: frame.currentLap == last + 1);
     } else {
-      _evaluateEqualDistanceFallback(frame);
+      _path.add(sample);
+      if (_lapValid && _path.length == _samplesToRecognise) _recogniseLayout();
+      final map = _map;
+      if (_lapValid && map != null && previous != null && _crossings.length < map.gates.length) {
+        final t = SectorMap.crossingTime(map.gates[_crossings.length], previous, sample);
+        if (t != null) _crossings.add(t);
+      }
+      _updateLiveDelta(sample);
     }
 
+    _state = SectorState(
+      currentSectorIndex: _crossings.length.clamp(0, 2),
+      mapped: _map != null,
+      currentLapSplitsMs: _lapValid ? _splitsSoFar() : const [],
+      lastLapSectorsMs: _state.lastLapSectorsMs,
+      lapJustCompleted: completed,
+      liveDeltaMs: _liveDeltaMs,
+      referenceLapMs: _reference?.lapTimeMs,
+    );
     return _state;
   }
 
-  _TrackDefinition? _matchTrack(double trackLength) {
-    if (trackLength <= 0) return null;
-    for (final track in _tracks) {
-      if ((track.trackLengthMeters - trackLength).abs() <= _trackLengthToleranceMeters) {
-        return track;
+  /// The driver left the track: the next session may be another layout.
+  void reset() {
+    _map = null;
+    _lastSeenLap = null;
+    _previous = null;
+    _path.clear();
+    _crossings.clear();
+    _lapValid = false;
+    _liveDeltaMs = null;
+    lastLapTrace = null;
+    lastLapComparedTo = null;
+    _state = const SectorState();
+  }
+
+  ReferenceLap? get _reference {
+    final reference = _map?.references[_carCode];
+    return reference != null && _isThisRound(reference) ? reference : null;
+  }
+
+  bool _isThisRound(ReferenceLap reference) {
+    final a = reference.round, b = round;
+    if (a == null || b == null) return a == b;
+    return SavedBriefingStore.isSameRound(a, b);
+  }
+
+  /// Time now against the reference lap at the same point on track
+  /// (negative = ahead). Null when there's no reference, the lap isn't
+  /// timed, or the car is off the reference line (e.g. in the pits).
+  void _updateLiveDelta(PathSample sample) {
+    final reference = _reference;
+    if (!_lapValid || reference == null) {
+      _liveDeltaMs = null;
+      return;
+    }
+    final at = reference.locate(sample.x, sample.z, _referenceIndex);
+    if (at == null) {
+      _liveDeltaMs = null;
+      return;
+    }
+    _referenceIndex = at.index;
+    _liveDeltaMs = ((sample.t - _lapStart) * 1000 - at.timeMs).round();
+  }
+
+  void _startLap(PathSample sample, PathSample? previous, {required bool valid}) {
+    final map = _map;
+    final lineCrossing = map == null || previous == null ? null : SectorMap.crossingTime(map.start, previous, sample);
+    _lapStart = lineCrossing ?? sample.t;
+    _lapValid = valid;
+    _path
+      ..clear()
+      ..add(sample);
+    _crossings.clear();
+    _referenceIndex = 0;
+    _liveDeltaMs = valid && _reference != null ? 0 : null;
+  }
+
+  /// Which known layout this lap is on, from where it started and which
+  /// way it's heading; checked every lap.
+  void _recogniseLayout() {
+    final a = _path.first, b = _path.last;
+    final dx = b.x - a.x, dz = b.z - a.z;
+    final len = math.sqrt(dx * dx + dz * dz);
+    if (len == 0) return;
+    final norm = 1 / len;
+    _map = _maps.where((m) => m.matches(a.x, a.z, dx * norm, dz * norm)).firstOrNull;
+  }
+
+  /// Closes the lap that just ended; true if it was a lap we timed.
+  bool _completeLap(TelemetryFrame frame, PathSample sample, PathSample? previous) {
+    lastLapTrace = null;
+    lastLapComparedTo = null;
+    if (!_lapValid || frame.lastLapTimeMs <= 0) {
+      _state = SectorState(lastLapSectorsMs: null, mapped: _map != null);
+      return true;
+    }
+
+    if (_map == null) {
+      final learned = SectorMap.learn(_path);
+      if (learned != null) {
+        _maps.add(learned);
+        _map = learned;
+        _persist(List.of(_maps)).catchError((Object _) {});
+        _crossings
+          ..clear()
+          ..addAll(_crossingsAlong(_path, learned));
       }
     }
-    return null;
+
+    final map = _map;
+    List<int>? sectors;
+    if (map != null && _crossings.length == 2) {
+      final end = (previous == null ? null : SectorMap.crossingTime(map.start, previous, sample)) ?? sample.t;
+      final raw = [_crossings[0] - _lapStart, _crossings[1] - _crossings[0], end - _crossings[1]];
+      final total = end - _lapStart;
+      final official = frame.lastLapTimeMs;
+      if (total > 0 && raw.every((s) => s > 0) && (total * 1000 - official).abs() <= _maxClockDriftMs) {
+        final s1 = (official * raw[0] / total).round();
+        final s2 = (official * raw[1] / total).round();
+        sectors = [s1, s2, official - s1 - s2];
+        final trace = ReferenceLap.fromPath(_path, _lapStart, end, official, round: round);
+        lastLapComparedTo = _reference;
+        lastLapTrace = trace;
+        if (trace != null) _maybeNewReference(map, trace);
+      }
+    }
+    _state = SectorState(lastLapSectorsMs: sectors, mapped: map != null);
+    return true;
   }
 
-  void _evaluateBoundingBoxes(TelemetryFrame frame, _TrackDefinition track) {
-    if (!_hasEnteredSector1 && track.sector1.contains(frame.posX, frame.posZ)) {
-      _hasEnteredSector1 = true;
-      _recordSplit();
-    } else if (_hasEnteredSector1 &&
-        !_hasEnteredSector2 &&
-        track.sector2.contains(frame.posX, frame.posZ)) {
-      _hasEnteredSector2 = true;
-      _recordSplit();
+  /// A clean lap faster than this car's reference here becomes the new
+  /// reference (the first clean lap always does).
+  void _maybeNewReference(SectorMap map, ReferenceLap lap) {
+    if (!recordsReference) return;
+    final current = map.references[_carCode];
+    if (current != null && _isThisRound(current) && current.hasSpeedAndBrake && lap.lapTimeMs >= current.lapTimeMs) {
+      return;
     }
+    map.references[_carCode] = lap;
+    // The layout's corners are found once, from its first reference.
+    if (map.corners.isEmpty) map.corners.addAll(CornerDetector.detect(lap));
+    _persist(List.of(_maps)).catchError((Object _) {});
   }
 
-  /// Dynamic Fallback Logic: slice the track distance into three
-  /// mathematically equal pieces and use them as sector tripwires.
-  void _evaluateEqualDistanceFallback(TelemetryFrame frame) {
-    if (frame.trackLength <= 0) return;
-    final sliceLength = frame.trackLength / 3;
-
-    if (!_hasEnteredSector1 && frame.lapDistance >= sliceLength) {
-      _hasEnteredSector1 = true;
-      _recordSplit();
-    } else if (_hasEnteredSector1 &&
-        !_hasEnteredSector2 &&
-        frame.lapDistance >= sliceLength * 2) {
-      _hasEnteredSector2 = true;
-      _recordSplit();
-    } else if (_hasEnteredSector2 && frame.lapDistance < sliceLength) {
-      // Crossed the start/finish line — new lap, reset tripwires.
-      _hasEnteredSector1 = false;
-      _hasEnteredSector2 = false;
+  static List<double> _crossingsAlong(List<PathSample> path, SectorMap map) {
+    final found = <double>[];
+    for (var i = 1; i < path.length && found.length < map.gates.length; i++) {
+      final t = SectorMap.crossingTime(map.gates[found.length], path[i - 1], path[i]);
+      if (t != null) found.add(t);
     }
+    return found;
   }
 
-  void _recordSplit() {
-    _stopwatch.stop();
-    final split = _stopwatch.elapsed;
-    final updatedSplits = [..._state.completedSplits, split];
-    final nextSectorIndex = (_state.currentSectorIndex + 1) % 3;
-
-    _state = _state.copyWith(
-      currentSectorIndex: nextSectorIndex,
-      lastSplit: split,
-      completedSplits: updatedSplits,
-    );
-
-    _stopwatch
-      ..reset()
-      ..start();
-
-    if (nextSectorIndex == 0) {
-      _hasEnteredSector1 = false;
-      _hasEnteredSector2 = false;
+  List<int> _splitsSoFar() {
+    final splits = <int>[];
+    var from = _lapStart;
+    for (final c in _crossings) {
+      splits.add(((c - from) * 1000).round());
+      from = c;
     }
+    return splits;
   }
 }

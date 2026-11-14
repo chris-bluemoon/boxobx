@@ -78,7 +78,12 @@ class TestPlanTracker {
         return laps >= planned.laps! ? '${planned.laps} laps done' : null;
       case TestStintKind.long:
         final target = planned.stopAtWearRemainingPercent!;
-        final wear = liveWearRemaining ?? stint?.latestTyreWearPercent;
+        // The live wear reading is only trusted once the test stint has a
+        // completed lap: when a test is started in the garage, the last
+        // reading is still the PREVIOUS stint's worn tyres (the relay
+        // can't see the HUD from the menus), which would otherwise end
+        // the test the moment it starts.
+        final wear = stint == null ? null : (liveWearRemaining ?? stint.latestTyreWearPercent);
         if (wear != null && wear <= target + wearTolerancePercent) {
           return 'tyres at ${wear.toStringAsFixed(0)}% left';
         }
@@ -130,7 +135,7 @@ class TestPlanTracker {
         matched.add(tagged.isEmpty ? null : tagged.last);
         continue;
       }
-      final done = tagged.where((s) => stopReason(planned, s) != null).firstOrNull;
+      final done = tagged.where((s) => s.testTargetReached || stopReason(planned, s) != null).firstOrNull;
       statuses.add(done == null ? TestStatus.toDo : TestStatus.done);
       matched.add(done);
     }
@@ -174,8 +179,8 @@ class TestPlanCaller {
 
     final following = progress.statuses.indexWhere((s) => s == TestStatus.toDo, index + 1);
     final nextTest = following < 0 ? null : plan.stints[following];
-    return 'Test ${planned.number} target reached: $reason. Tell the driver the test is done and to head back '
-        'to the garage.${nextTest == null ? ' That completes the test plan.' : ' Next test: ${progress.targetFor(nextTest)}.'}'
+    return 'Test ${planned.number} complete: $reason. The data is logged. '
+        '${nextTest == null ? 'Tell the driver that completes the test plan -- come in.' : 'Tell the driver to come in and move on to the next test: ${progress.targetFor(nextTest)}.'}'
         ' One short transmission.';
   }
 }

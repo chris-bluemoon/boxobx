@@ -250,4 +250,13 @@ void main() {
     await restarted.loadPersistedData();
     expect(restarted.current.practiceLaps, hasLength(3));
   });
+
+  test("the tyre GT7 shows being fitted to our car in the pits becomes the logged tyre", () {
+    final manager = _manager();
+    manager.handleHudData(HudOverlayData.fromMap({
+      'playerInPit': true,
+      'playerPitService': {'tyre': 'S', 'fuel': 20},
+    }));
+    expect(manager.practiceLapLogger.currentTireCompound, 'Racing Soft');
+  });
 }

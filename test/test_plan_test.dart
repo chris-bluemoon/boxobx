@@ -121,6 +121,26 @@ void main() {
       expect(logger.activeTestNumber, isNull);
     });
 
+    test('completing the test marks its last lap and ends it, so it counts even if the lap in progress is abandoned', () {
+      final logger = PracticeLapLogger();
+      logger.update(_frame(1, 100));
+      logger.startNewStint(testNumber: 1);
+      logger.update(_frame(2, 97));
+      logger.update(_frame(3, 94));
+      expect(logger.completeActiveTest(), isTrue);
+      expect(logger.laps.last.testTargetReached, isTrue);
+      expect(logger.laps.where((l) => l.testTargetReached), hasLength(1));
+      expect(logger.activeTestNumber, isNull, reason: 'the test is closed off');
+      logger.update(_frame(4, 91));
+      expect(logger.laps.last.testNumber, isNull, reason: 'later laps are a normal stint');
+
+      // Counts as done even though its saved wear never reached the target.
+      final plan = TestPlan.fromBriefing(_briefing(['Racing Medium']));
+      expect(TestPlanTracker.progress(plan, logger.laps).statuses.first, TestStatus.done);
+      expect(PracticeLapRecord.fromMap(logger.laps[1].toMap()).testTargetReached, isTrue);
+      expect(logger.completeActiveTest(), isFalse, reason: 'no test running now');
+    });
+
     test('the stint label names the test', () {
       final s = StintSummary.fromLaps(_stint(3, test: 2, tyre: 'Racing Soft')).single;
       expect(s.label('Round 5'), 'Round 5 Testing - Stint 3 (Test 2) - Fuel 100%, Tyre RS');
@@ -201,7 +221,7 @@ void main() {
       final caller = TestPlanCaller();
       final laps = [..._stint(1, tyre: 'Racing Soft', count: 4), ..._stint(2, test: 1, count: 10)];
       final call = caller.check(plan, laps, activeTestNumber: 1, currentStintNumber: 2, liveWearRemaining: 25);
-      expect(call, contains('Next test: Soft · 100% fuel · until 70% worn (about 23 laps)'));
+      expect(call, contains('next test: Soft · 100% fuel · until 70% worn (about 23 laps)'));
     });
   });
 
@@ -215,11 +235,28 @@ void main() {
           caller.check(plan, laps, activeTestNumber: 1, currentStintNumber: 1, liveWearRemaining: wear);
       expect(check(40), isNull);
       final call = check(26);
-      expect(call, contains('Test 1 target reached: tyres at 26% left'));
-      expect(call, contains('test is done and to head back to the garage'));
+      expect(call, contains('Test 1 complete: tyres at 26% left'));
+      expect(call, contains('move on to the next test'));
       expect(call, isNot(contains('box')));
-      expect(call, contains('Next test: Soft · 100% fuel · until 70% worn'));
+      expect(call, contains('next test: Soft · 100% fuel · until 70% worn'));
       expect(check(24), isNull, reason: 'once only');
+    });
+
+    test('a worn reading left over from the previous stint does not end a test that has just started', () {
+      final caller = TestPlanCaller();
+      final previous = _stint(1, count: 25); // ended on worn tyres
+      // Test 1 started in the garage: no lap of it yet, last reading 25%.
+      expect(
+        caller.check(plan, previous, activeTestNumber: 1, currentStintNumber: 1, liveWearRemaining: 25),
+        isNull,
+      );
+      expect(TestPlanTracker.stopReason(plan.stints.first, null, liveWearRemaining: 25), isNull);
+      // Once a lap of the test is done, the live reading counts.
+      final withLap = [...previous, ..._stint(2, test: 1, count: 1)];
+      expect(
+        caller.check(plan, withLap, activeTestNumber: 1, currentStintNumber: 2, liveWearRemaining: 29),
+        contains('complete'),
+      );
     });
 
     test('says nothing when no test is running', () {

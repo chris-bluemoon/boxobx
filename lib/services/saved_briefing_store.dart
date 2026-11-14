@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/race_briefing.dart';
 import '../models/race_strategy.dart';
 import 'practice_log_store.dart';
+import 'time_trial_store.dart';
 
 /// Persists exactly one saved weekly briefing (+ its last-generated
 /// strategy, if any) to on-device storage via SharedPreferences, so the
@@ -36,14 +37,10 @@ class SavedBriefingStore {
   /// clears the practice lap log when the round NAME actually changes
   /// (a genuinely new round) -- simply re-saving edits to the same
   /// round preserves it, since it isn't invalidated by a form tweak.
-  static Future<void> save({
-    required String name,
-    required RaceBriefing briefing,
-    RaceStrategy? strategy,
-  }) async {
+  static Future<void> save({required String name, required RaceBriefing briefing, RaceStrategy? strategy}) async {
     final prefs = await SharedPreferences.getInstance();
     final previousName = prefs.getString(_nameKey);
-    final isNewRound = previousName != null && previousName != name;
+    final isNewRound = previousName != null && !isSameRound(previousName, name);
 
     await prefs.setString(_nameKey, name);
     await prefs.setString(_briefingKey, jsonEncode(briefing.toMap()));
@@ -55,6 +52,7 @@ class SavedBriefingStore {
 
     if (isNewRound) {
       await PracticeLogStore.clear();
+      await TimeTrialStore.clear();
     }
   }
 
@@ -80,11 +78,18 @@ class SavedBriefingStore {
     return (name, briefing, strategy, null, null);
   }
 
+  /// Whether two saved round names are the same round. Exact matches
+  /// are, and so is a plain "Round 5" against the calendar's
+  /// "Round 5 - Nürburgring Sprint" (see LeagueCalendar) -- renaming a
+  /// round to its calendar name must not wipe its practice data.
+  static bool isSameRound(String a, String b) => a == b || a.startsWith('$b - ') || b.startsWith('$a - ');
+
   static Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_nameKey);
     await prefs.remove(_briefingKey);
     await prefs.remove(_strategyKey);
     await PracticeLogStore.clear();
+    await TimeTrialStore.clear();
   }
 }

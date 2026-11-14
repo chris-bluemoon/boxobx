@@ -40,14 +40,15 @@ class TelemetryCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              value,
-              style: TextStyle(
-                color: alert ? Colors.white : baseColor,
-                fontSize: 56,
-                fontWeight: FontWeight.bold,
+          // Shrinks with the tile so a short tile (e.g. landscape, under
+          // the page header) never overflows.
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                value,
+                style: TextStyle(color: alert ? Colors.white : baseColor, fontSize: 56, fontWeight: FontWeight.bold),
               ),
             ),
           ),

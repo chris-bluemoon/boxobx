@@ -58,6 +58,11 @@ class TelemetryFrame {
   final int minAlertRpm;
   final int maxAlertRpm;
 
+  /// GT7's packet counter (offset 0x70, int32): one per 1/60 s of game
+  /// time, so differences between packets are a precise clock even if
+  /// some packets are lost on Wi-Fi (see SectorCalculator). 0 if unknown.
+  final int packetId;
+
   const TelemetryFrame({
     required this.rpm,
     required this.speedKmh,
@@ -79,6 +84,7 @@ class TelemetryFrame {
     this.carCode = 0,
     this.minAlertRpm = 0,
     this.maxAlertRpm = 0,
+    this.packetId = 0,
   });
 
   bool get isCarOnTrack => flags & TelemetryFlags.carOnTrack != 0;
@@ -92,68 +98,68 @@ class TelemetryFrame {
   bool get isDriving => isCarOnTrack && !isPaused && !isLoading;
 
   factory TelemetryFrame.empty() => const TelemetryFrame(
-        rpm: 0,
-        speedKmh: 0,
-        gear: 0,
-        posX: 0,
-        posY: 0,
-        posZ: 0,
-        lapDistance: 0,
-        trackLength: 0,
-        fuelPercent: 0,
-        tireTemps: [0, 0, 0, 0],
-        currentLap: 0,
-        totalLaps: -1,
-        lastLapTimeMs: -1,
-        bestLapTimeMs: -1,
-        flags: 0,
-      );
+    rpm: 0,
+    speedKmh: 0,
+    gear: 0,
+    posX: 0,
+    posY: 0,
+    posZ: 0,
+    lapDistance: 0,
+    trackLength: 0,
+    fuelPercent: 0,
+    tireTemps: [0, 0, 0, 0],
+    currentLap: 0,
+    totalLaps: -1,
+    lastLapTimeMs: -1,
+    bestLapTimeMs: -1,
+    flags: 0,
+  );
 
   Map<String, dynamic> toMap() => {
-        'rpm': rpm,
-        'speedKmh': speedKmh,
-        'gear': gear,
-        'posX': posX,
-        'posY': posY,
-        'posZ': posZ,
-        'lapDistance': lapDistance,
-        'trackLength': trackLength,
-        'fuelPercent': fuelPercent,
-        'tireTemps': tireTemps,
-        'currentLap': currentLap,
-        'totalLaps': totalLaps,
-        'lastLapTimeMs': lastLapTimeMs,
-        'bestLapTimeMs': bestLapTimeMs,
-        'flags': flags,
-        'throttlePercent': throttlePercent,
-        'brakePercent': brakePercent,
-        'carCode': carCode,
-        'minAlertRpm': minAlertRpm,
-        'maxAlertRpm': maxAlertRpm,
-      };
+    'rpm': rpm,
+    'speedKmh': speedKmh,
+    'gear': gear,
+    'posX': posX,
+    'posY': posY,
+    'posZ': posZ,
+    'lapDistance': lapDistance,
+    'trackLength': trackLength,
+    'fuelPercent': fuelPercent,
+    'tireTemps': tireTemps,
+    'currentLap': currentLap,
+    'totalLaps': totalLaps,
+    'lastLapTimeMs': lastLapTimeMs,
+    'bestLapTimeMs': bestLapTimeMs,
+    'flags': flags,
+    'throttlePercent': throttlePercent,
+    'brakePercent': brakePercent,
+    'carCode': carCode,
+    'minAlertRpm': minAlertRpm,
+    'maxAlertRpm': maxAlertRpm,
+  };
 
   factory TelemetryFrame.fromMap(Map<String, dynamic> map) => TelemetryFrame(
-        rpm: (map['rpm'] as num).toDouble(),
-        speedKmh: (map['speedKmh'] as num).toDouble(),
-        gear: (map['gear'] as num).toInt(),
-        posX: (map['posX'] as num).toDouble(),
-        posY: (map['posY'] as num).toDouble(),
-        posZ: (map['posZ'] as num).toDouble(),
-        lapDistance: (map['lapDistance'] as num).toDouble(),
-        trackLength: (map['trackLength'] as num).toDouble(),
-        fuelPercent: (map['fuelPercent'] as num).toDouble(),
-        tireTemps: (map['tireTemps'] as List).map((e) => (e as num).toDouble()).toList(),
-        currentLap: (map['currentLap'] as num?)?.toInt() ?? 0,
-        totalLaps: (map['totalLaps'] as num?)?.toInt() ?? -1,
-        lastLapTimeMs: (map['lastLapTimeMs'] as num?)?.toInt() ?? -1,
-        bestLapTimeMs: (map['bestLapTimeMs'] as num?)?.toInt() ?? -1,
-        flags: (map['flags'] as num?)?.toInt() ?? TelemetryFlags.carOnTrack,
-        throttlePercent: (map['throttlePercent'] as num?)?.toDouble() ?? 0,
-        brakePercent: (map['brakePercent'] as num?)?.toDouble() ?? 0,
-        carCode: (map['carCode'] as num?)?.toInt() ?? 0,
-        minAlertRpm: (map['minAlertRpm'] as num?)?.toInt() ?? 0,
-        maxAlertRpm: (map['maxAlertRpm'] as num?)?.toInt() ?? 0,
-      );
+    rpm: (map['rpm'] as num).toDouble(),
+    speedKmh: (map['speedKmh'] as num).toDouble(),
+    gear: (map['gear'] as num).toInt(),
+    posX: (map['posX'] as num).toDouble(),
+    posY: (map['posY'] as num).toDouble(),
+    posZ: (map['posZ'] as num).toDouble(),
+    lapDistance: (map['lapDistance'] as num).toDouble(),
+    trackLength: (map['trackLength'] as num).toDouble(),
+    fuelPercent: (map['fuelPercent'] as num).toDouble(),
+    tireTemps: (map['tireTemps'] as List).map((e) => (e as num).toDouble()).toList(),
+    currentLap: (map['currentLap'] as num?)?.toInt() ?? 0,
+    totalLaps: (map['totalLaps'] as num?)?.toInt() ?? -1,
+    lastLapTimeMs: (map['lastLapTimeMs'] as num?)?.toInt() ?? -1,
+    bestLapTimeMs: (map['bestLapTimeMs'] as num?)?.toInt() ?? -1,
+    flags: (map['flags'] as num?)?.toInt() ?? TelemetryFlags.carOnTrack,
+    throttlePercent: (map['throttlePercent'] as num?)?.toDouble() ?? 0,
+    brakePercent: (map['brakePercent'] as num?)?.toDouble() ?? 0,
+    carCode: (map['carCode'] as num?)?.toInt() ?? 0,
+    minAlertRpm: (map['minAlertRpm'] as num?)?.toInt() ?? 0,
+    maxAlertRpm: (map['maxAlertRpm'] as num?)?.toInt() ?? 0,
+  );
 }
 
 /// Bits of GT7's status field (packet offset 0x8E), as documented by

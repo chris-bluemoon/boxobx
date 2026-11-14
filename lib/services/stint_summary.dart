@@ -28,6 +28,9 @@ class StintSummary {
   /// The planned test the driver ran this stint for, if any.
   int? get testNumber => laps.first.testNumber;
 
+  /// True if the app called this stint's test complete.
+  bool get testTargetReached => laps.any((l) => l.testTargetReached);
+
   List<PracticeLapRecord> get _clean => laps.where((l) => !l.isPitLap).toList();
 
   int get lapCount => _clean.length;

@@ -80,31 +80,6 @@ void main() {
   restored.update(frameFor(lap: 3, lastLapTimeMs: 87000, fuelPercent: 93));
   check('new laps after seeding continue numbering from the seeded count', restored.laps.last.lapNumber == 2);
 
-  // --- Free practice: logging disabled means update() is a total
-  // no-op, no laps are recorded or appended to an existing log. ---
-  final freePracticeLogger = PracticeLapLogger()..currentTireCompound = 'Racing Hard';
-  freePracticeLogger.update(frameFor(lap: 1, lastLapTimeMs: -1, fuelPercent: 100));
-  freePracticeLogger.update(frameFor(lap: 2, lastLapTimeMs: 90000, fuelPercent: 97));
-  check('logging is enabled by default (existing behavior unchanged)', freePracticeLogger.loggingEnabled);
-  check('a lap is logged normally before disabling', freePracticeLogger.laps.length == 1);
-
-  freePracticeLogger.setLoggingEnabled(false);
-  check('setLoggingEnabled(false) updates loggingEnabled', !freePracticeLogger.loggingEnabled);
-  freePracticeLogger.update(frameFor(lap: 3, lastLapTimeMs: 89000, fuelPercent: 94));
-  freePracticeLogger.update(frameFor(lap: 4, lastLapTimeMs: 88000, fuelPercent: 91));
-  check('no new laps are recorded while logging is disabled (free practice)', freePracticeLogger.laps.length == 1);
-
-  // --- Re-enabling logging resumes recording without computing a
-  // bogus lap-time delta across the gap where logging was off. ---
-  freePracticeLogger.setLoggingEnabled(true);
-  freePracticeLogger.update(frameFor(lap: 4, lastLapTimeMs: -1, fuelPercent: 91)); // re-establishes baseline
-  freePracticeLogger.update(frameFor(lap: 5, lastLapTimeMs: 87500, fuelPercent: 88));
-  check('re-enabling logging resumes recording new laps', freePracticeLogger.laps.length == 2);
-  check(
-    're-enabling logging does not retroactively log laps skipped while disabled',
-    freePracticeLogger.laps.last.lapTimeMs == 87500,
-  );
-
   // --- reset() clears everything ---
   restored.reset();
   check('reset() clears the practice log entirely', restored.laps.isEmpty);

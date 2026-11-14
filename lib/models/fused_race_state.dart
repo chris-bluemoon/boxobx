@@ -9,6 +9,8 @@ import 'shift_event.dart';
 import 'power_band_config.dart';
 import 'opponent_pit_stop.dart';
 import 'app_mode.dart';
+import 'time_trial_lap.dart';
+import '../services/corner_report.dart';
 import '../services/rejoin_forecaster.dart';
 
 /// Where the driver is, from GT7's status flags (see TelemetryFlags).
@@ -33,13 +35,6 @@ class FusedRaceState {
   /// ALL practice laps logged for the current round, not just this
   /// specific run of the app.
   final List<PracticeLapRecord> practiceLaps;
-
-  /// Whether laps driven right now get logged/tagged to whichever
-  /// round is currently saved, or are true FREE PRACTICE (not recorded
-  /// at all) -- see FusedRaceStateManager.setPracticeLoggingEnabled.
-  /// Defaults to true so existing behavior (every lap counts) is
-  /// unchanged unless the driver explicitly opts out.
-  final bool practiceLoggingEnabled;
 
   final SessionPhase sessionPhase;
 
@@ -69,6 +64,14 @@ class FusedRaceState {
   /// kind of session he's helping with.
   final AppMode mode;
 
+  /// Laps recorded in Time Trialing mode for the current round -- the
+  /// qualifying-pace baseline (see TimeTrialLogger).
+  final List<TimeTrialLap> timeTrialLaps;
+
+  /// The latest clean lap against the reference lap, corner by corner
+  /// (see CornerReport); null until there's one to compare.
+  final CornerReport? cornerReport;
+
   const FusedRaceState({
     required this.telemetry,
     required this.hud,
@@ -77,7 +80,6 @@ class FusedRaceState {
     required this.tireWearEstimate,
     this.recentShifts = const [],
     this.practiceLaps = const [],
-    this.practiceLoggingEnabled = true,
     this.sessionPhase = SessionPhase.unknown,
     this.powerBand = PowerBandConfig.bmwM6Gt3Endurance,
     this.opponentPitStops = const [],
@@ -85,18 +87,19 @@ class FusedRaceState {
     this.pitLapProgress,
     this.rejoinForecast,
     this.mode = AppMode.practice,
+    this.timeTrialLaps = const [],
+    this.cornerReport,
   });
 
   factory FusedRaceState.initial() => FusedRaceState(
-        telemetry: TelemetryFrame.empty(),
-        hud: HudOverlayData.empty(),
-        sectors: const SectorState(),
-        fuelPrediction: FuelPrediction.insufficientData(),
-        tireWearEstimate: TireWearEstimate.insufficientData(),
-        recentShifts: const [],
-        practiceLaps: const [],
-        practiceLoggingEnabled: true,
-      );
+    telemetry: TelemetryFrame.empty(),
+    hud: HudOverlayData.empty(),
+    sectors: const SectorState(),
+    fuelPrediction: FuelPrediction.insufficientData(),
+    tireWearEstimate: TireWearEstimate.insufficientData(),
+    recentShifts: const [],
+    practiceLaps: const [],
+  );
 
   FusedRaceState copyWith({
     TelemetryFrame? telemetry,
@@ -106,7 +109,6 @@ class FusedRaceState {
     TireWearEstimate? tireWearEstimate,
     List<ShiftEvent>? recentShifts,
     List<PracticeLapRecord>? practiceLaps,
-    bool? practiceLoggingEnabled,
     SessionPhase? sessionPhase,
     PowerBandConfig? powerBand,
     List<OpponentPitStop>? opponentPitStops,
@@ -115,6 +117,8 @@ class FusedRaceState {
     double? pitLapProgress,
     RejoinForecast? rejoinForecast,
     AppMode? mode,
+    List<TimeTrialLap>? timeTrialLaps,
+    CornerReport? cornerReport,
   }) {
     return FusedRaceState(
       telemetry: telemetry ?? this.telemetry,
@@ -124,16 +128,18 @@ class FusedRaceState {
       tireWearEstimate: tireWearEstimate ?? this.tireWearEstimate,
       recentShifts: recentShifts ?? this.recentShifts,
       practiceLaps: practiceLaps ?? this.practiceLaps,
-      practiceLoggingEnabled: practiceLoggingEnabled ?? this.practiceLoggingEnabled,
       sessionPhase: sessionPhase ?? this.sessionPhase,
       powerBand: powerBand ?? this.powerBand,
       opponentPitStops: opponentPitStops ?? this.opponentPitStops,
-      startFinishLapProgress:
-          clearStartFinishLapProgress ? null : startFinishLapProgress ?? this.startFinishLapProgress,
+      startFinishLapProgress: clearStartFinishLapProgress
+          ? null
+          : startFinishLapProgress ?? this.startFinishLapProgress,
       // Same lifetime as the start/finish point: per circuit/session.
       pitLapProgress: clearStartFinishLapProgress ? null : pitLapProgress ?? this.pitLapProgress,
       rejoinForecast: rejoinForecast ?? this.rejoinForecast,
       mode: mode ?? this.mode,
+      timeTrialLaps: timeTrialLaps ?? this.timeTrialLaps,
+      cornerReport: cornerReport ?? this.cornerReport,
     );
   }
 
@@ -146,37 +152,54 @@ class FusedRaceState {
   /// value-add is calling out whether that gap is shrinking or growing,
   /// not repeating a name the driver can already read themselves.
   Map<String, dynamic> toPromptContext() => {
-        'mode': mode.name,
-        'speedKmh': telemetry.speedKmh.toStringAsFixed(0),
-        'gear': telemetry.gear,
-        'rpm': telemetry.rpm.toStringAsFixed(0),
-        'throttlePercent': telemetry.throttlePercent.toStringAsFixed(0),
-        'brakePercent': telemetry.brakePercent.toStringAsFixed(0),
-        'sessionPhase': sessionPhase.name,
-        'fuelPercent': telemetry.fuelPercent.toStringAsFixed(1),
-        'tireTemps': telemetry.tireTemps,
-        'gridPosition': hud.gridPosition,
-        'driverAhead': hud.driverAhead,
-        'gapAheadSeconds': hud.gapAheadSeconds,
-        'gapAheadTrend': hud.gapAheadTrend.name,
-        'driverBehind': hud.driverBehind,
-        'gapBehindSeconds': hud.gapBehindSeconds,
-        'gapBehindTrend': hud.gapBehindTrend.name,
-        'gapToLeaderSeconds': hud.gapToLeaderSeconds,
-        'gapToLeaderTrend': hud.gapToLeaderTrend.name,
-        'currentSectorIndex': sectors.currentSectorIndex,
-        'activeTrackName': sectors.activeTrackName,
-        'currentLap': telemetry.currentLap,
-        'predictedEmptyLap': fuelPrediction.predictedEmptyLap,
-        'tireDegradationPercent': tireWearEstimate.percentSlowerThanStintBest,
-        'consecutiveDegradingLaps': tireWearEstimate.consecutiveDegradingLaps,
-        'practiceLapsLogged': practiceLaps.length,
-        'shiftZone': ShiftAdvice.classify(telemetry.rpm, config: powerBand).zone.name,
-        'driversInPitNow': hud.driversInPit.keys.toList(),
-        'opponentPitStops': opponentPitStops.map((s) => s.toPromptContext()).toList(),
-        'traffic': hud.traffic.toPromptContext(),
-        'playerInPit': hud.playerInPit,
-        'rejoinForecast': rejoinForecast?.toPromptContext(),
-        'recentShiftTimings': recentShifts.map((s) => s.timing.name).toList(),
-      };
+    'mode': mode.name,
+    ..._timeTrialContext(),
+    'speedKmh': telemetry.speedKmh.toStringAsFixed(0),
+    'gear': telemetry.gear,
+    'rpm': telemetry.rpm.toStringAsFixed(0),
+    'throttlePercent': telemetry.throttlePercent.toStringAsFixed(0),
+    'brakePercent': telemetry.brakePercent.toStringAsFixed(0),
+    'sessionPhase': sessionPhase.name,
+    'fuelPercent': telemetry.fuelPercent.toStringAsFixed(1),
+    'tireTemps': telemetry.tireTemps,
+    'gridPosition': hud.gridPosition,
+    'driverAhead': hud.driverAhead,
+    'gapAheadSeconds': hud.gapAheadSeconds,
+    'gapAheadTrend': hud.gapAheadTrend.name,
+    'driverBehind': hud.driverBehind,
+    'gapBehindSeconds': hud.gapBehindSeconds,
+    'gapBehindTrend': hud.gapBehindTrend.name,
+    'gapToLeaderSeconds': hud.gapToLeaderSeconds,
+    'gapToLeaderTrend': hud.gapToLeaderTrend.name,
+    'currentSectorIndex': sectors.currentSectorIndex,
+    if (sectors.lastLapSectorsMs != null)
+      'lastLapSectorsSeconds': [for (final ms in sectors.lastLapSectorsMs!) (ms / 1000).toStringAsFixed(3)],
+    'activeTrackName': sectors.activeTrackName,
+    'currentLap': telemetry.currentLap,
+    'predictedEmptyLap': fuelPrediction.predictedEmptyLap,
+    'tireDegradationPercent': tireWearEstimate.percentSlowerThanStintBest,
+    'consecutiveDegradingLaps': tireWearEstimate.consecutiveDegradingLaps,
+    'practiceLapsLogged': practiceLaps.length,
+    'shiftZone': ShiftAdvice.classify(telemetry.rpm, config: powerBand).zone.name,
+    'driversInPitNow': hud.driversInPit.keys.toList(),
+    'opponentPitStops': opponentPitStops.map((s) => s.toPromptContext()).toList(),
+    'traffic': hud.traffic.toPromptContext(),
+    'playerInPit': hud.playerInPit,
+    'rejoinForecast': rejoinForecast?.toPromptContext(),
+    'recentShiftTimings': recentShifts.map((s) => s.timing.name).toList(),
+  };
+
+  /// Time-trial best (qualifying pace) and how the last lap compares --
+  /// lets Gunther judge race pace against it.
+  Map<String, dynamic> _timeTrialContext() {
+    final best = TimeTrialLap.best(timeTrialLaps);
+    if (best == null) return const {};
+    final last = telemetry.lastLapTimeMs;
+    return {
+      'timeTrialBestLap': TimeTrialLap.format(best.lapTimeMs),
+      if (SectorState.bestSectors(timeTrialLaps.map((l) => l.sectorsMs)) case final b when !b.contains(null))
+        'timeTrialBestSectorsSeconds': [for (final ms in b) (ms! / 1000).toStringAsFixed(3)],
+      if (last > 0) 'lastLapVsTimeTrialBestSeconds': ((last - best.lapTimeMs) / 1000).toStringAsFixed(2),
+    };
+  }
 }

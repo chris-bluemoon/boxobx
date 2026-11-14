@@ -23,9 +23,9 @@ void main() {
     }
   });
 
-  Future<void> pumpDashboard(WidgetTester tester, {required String mode, Size size = const Size(1640, 2360)}) async {
-    SharedPreferences.setMockInitialValues({'app_mode': mode});
-    tester.view.physicalSize = size; // default: iPad portrait
+  Future<void> pumpApp(WidgetTester tester, {String? lastMode}) async {
+    SharedPreferences.setMockInitialValues({if (lastMode != null) 'app_mode': lastMode});
+    tester.view.physicalSize = const Size(1640, 2360); // iPad portrait
     tester.view.devicePixelRatio = 2.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -34,9 +34,39 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
   }
 
+  /// Opens the app and picks [label] on the launch page.
+  Future<void> pumpDashboard(WidgetTester tester, {required String mode}) async {
+    await pumpApp(tester);
+    const labels = {'race': 'RACE MODE', 'practice': 'STINT TESTING', 'timeTrial': 'TIME TRIALING'};
+    await tester.tap(find.text(labels[mode]!));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
+  testWidgets('the app opens on the three modes', (tester) async {
+    await pumpApp(tester, lastMode: 'race');
+    expect(find.text('RACE MODE'), findsOneWidget);
+    expect(find.text('STINT TESTING'), findsOneWidget);
+    expect(find.text('TIME TRIALING'), findsOneWidget);
+    expect(find.text('LAST USED'), findsOneWidget);
+    expect(find.textContaining('RACE REPORTS'), findsOneWidget);
+    expect(find.text('RACE STRATEGY'), findsOneWidget);
+    expect(find.text('STANDINGS'), findsOneWidget);
+    expect(find.text('PIT LAP'), findsNothing, reason: 'no dashboard until a mode is chosen');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tapping the mode chip goes back to the three modes', (tester) async {
+    await pumpDashboard(tester, mode: 'race');
+    expect(find.text('PIT LAP'), findsOneWidget);
+    await tester.tap(find.text('RACE MODE'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('TIME TRIALING'), findsOneWidget);
+    expect(find.text('PIT LAP'), findsNothing);
+  });
+
   testWidgets('practice mode shows the test screen, without race cards or push-to-talk', (tester) async {
     await pumpDashboard(tester, mode: 'practice');
-    expect(find.text('PRACTICE MODE'), findsOneWidget);
+    expect(find.text('STINT TESTING'), findsOneWidget);
     expect(find.text('NO TEST PLAN'), findsOneWidget); // no round saved in this test
     expect(find.text('TYRES LEFT'), findsOneWidget);
     expect(find.text('FUEL / LAP'), findsOneWidget);
@@ -60,8 +90,55 @@ void main() {
     expect(find.text('NO TEST PLAN'), findsNothing);
     expect(find.text('TYRES LEFT'), findsNothing);
     expect(find.text('NEW STINT'), findsNothing);
-    expect(find.byType(DropdownButton<String>), findsOneWidget, reason: 'race keeps the tyre picker');
+    expect(find.byType(DropdownButton<String>), findsNothing, reason: 'no tyre picker in a race');
+    expect(find.textContaining('LAPS LOGGED'), findsNothing);
     expect(find.text('ENGAGE TELEMETRY'), findsNothing, reason: 'connects on launch');
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('time trialing shows the lap-time screen only', (tester) async {
+    await pumpDashboard(tester, mode: 'timeTrial');
+    expect(find.text('TIME TRIALING'), findsOneWidget);
+    expect(find.text('BEST LAP'), findsOneWidget);
+    expect(find.text('LIVE DELTA'), findsOneWidget);
+    expect(find.text('IDEAL LAP'), findsOneWidget);
+    expect(find.text('NO TEST PLAN'), findsNothing);
+    expect(find.text('PIT LAP'), findsNothing);
+    expect(find.text('NEW STINT'), findsNothing);
+    expect(find.byType(DropdownButton<String>), findsNothing, reason: 'tyre comes from the HUD, no picker');
+    expect(find.text('TIRE:'), findsNothing, reason: 'each lap in the list shows its tyre');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('every mode has a HOME button to the home page, and no strategy/standings/refresh buttons', (tester) async {
+    for (final mode in ['race', 'practice', 'timeTrial']) {
+      await pumpDashboard(tester, mode: mode);
+      expect(find.byIcon(Icons.refresh), findsNothing, reason: mode);
+      expect(find.byIcon(Icons.flag), findsNothing, reason: mode);
+      expect(find.byIcon(Icons.emoji_events), findsNothing, reason: mode);
+      await tester.tap(find.text('HOME'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('RACE STRATEGY'), findsOneWidget, reason: 'back on the home page from $mode');
+    }
+  });
+
+  testWidgets('the connection badges sit bottom left on the home page and every mode', (tester) async {
+    Future<void> expectBottomLeft(String where) async {
+      final badge = tester.getRect(find.textContaining('TELEMETRY ·'));
+      final screen = tester.getRect(find.byType(Scaffold).last);
+      expect(badge.left, lessThan(screen.width * 0.2), reason: '$where: left');
+      expect(badge.bottom, greaterThan(screen.height * 0.85), reason: '$where: bottom');
+      expect(find.textContaining('HUD OCR ·'), findsOneWidget, reason: where);
+    }
+
+    await pumpApp(tester);
+    await expectBottomLeft('home');
+    for (final label in ['RACE MODE', 'STINT TESTING', 'TIME TRIALING']) {
+      await tester.tap(find.text(label));
+      await tester.pump(const Duration(milliseconds: 100));
+      await expectBottomLeft(label);
+      await tester.tap(find.text('HOME'));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
   });
 }

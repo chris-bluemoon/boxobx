@@ -33,3 +33,13 @@ After regenerating, validate the output with:
 ```bash
 dart run test_scripts/tracks_db_load_test.dart
 ```
+
+## `generate_track_outlines.py`
+
+Regenerates `../assets/config/track_outlines.json` -- each track's outline,
+drawn as the circuit emblem in the app's page headers -- from the same CC0
+`signatures.json` as above:
+
+```bash
+python3 tools/generate_track_outlines.py /tmp/signatures.json assets/config/track_outlines.json
+```

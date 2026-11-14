@@ -1,8 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../models/fused_race_state.dart';
-import '../models/telemetry_frame.dart';
 import '../models/connection_status.dart';
 import '../models/voice_engine_status.dart';
 import '../services/telemetry_udp_service.dart';
@@ -24,19 +25,29 @@ import '../services/rejoin_forecaster.dart';
 import '../services/pit_call_advisor.dart';
 import '../services/test_plan_tracker.dart';
 import '../services/stint_summary.dart';
+import '../services/race_report.dart';
+import '../services/corner_report.dart';
 import '../models/test_plan.dart';
 import '../services/app_mode_store.dart';
 import '../models/app_mode.dart';
+import '../models/sector_state.dart';
+import '../models/time_trial_lap.dart';
 import '../models/race_strategy.dart';
 import 'race_strategy_screen.dart';
 import 'practice_log_screen.dart';
 import 'championship_screen.dart';
+import 'race_reports_screen.dart';
+import 'corner_report_screen.dart';
 import '../widgets/telemetry_card.dart';
 import '../widgets/tire_temp_card.dart';
 import '../widgets/shift_card.dart';
 import '../widgets/opponent_overlay.dart';
 import '../widgets/push_to_talk_button.dart';
 import '../widgets/status_badge.dart';
+import '../widgets/box_box_logo.dart';
+import '../widgets/track_header.dart';
+import '../services/track_outlines.dart';
+import '../models/league_calendar.dart';
 import '../widgets/voice_status_badge.dart';
 
 /// Section 6: Hyper-minimalist, high-contrast, dark mode dashboard.
@@ -69,9 +80,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// is measured against.
   List<PlannedPitStop> _plannedStops = const [];
 
+  /// The saved round's strategy, for the race reports' plan comparison.
+  RaceStrategy? _savedStrategy;
+
   /// Practice or race (see AppMode) -- gates the race-only unprompted
   /// calls and widgets. Remembered between launches.
   AppMode _mode = AppMode.practice;
+
+  /// True while the launch page (Race Mode / Stint Testing / Time
+  /// Trialing) is showing -- at every launch, and again when the mode
+  /// chip is tapped. The connection stays up meanwhile; unprompted calls
+  /// are held.
+  bool _choosingMode = true;
 
   Future<void> _loadMode() async {
     final mode = await AppModeStore.load();
@@ -80,8 +100,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _raceStateManager.setMode(mode);
   }
 
-  void _toggleMode() {
-    final mode = _mode == AppMode.practice ? AppMode.race : AppMode.practice;
+  void _setMode(AppMode mode) {
+    setState(() => _choosingMode = false);
+    if (mode == _mode) return;
     setState(() => _mode = mode);
     _raceStateManager.setMode(mode);
     AppModeStore.save(mode);
@@ -162,7 +183,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _maybeTriggerRivalPositionCallout(FusedRaceState state) {
     final syntheticPrompt = _rivalMonitor.check(state.hud.rivalPositions);
     // Still checked in practice so tracking stays current; just not spoken.
-    if (syntheticPrompt == null || !_mode.rivalCallouts) return;
+    if (syntheticPrompt == null || !_mode.rivalCallouts || _choosingMode) return;
     _voiceEngine.speakProactively(syntheticPrompt, state);
   }
 
@@ -170,7 +191,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// reached its target.
   void _maybeMakeTestPlanCall(FusedRaceState state) {
     final plan = _testPlan;
-    if (plan == null || !_mode.testPlan) return;
+    if (plan == null || !_mode.testPlan || _choosingMode) return;
     final logger = _raceStateManager.practiceLapLogger;
     final prompt = _testPlanCaller.check(
       plan,
@@ -180,8 +201,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
       liveWearRemaining: logger.currentTireWearPercent,
       liveFuelPercent: state.sessionPhase == SessionPhase.driving ? state.telemetry.fuelPercent : null,
     );
-    if (prompt != null) _voiceEngine.speakProactively(prompt, state);
+    if (prompt == null) return;
+
+    // Once Gunther has finished saying it (or after 15s, should the voice
+    // fail), the test is closed off automatically -- nothing to tap --
+    // and the panel moves on to the next test.
+    final testNumber = logger.activeTestNumber;
+    final completed = plan.stints.where((s) => s.number == testNumber).firstOrNull;
+    var closed = false;
+    void closeTest() {
+      if (closed || !mounted) return;
+      closed = true;
+      if (logger.activeTestNumber != testNumber) return; // ended/changed meanwhile
+      _raceStateManager.completeActiveTest();
+      setState(() => _justCompletedTest = completed);
+    }
+
+    _voiceEngine.speakProactively(prompt, state).whenComplete(closeTest);
+    Timer(const Duration(seconds: 15), closeTest);
   }
+
+  /// Time Trialing: after each clean lap, Gunther names the corner where
+  /// the most time went against the reference lap and what to change
+  /// (see CornerReport) -- once per lap, and only if it's worth saying.
+  void _maybeMakeCornerCall(FusedRaceState state) {
+    final report = state.cornerReport;
+    if (report == null || identical(report, _lastCalledCornerReport)) return;
+    _lastCalledCornerReport = report;
+    if (!_mode.cornerCalls || _choosingMode) return;
+    final worst = report.biggestLoss;
+    if (worst == null || worst.timeDeltaMs < _cornerCallMinLossMs) return;
+    final gap = report.lapDeltaMs / 1000;
+    _voiceEngine.speakProactively(
+      'Time-trial lap done, ${gap >= 0 ? '+' : ''}${gap.toStringAsFixed(2)} seconds to the reference lap. '
+      'Biggest loss against the reference: ${worst.describe()}. '
+      'In one short sentence, tell the driver which corner cost the most and the one thing to change there. '
+      'Say the corner number; do not read out every figure.',
+      state,
+    );
+  }
+
+  CornerReport? _lastCalledCornerReport;
+
+  /// Losses smaller than this (ms) aren't worth a call.
+  static const _cornerCallMinLossMs = 50;
+
+  void _openCornerReport() {
+    final report = _state.cornerReport;
+    if (report == null) return;
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => CornerReportScreen(report: report)));
+  }
+
+  /// The test Gunther last called complete -- shown on the panel until
+  /// the next test starts.
+  PlannedTestStint? _justCompletedTest;
 
   TestPlanProgress _testPlanProgress(TestPlan plan) => TestPlanTracker.progress(
     plan,
@@ -212,6 +285,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// Starts [test]: a new stint tagged to it, with the tyre picker set to
   /// the planned compound. The app takes the driver's word for it.
   void _startTest(PlannedTestStint test) {
+    _justCompletedTest = null;
     _raceStateManager.startTestStint(test.number);
     _testPlanCaller.reset();
     if (_tireCompoundOptions.contains(test.compound)) {
@@ -294,7 +368,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// Unprompted "box / stay out" call when a stop is due -- see
   /// PitCallAdvisor for when it fires and what it recommends.
   void _maybeMakePitCall(FusedRaceState state) {
-    if (!_mode.pitCalls) return;
+    if (!_mode.pitCalls || _choosingMode) return;
     final call = _pitCallAdvisor.check(
       state,
       plannedStops: _plannedStops,
@@ -304,23 +378,170 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   /// PRACTICE / RACE switch -- tap to flip.
-  Widget _modeToggle() {
-    final race = _mode == AppMode.race;
-    return InkWell(
-      onTap: _toggleMode,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: race ? Colors.red.shade800 : Colors.teal.shade800,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: race ? Colors.red.shade400 : Colors.teal.shade400),
-        ),
-        child: Text(
-          _mode.label,
-          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+  static Color _modeColour(AppMode mode) => switch (mode) {
+    AppMode.race => Colors.red.shade800,
+    AppMode.practice => Colors.teal.shade800,
+    AppMode.timeTrial => Colors.deepPurple.shade700,
+  };
+
+  static String _modeDescription(AppMode mode) => switch (mode) {
+    AppMode.race => 'Race calls, pit strategy, traffic and Gunther',
+    AppMode.practice => 'Run the test plan: full-tank stints per compound',
+    AppMode.timeTrial => 'Qualifying pace: lap times only, as your baseline',
+  };
+
+  static IconData _modeIcon(AppMode mode) => switch (mode) {
+    AppMode.race => Icons.sports_score,
+    AppMode.practice => Icons.science,
+    AppMode.timeTrial => Icons.timer,
+  };
+
+  /// Every race run in Race Mode this round, with a report for each.
+  Future<void> _openRaceReports() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RaceReportsScreen(
+          laps: _state.practiceLaps,
+          strategy: _savedStrategy,
+          timeTrialBest: TimeTrialLap.best(_state.timeTrialLaps),
+          roundName: _activeRoundName,
         ),
       ),
+    );
+  }
+
+  /// The launch page: the three modes as large buttons.
+  Widget _modeChooser() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: BoxBoxLogo(size: 40, tagline: 'YOUR GT7 ENGINEER'),
+              ),
+              const SizedBox(height: 16),
+              _trackHeader(accent: Colors.blueGrey.shade600, large: true),
+              const SizedBox(height: 16),
+              for (final mode in AppMode.values) ...[
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _setMode(mode),
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: _modeColour(mode),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: mode == _mode ? Colors.white : Colors.white24, width: 2),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(_modeIcon(mode), color: Colors.white, size: 56),
+                          const SizedBox(width: 24),
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  mode.label,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  _modeDescription(mode),
+                                  style: const TextStyle(color: Colors.white70, fontSize: 16),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (mode == _mode)
+                            const Text('LAST USED', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              Row(
+                children: [
+                  _homeButton(Icons.flag, 'RACE STRATEGY', _openRaceStrategy),
+                  const SizedBox(width: 12),
+                  _homeButton(Icons.emoji_events, 'STANDINGS', _openChampionship),
+                  const SizedBox(width: 12),
+                  _homeButton(
+                    Icons.assessment,
+                    'RACE REPORTS (${RaceReport.fromLaps(_state.practiceLaps).length})',
+                    _openRaceReports,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _connectionBadges(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Console (telemetry) and laptop relay (HUD OCR) connection status --
+  /// always bottom left, on the home page and every mode's screen.
+  Widget _connectionBadges({bool gunther = false}) => Align(
+    alignment: Alignment.centerLeft,
+    child: Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: [
+        StatusBadge(label: 'TELEMETRY', status: _telemetryStatus),
+        StatusBadge(label: 'HUD OCR', status: _hudStatus),
+        // Gunther only speaks in practice to end a test, so his status
+        // belongs to the race screen.
+        if (gunther) VoiceStatusBadge(status: _voiceStatus),
+      ],
+    ),
+  );
+
+  void _goHome() => setState(() => _choosingMode = true);
+
+  /// A home-page button for the round's setup and records.
+  Widget _homeButton(IconData icon, String label, VoidCallback onPressed) => Expanded(
+    child: OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, color: Colors.white),
+      label: Text(
+        label,
+        style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+      ),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        side: const BorderSide(color: Colors.white38),
+      ),
+    ),
+  );
+
+  /// Race screen: the last lap against the time-trial best (qualifying
+  /// pace), e.g. "TT BEST 1:29.950 · LAST +1.23s".
+  Widget? _timeTrialComparisonChip() {
+    final best = TimeTrialLap.best(_state.timeTrialLaps);
+    if (best == null) return null;
+    final last = _state.telemetry.lastLapTimeMs;
+    final delta = last > 0 ? (last - best.lapTimeMs) / 1000 : null;
+    return _chip(
+      'TT BEST ${TimeTrialLap.format(best.lapTimeMs)}'
+      '${delta == null ? '' : ' · LAST ${delta >= 0 ? '+' : ''}${delta.toStringAsFixed(2)}s'}',
+      color: Colors.deepPurple.shade700.withValues(alpha: 0.6),
+      border: Colors.deepPurple.shade300,
     );
   }
 
@@ -391,6 +612,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     _loadActiveRoundName();
     _loadMode();
+    TrackOutlines.load().then((outlines) {
+      if (mounted) setState(() => _trackOutlines = outlines);
+    });
 
     _voiceEngine = VoiceEngine(
       pushToTalk: PushToTalkService(),
@@ -414,6 +638,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _maybeTriggerRivalPositionCallout(state);
       _maybeMakePitCall(state);
       _maybeMakeTestPlanCall(state);
+      _maybeMakeCornerCall(state);
       // Temporarily disabled -- proactive shift-habit voice callouts
       // aren't behaving correctly yet (reported live, not yet root
       // caused). Re-enable once fixed; the underlying trigger/advisor
@@ -440,7 +665,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     _raceStateManager.opponentPitted.listen((stops) {
       // Stops are logged in both modes; only called out in a race.
-      if (!_mode.opponentPitCallouts) return;
+      if (!_mode.opponentPitCallouts || _choosingMode) return;
       _voiceEngine.speakProactively(_opponentPitCalloutPrompt(stops), _state);
     });
 
@@ -505,12 +730,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final (name, briefing, strategy, _, _) = await SavedBriefingStore.load();
     if (!mounted) return;
     _plannedStops = strategy?.pitStops ?? const [];
+    _savedStrategy = strategy;
     _testPlan = briefing == null
         ? null
         : TestPlan.fromBriefing(briefing, startCompound: strategy?.startingTireCompound);
     _raceStateManager.setPitStopTime(briefing?.pitStopTimeSeconds);
+    _raceStateManager.setRound(name);
     if (briefing == null) return;
-    setState(() => _activeRoundName = name);
+    setState(() {
+      _activeRoundName = name;
+      _activeTrackName = briefing.trackName;
+    });
+  }
+
+  /// The GT7 track of the saved round, for the header's circuit emblem.
+  String? _activeTrackName;
+
+  /// Circuit outlines for the header emblems (loaded once at start).
+  TrackOutlines? _trackOutlines;
+
+  /// The page heading: round, circuit emblem and the page's own title.
+  Widget _trackHeader({
+    required Color accent,
+    String? pageTitle,
+    IconData? pageIcon,
+    VoidCallback? onPageTitleTap,
+    bool large = false,
+  }) {
+    final round = _activeRoundName == null ? null : LeagueCalendar.byName(_activeRoundName!);
+    return TrackHeader(
+      roundName: _activeRoundName,
+      round: round,
+      outline: _trackOutlines?.forTrack(_activeTrackName ?? round?.gt7Track),
+      accent: accent,
+      pageTitle: pageTitle,
+      pageIcon: pageIcon,
+      onPageTitleTap: onPageTitleTap,
+      large: large,
+    );
   }
 
   Future<void> _openPracticeLog() async {
@@ -558,20 +815,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ChampionshipScreen()));
   }
 
-  void _resetTelemetryDisplay() {
-    _raceStateManager.resetFuelPrediction();
-    _raceStateManager.resetTireWearEstimate();
-    _raceStateManager.resetShiftHistory();
-    _raceStateManager.resetPitStopTracking();
-    _resetSessionTracking();
-    setState(() {
-      _state = _state.copyWith(telemetry: TelemetryFrame.empty(), recentShifts: const []);
-    });
-  }
-
-  /// Dashboard-owned per-session state, reset both by the manual
-  /// refresh button and automatically when GT7 reports leaving the
-  /// track (FusedRaceStateManager.sessionEnded).
+  /// Dashboard-owned per-session state, reset automatically when GT7
+  /// reports leaving the track (FusedRaceStateManager.sessionEnded).
   void _resetSessionTracking() {
     _shiftCoachTrigger.reset();
     // Clears tracked rival positions too -- otherwise a rival's LAST
@@ -648,6 +893,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_choosingMode) return _modeChooser();
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -655,11 +901,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              _statusBar(),
+              _trackHeader(
+                accent: _modeColour(_mode),
+                pageTitle: _mode.label,
+                pageIcon: _modeIcon(_mode),
+                onPageTitleTap: _goHome,
+              ),
+              const SizedBox(height: 10),
+              Align(alignment: Alignment.centerLeft, child: _statusBar()),
+              const SizedBox(height: 10),
+              Expanded(
+                child: switch (_mode) {
+                  AppMode.race => _raceBody(),
+                  AppMode.practice => _practiceBody(),
+                  AppMode.timeTrial => _timeTrialBody(),
+                },
+              ),
               const SizedBox(height: 12),
-              _controlsRow(),
-              const SizedBox(height: 12),
-              Expanded(child: _mode == AppMode.race ? _raceBody() : _practiceBody()),
+              // Bottom bar: connection (and, racing, Gunther) status on the
+              // left, as on the home page; HOME on the right.
+              Row(
+                children: [
+                  Expanded(child: _connectionBadges(gunther: _mode == AppMode.race)),
+                  OutlinedButton.icon(
+                    onPressed: _goHome,
+                    icon: const Icon(Icons.home, color: Colors.white),
+                    label: const Text(
+                      'HOME',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1.5),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.white38),
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -690,54 +967,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
       spacing: 8,
       runSpacing: 8,
       children: [
-        StatusBadge(label: 'TELEMETRY', status: _telemetryStatus),
-        StatusBadge(label: 'HUD OCR', status: _hudStatus),
-        // Gunther only speaks in practice to end a test, so his status
-        // badge belongs to the race screen.
-        if (_mode == AppMode.race) VoiceStatusBadge(status: _voiceStatus),
-        _modeToggle(),
         if (_mode.trafficChip && _state.rejoinForecast != null && !_state.hud.playerInPit)
           _rejoinChip(_state.rejoinForecast!),
         if (_telemetryStatus == ConnectionStatus.live &&
             (_state.sessionPhase == SessionPhase.paused || _state.sessionPhase == SessionPhase.offTrack))
           _chip(_state.sessionPhase == SessionPhase.paused ? 'PAUSED' : 'OFF TRACK', color: Colors.grey.shade800),
-        if (_activeRoundName != null)
-          _chip(
-            _state.practiceLoggingEnabled
-                ? '${_mode == AppMode.race ? 'RACING' : 'PRACTICING'} FOR: $_activeRoundName'
-                : 'FREE PRACTICE (tap to resume $_activeRoundName)',
-            color: _state.practiceLoggingEnabled ? Colors.purple.shade700 : Colors.grey.shade800.withValues(alpha: 0.4),
-            border: _state.practiceLoggingEnabled ? Colors.purple.shade400 : Colors.grey.shade700,
-            onTap: () => _raceStateManager.setPracticeLoggingEnabled(!_state.practiceLoggingEnabled),
-          ),
+        if (_mode == AppMode.race) ?_timeTrialComparisonChip(),
       ],
     );
   }
 
-  Widget _controlsRow() {
-    Widget iconButton(IconData icon, Color colour, VoidCallback onPressed) => Expanded(
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(backgroundColor: colour, padding: const EdgeInsets.symmetric(vertical: 16)),
-        child: Icon(icon, color: Colors.white),
-      ),
-    );
-    return Row(
-      children: [
-        iconButton(Icons.refresh, Colors.grey.shade800, _resetTelemetryDisplay),
-        const SizedBox(width: 12),
-        iconButton(Icons.flag, Colors.purple.shade800, _openRaceStrategy),
-        const SizedBox(width: 12),
-        iconButton(Icons.emoji_events, Colors.amber.shade800, _openChampionship),
-      ],
-    );
-  }
-
-  /// Tyre + practice log (laps chip). Race: a tyre picker. Practice: the
-  /// logged tyre as read-only text -- starting a test sets it (and the
-  /// relay fills it in from the HUD), so a picker would only be a way
-  /// to get it wrong -- plus NEW STINT.
-  Widget _tyreRow({required bool practice}) {
+  /// Stint Testing's tyre row: the tyre laps are being logged on,
+  /// read-only (the relay reads it off the HUD, and starting a test sets
+  /// it), plus the laps chip and NEW STINT.
+  Widget _tyreRow() {
     return Row(
       children: [
         const Text(
@@ -745,34 +988,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           style: TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.bold),
         ),
         const SizedBox(width: 8),
-        if (practice)
-          Expanded(
-            child: Text(
-              _selectedTireCompound,
-              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-            ),
-          )
-        else
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: BoxDecoration(color: Colors.grey.shade900, borderRadius: BorderRadius.circular(8)),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: _selectedTireCompound,
-                  isExpanded: true,
-                  dropdownColor: Colors.grey.shade900,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  items: _tireCompoundOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() => _selectedTireCompound = value);
-                    _raceStateManager.setPracticeTireCompound(value);
-                  },
-                ),
-              ),
-            ),
+        Expanded(
+          child: Text(
+            _selectedTireCompound,
+            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
           ),
+        ),
         const SizedBox(width: 8),
         _chip(
           _lapsChipLabel(),
@@ -780,10 +1001,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           border: Colors.blue.shade700,
           onTap: _openPracticeLog,
         ),
-        if (practice) ...[
-          const SizedBox(width: 8),
-          _chip('NEW STINT', color: Colors.grey.shade800, border: Colors.grey.shade600, onTap: _startNewStint),
-        ],
+        const SizedBox(width: 8),
+        _chip('NEW STINT', color: Colors.grey.shade800, border: Colors.grey.shade600, onTap: _startNewStint),
       ],
     );
   }
@@ -792,10 +1011,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _raceBody() {
     final telemetry = _state.telemetry;
+    // No tyre picker in a race: the tyre comes from the HUD reading and
+    // the compound shown next to our row during a pit stop.
     return Column(
       children: [
-        _tyreRow(practice: false),
-        const SizedBox(height: 16),
         Expanded(
           flex: 3,
           child: Column(
@@ -872,6 +1091,255 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ],
     );
+  }
+
+  // --- time trial -----------------------------------------------------------
+
+  /// Qualifying pace: best and last lap, the gap between them, and every
+  /// recorded lap (best highlighted; swipe one away to delete it).
+  Widget _timeTrialBody() {
+    final laps = _state.timeTrialLaps;
+    final best = TimeTrialLap.best(laps);
+    final latest = laps.isEmpty ? null : laps.last;
+    final delta = _state.sessionPhase == SessionPhase.driving ? _state.sectors.liveDeltaMs : null;
+    final reference = _state.sectors.referenceLapMs;
+
+    final bestSectors = SectorState.bestSectors(laps.map((l) => l.sectorsMs));
+    final ideal = SectorState.idealLapMs(laps.map((l) => l.sectorsMs));
+
+    Widget tile(String label, String value) => Expanded(
+      child: TelemetryCard(label: label, value: value),
+    );
+
+    return Column(
+      children: [
+        SizedBox(
+          height: 130,
+          child: Row(
+            children: [
+              Expanded(
+                child: TelemetryCard(
+                  label: reference == null ? 'LIVE DELTA' : 'DELTA · REF ${TimeTrialLap.format(reference)}',
+                  value: delta == null
+                      ? '--'
+                      : '${delta > 0
+                            ? '+'
+                            : delta < 0
+                            ? '-'
+                            : '±'}${(delta.abs() / 1000).toStringAsFixed(3)}',
+                  baseColor: delta == null || delta.abs() < 5
+                      ? Colors.white
+                      : delta < 0
+                      ? Colors.greenAccent
+                      : Colors.redAccent,
+                ),
+              ),
+              const SizedBox(width: 12),
+              tile('BEST LAP', best == null ? '--' : TimeTrialLap.format(best.lapTimeMs)),
+              const SizedBox(width: 12),
+              tile('LAST LAP', latest == null ? '--' : TimeTrialLap.format(latest.lapTimeMs)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 110,
+          child: Row(
+            children: [
+              if (!_state.sectors.mapped && bestSectors.every((b) => b == null))
+                Expanded(
+                  flex: 3,
+                  child: _sectorNote(
+                    _state.sessionPhase == SessionPhase.driving
+                        ? 'SECTORS  ·  learning this circuit -- the next full lap sets the lines'
+                        : 'SECTORS  ·  drive one full lap here and the sector lines are learned',
+                  ),
+                )
+              else
+                for (var i = 0; i < 3; i++) ...[
+                  if (i > 0) const SizedBox(width: 12),
+                  Expanded(child: _sectorCell(i, bestSectors[i], latest?.sectorsMs)),
+                ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: TelemetryCard(label: 'IDEAL LAP', value: ideal == null ? '--' : TimeTrialLap.format(ideal)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'LAPS  ·  swipe left to delete one',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Colors.grey.shade400, fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: _state.cornerReport == null ? null : _openCornerReport,
+              icon: const Icon(Icons.turn_right, size: 18),
+              label: const Text('CORNER REPORT'),
+            ),
+            if (laps.isNotEmpty) TextButton(onPressed: _confirmClearTimeTrial, child: const Text('CLEAR ALL')),
+          ],
+        ),
+        Expanded(
+          child: laps.isEmpty
+              ? Center(
+                  child: Text(
+                    'Drive flying laps -- each completed lap is recorded here.',
+                    style: TextStyle(color: Colors.grey.shade500),
+                  ),
+                )
+              : ListView(
+                  children: [
+                    for (final (i, lap) in laps.indexed.toList().reversed)
+                      Dismissible(
+                        key: ValueKey(lap.recordedAt),
+                        direction: DismissDirection.endToStart,
+                        onDismissed: (_) => _raceStateManager.removeTimeTrialLap(lap.recordedAt),
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 16),
+                          color: Colors.red.shade900,
+                          child: const Icon(Icons.delete, color: Colors.white),
+                        ),
+                        child: ListTile(
+                          dense: true,
+                          leading: Text('L${i + 1}', style: TextStyle(color: Colors.grey.shade400)),
+                          title: Text(
+                            TimeTrialLap.format(lap.lapTimeMs),
+                            style: TextStyle(
+                              color: lap == best ? Colors.purpleAccent : Colors.white,
+                              fontSize: 16,
+                              fontWeight: lap == best ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                          subtitle: _lapSubtitle(lap, bestSectors),
+                          trailing: Text(
+                            lap == best ? 'BEST' : '+${((lap.lapTimeMs - best!.lapTimeMs) / 1000).toStringAsFixed(3)}s',
+                            style: TextStyle(color: lap == best ? Colors.purpleAccent : Colors.grey.shade400),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  /// One sector of the lap in progress: this lap's time once it's done
+  /// (purple if it's the best yet, else the gap to the best), the live
+  /// sector highlighted, and the last lap's time (grey) until then.
+  Widget _sectorCell(int i, int? best, List<int>? lastLap) {
+    final sectors = _state.sectors;
+    final live = sectors.mapped && _state.sessionPhase == SessionPhase.driving;
+    final done = live && i < sectors.currentLapSplitsMs.length ? sectors.currentLapSplitsMs[i] : null;
+    final current = live && i == sectors.currentSectorIndex && done == null;
+    final shown = done ?? (lastLap != null && lastLap.length == 3 ? lastLap[i] : null);
+    final isBest = done != null && (best == null || done <= best);
+    final delta = done != null && best != null && !isBest ? (done - best) / 1000 : null;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade900,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: current ? Colors.white : Colors.grey.shade800, width: 2),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'S${i + 1}${current ? '  ·  NOW' : ''}',
+            style: TextStyle(
+              color: Colors.grey.shade400,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                shown == null ? '--' : SectorState.format(shown),
+                style: TextStyle(
+                  color: isBest ? Colors.purpleAccent : (done != null ? Colors.white : Colors.grey.shade600),
+                  fontSize: 34,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          Text(
+            delta != null
+                ? '+${delta.toStringAsFixed(3)}s'
+                : best == null
+                ? ''
+                : 'best ${SectorState.format(best)}',
+            style: TextStyle(color: delta != null ? Colors.amberAccent : Colors.grey.shade500, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectorNote(String text) => Container(
+    alignment: Alignment.centerLeft,
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    decoration: BoxDecoration(
+      color: Colors.grey.shade900,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: Colors.grey.shade800, width: 2),
+    ),
+    child: Text(
+      text,
+      style: TextStyle(color: Colors.grey.shade400, fontSize: 14, fontWeight: FontWeight.w600),
+    ),
+  );
+
+  /// Tyre, then each sector (best ones purple).
+  Widget _lapSubtitle(TimeTrialLap lap, List<int?> bestSectors) {
+    final grey = TextStyle(color: Colors.grey.shade500);
+    final sectors = lap.sectorsMs;
+    return Text.rich(
+      TextSpan(
+        style: grey,
+        children: [
+          TextSpan(text: lap.tireCompound),
+          if (sectors != null && sectors.length == 3)
+            for (var i = 0; i < 3; i++)
+              TextSpan(
+                text: '   S${i + 1} ${SectorState.format(sectors[i])}',
+                style: sectors[i] == bestSectors[i] ? const TextStyle(color: Colors.purpleAccent) : null,
+              ),
+        ],
+      ),
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  Future<void> _confirmClearTimeTrial() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey.shade900,
+        title: const Text('Clear all time-trial laps?', style: TextStyle(color: Colors.white)),
+        content: Text('This removes every recorded lap for this round.', style: TextStyle(color: Colors.grey.shade300)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Clear')),
+        ],
+      ),
+    );
+    if (ok == true) _raceStateManager.clearTimeTrialLaps();
   }
 
   // --- practice -----------------------------------------------------------
@@ -960,7 +1428,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        _tyreRow(practice: true),
+        _tyreRow(),
       ],
     );
   }
@@ -981,46 +1449,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     final running = progress.running;
-    final logger = _raceStateManager.practiceLapLogger;
     final count = plan.stints.length;
 
     if (running != null) {
-      final reason = TestPlanTracker.stopReason(
-        running,
-        progress.matchedStints[running.number - 1],
-        liveWearRemaining: logger.currentTireWearPercent,
-        liveFuelPercent: _state.sessionPhase == SessionPhase.driving ? _state.telemetry.fuelPercent : null,
-      );
-      final done = reason != null;
-      return _panel(
-        done ? Colors.green.shade800 : Colors.indigo.shade800,
-        done ? Colors.greenAccent : Colors.indigo.shade300,
-        [
-          Text(done ? 'TEST ${running.number}/$count DONE' : 'TEST ${running.number}/$count RUNNING', style: big),
-          const SizedBox(height: 4),
-          Text(progress.targetFor(running), style: small),
-          if (done) ...[
-            const SizedBox(height: 4),
-            Text(
-              '${reason[0].toUpperCase()}${reason.substring(1)} -- back to the garage',
-              style: big.copyWith(fontSize: 16),
-            ),
+      return _panel(Colors.indigo.shade800, Colors.indigo.shade300, [
+        Text('TEST ${running.number}/$count RUNNING', style: big),
+        const SizedBox(height: 4),
+        Text(progress.targetFor(running), style: small),
+        Text(
+          'Gunther calls it complete when the target is reached -- nothing to tap.',
+          style: TextStyle(color: Colors.indigo.shade100, fontSize: 11),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            _panelButton('END EARLY', () => _confirmEndTest(running)),
+            const SizedBox(width: 8),
+            _panelButton('CHOOSE TEST', () => _pickTest(plan)),
           ],
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              _panelButton(done ? 'FINISH TEST' : 'END TEST', () => _confirmEndTest(running)),
-              const SizedBox(width: 8),
-              _panelButton('CHOOSE TEST', () => _pickTest(plan)),
-            ],
-          ),
-        ],
-      );
+        ),
+      ]);
     }
+
+    final justDone = _justCompletedTest;
+    final doneLine = justDone == null
+        ? null
+        : Text(
+            'TEST ${justDone.number} COMPLETE \u2713',
+            style: const TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold),
+          );
 
     final next = progress.next;
     if (next == null) {
       return _panel(Colors.green.shade900, Colors.green.shade400, [
+        ?doneLine,
         Text('TEST PLAN COMPLETE', style: big),
         const SizedBox(height: 4),
         Text('All $count tests done -- see the practice log for the results.', style: small),
@@ -1029,7 +1491,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ]);
     }
 
-    return _panel(Colors.grey.shade900, Colors.grey.shade600, [
+    return _panel(Colors.grey.shade900, justDone == null ? Colors.grey.shade600 : Colors.greenAccent, [
+      ?doneLine,
       Text('NEXT: TEST ${next.number}/$count', style: big),
       const SizedBox(height: 4),
       Text(progress.targetFor(next), style: small),
