@@ -5,6 +5,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:cipherlib/cipherlib.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../models/telemetry_frame.dart';
 import '../models/connection_status.dart';
@@ -142,7 +143,7 @@ Future<void> _telemetryIsolateEntry(_TelemetryIsolateArgs args) async {
     final datagram = socket.receive();
     if (datagram == null) return;
 
-    final frame = _decodeFrame(datagram.data);
+    final frame = decodeGt7Packet(datagram.data);
     if (frame != null) {
       args.sendPort.send(frame.toMap());
     }
@@ -162,7 +163,8 @@ Future<void> _telemetryIsolateEntry(_TelemetryIsolateArgs args) async {
 /// will not trigger from GT7 telemetry alone — sector splitting would
 /// need to be re-derived purely from the live X/Z position stream
 /// instead, which is a follow-up task.
-TelemetryFrame? _decodeFrame(Uint8List data) {
+@visibleForTesting
+TelemetryFrame? decodeGt7Packet(Uint8List data) {
   const expectedPacketSize = 0x128; // 296 bytes, GT7 "packet A"
   if (data.lengthInBytes < expectedPacketSize) return null;
 
@@ -202,6 +204,19 @@ TelemetryFrame? _decodeFrame(Uint8List data) {
   final bestLapTimeMs = buffer.getInt32(0x78, Endian.little);
   final lastLapTimeMs = buffer.getInt32(0x7C, Endian.little);
 
+  // Rev-indicator range (shift lights start / flash), int16 each.
+  final minAlertRpm = buffer.getInt16(0x88, Endian.little);
+  final maxAlertRpm = buffer.getInt16(0x8A, Endian.little);
+
+  // Status bitfield -- on track / paused / loading etc. (TelemetryFlags).
+  final flags = buffer.getUint16(0x8E, Endian.little);
+
+  // Pedal inputs, one unsigned byte each (0-255).
+  final throttlePercent = decrypted[0x91] / 255 * 100;
+  final brakePercent = decrypted[0x92] / 255 * 100;
+
+  final carCode = buffer.getInt32(0x124, Endian.little);
+
   return TelemetryFrame(
     rpm: rpm,
     speedKmh: speedMs * 3.6, // convert meters/second to km/h
@@ -218,14 +233,22 @@ TelemetryFrame? _decodeFrame(Uint8List data) {
     totalLaps: totalLaps,
     lastLapTimeMs: lastLapTimeMs,
     bestLapTimeMs: bestLapTimeMs,
+    flags: flags,
+    throttlePercent: throttlePercent,
+    brakePercent: brakePercent,
+    carCode: carCode,
+    minAlertRpm: minAlertRpm,
+    maxAlertRpm: maxAlertRpm,
   );
 }
 
 /// Decrypts a raw GT7 UDP packet with Salsa20 and validates the magic
 /// number. Returns null if decryption fails or the magic doesn't match
 /// (corrupt/truncated packet, or not actually a GT7 packet).
+final Uint8List _gt7KeyBytes = Uint8List.fromList(utf8.encode(_gt7Salsa20KeyString).sublist(0, 32));
+
 Uint8List? _decryptGt7Packet(Uint8List data) {
-  final keyBytes = Uint8List.fromList(utf8.encode(_gt7Salsa20KeyString).sublist(0, 32));
+  final keyBytes = _gt7KeyBytes;
 
   // The packet embeds a 4-byte "seed" IV at offset 0x40. The full 8-byte
   // Salsa20 nonce is built from that seed IV and (seed IV XOR a fixed

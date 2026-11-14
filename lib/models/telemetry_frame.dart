@@ -36,6 +36,28 @@ class TelemetryFrame {
   /// immediately preceding lap) gives a cleaner degradation baseline.
   final int bestLapTimeMs;
 
+  /// GT7's status bitfield (offset 0x8E, int16) -- see the [TelemetryFlags]
+  /// constants. Defaults to [TelemetryFlags.carOnTrack] so a frame built
+  /// without flags (tests, older call sites) is treated as live driving.
+  final int flags;
+
+  /// Throttle and brake pedal input, 0-100 (offsets 0x91/0x92, one
+  /// unsigned byte each, 0-255 on the wire).
+  final double throttlePercent;
+  final double brakePercent;
+
+  /// GT7's internal car ID (offset 0x124, int32), e.g. 3218 for the BMW
+  /// M6 GT3 Endurance Model '16 -- see PowerBandConfig.forCar. 0 when
+  /// unknown.
+  final int carCode;
+
+  /// The car's own rev-indicator range as GT7 reports it (offsets
+  /// 0x88/0x8A, int16): where the shift lights start, and where they
+  /// flash. Used as a fallback power band for cars without hand-tuned
+  /// shift points. 0 when unknown.
+  final int minAlertRpm;
+  final int maxAlertRpm;
+
   const TelemetryFrame({
     required this.rpm,
     required this.speedKmh,
@@ -51,7 +73,23 @@ class TelemetryFrame {
     this.totalLaps = -1,
     this.lastLapTimeMs = -1,
     this.bestLapTimeMs = -1,
+    this.flags = TelemetryFlags.carOnTrack,
+    this.throttlePercent = 0,
+    this.brakePercent = 0,
+    this.carCode = 0,
+    this.minAlertRpm = 0,
+    this.maxAlertRpm = 0,
   });
+
+  bool get isCarOnTrack => flags & TelemetryFlags.carOnTrack != 0;
+  bool get isPaused => flags & TelemetryFlags.paused != 0;
+  bool get isLoading => flags & TelemetryFlags.loadingOrProcessing != 0;
+
+  /// True only while actually driving: on track, not paused, not
+  /// loading. GT7 keeps streaming the last values (frozen) in menus,
+  /// pause screens and loading, so anything that accumulates per-lap
+  /// data should only consume frames where this is true.
+  bool get isDriving => isCarOnTrack && !isPaused && !isLoading;
 
   factory TelemetryFrame.empty() => const TelemetryFrame(
         rpm: 0,
@@ -68,6 +106,7 @@ class TelemetryFrame {
         totalLaps: -1,
         lastLapTimeMs: -1,
         bestLapTimeMs: -1,
+        flags: 0,
       );
 
   Map<String, dynamic> toMap() => {
@@ -85,6 +124,12 @@ class TelemetryFrame {
         'totalLaps': totalLaps,
         'lastLapTimeMs': lastLapTimeMs,
         'bestLapTimeMs': bestLapTimeMs,
+        'flags': flags,
+        'throttlePercent': throttlePercent,
+        'brakePercent': brakePercent,
+        'carCode': carCode,
+        'minAlertRpm': minAlertRpm,
+        'maxAlertRpm': maxAlertRpm,
       };
 
   factory TelemetryFrame.fromMap(Map<String, dynamic> map) => TelemetryFrame(
@@ -102,5 +147,28 @@ class TelemetryFrame {
         totalLaps: (map['totalLaps'] as num?)?.toInt() ?? -1,
         lastLapTimeMs: (map['lastLapTimeMs'] as num?)?.toInt() ?? -1,
         bestLapTimeMs: (map['bestLapTimeMs'] as num?)?.toInt() ?? -1,
+        flags: (map['flags'] as num?)?.toInt() ?? TelemetryFlags.carOnTrack,
+        throttlePercent: (map['throttlePercent'] as num?)?.toDouble() ?? 0,
+        brakePercent: (map['brakePercent'] as num?)?.toDouble() ?? 0,
+        carCode: (map['carCode'] as num?)?.toInt() ?? 0,
+        minAlertRpm: (map['minAlertRpm'] as num?)?.toInt() ?? 0,
+        maxAlertRpm: (map['maxAlertRpm'] as num?)?.toInt() ?? 0,
       );
+}
+
+/// Bits of GT7's status field (packet offset 0x8E), as documented by
+/// the community decoders (PDTools' SimulatorFlags, gt7dashboard).
+abstract final class TelemetryFlags {
+  static const int carOnTrack = 1 << 0;
+  static const int paused = 1 << 1;
+  static const int loadingOrProcessing = 1 << 2;
+  static const int inGear = 1 << 3;
+  static const int hasTurbo = 1 << 4;
+  static const int revLimiterAlert = 1 << 5;
+  static const int handBrake = 1 << 6;
+  static const int lights = 1 << 7;
+  static const int highBeam = 1 << 8;
+  static const int lowBeam = 1 << 9;
+  static const int asm = 1 << 10;
+  static const int tcs = 1 << 11;
 }

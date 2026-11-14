@@ -17,7 +17,8 @@ class ShiftHistoryTracker {
   /// Number of most-recent upshifts to keep/display.
   static const int historyWindow = 5;
 
-  final PowerBandConfig config;
+  /// Swapped by FusedRaceStateManager when GT7 reports a different car.
+  PowerBandConfig config;
 
   ShiftHistoryTracker({this.config = PowerBandConfig.bmwM6Gt3Endurance});
 
