@@ -1,7 +1,13 @@
 """Unit tests for driver_roster.py -- run with:
     python3 -m pytest laptop_ocr/test_driver_roster.py -v
 """
-from driver_roster import correct_driver_name, LEAGUE_ROSTER
+from driver_roster import (
+    LEAGUE_ROSTER,
+    NICKNAME_ALIASES,
+    correct_driver_name,
+    is_close_to_roster_entry,
+    is_same_driver,
+)
 
 
 def test_exact_match_returned_unchanged():
@@ -44,3 +50,30 @@ def test_two_distinct_short_roster_names_do_not_accidentally_collapse():
     for name in LEAGUE_ROSTER:
         others = [n for n in LEAGUE_ROSTER if n != name]
         assert correct_driver_name(name, roster=others) == name
+
+
+def test_known_nickname_resolves_to_psn_id():
+    assert correct_driver_name("Willy Swerve") == "Willy-SwerveX"
+    assert is_close_to_roster_entry("Willy Swerve")
+
+
+def test_slightly_misread_nickname_still_resolves():
+    assert correct_driver_name("Wiily Swerve") == "Willy-SwerveX"
+
+
+def test_nickname_alias_applies_to_a_custom_roster_containing_its_id():
+    assert correct_driver_name("Willy Swerve", roster=["Willy-SwerveX"]) == "Willy-SwerveX"
+    # ...but not to a roster without that driver.
+    assert correct_driver_name("Willy Swerve", roster=["Chuck_E82"]) == "Willy Swerve"
+
+
+def test_every_alias_points_at_a_real_roster_entry():
+    for nickname, psn_id in NICKNAME_ALIASES.items():
+        assert psn_id in LEAGUE_ROSTER, nickname
+
+
+def test_is_same_driver_matches_nickname_and_psn_id_both_ways():
+    assert is_same_driver("Willy Swerve", "Willy-SwerveX")
+    assert is_same_driver("Willy-SwerveX", "Wiily Swerve")
+    assert not is_same_driver("Willy-SwerveX", "Chuck_E82")
+    assert not is_same_driver(None, "Chuck_E82")

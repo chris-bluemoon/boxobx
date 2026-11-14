@@ -1,597 +1,395 @@
 """
-Boxbox Mini-Map Car Tracker
+Boxbox mini-map traffic tracker.
 
-Standalone, fully decoupled tracker for all 16 cars in a GT7 race using
-the top-right full-circuit mini-map from the same PS5 HDMI capture
-stream the leaderboard OCR relay (ocr_relay.py) already reads frames
-from. This module does NOT import from or modify ocr_relay.py in any
-way -- it has no knowledge of EasyOCR, the leaderboard crop, or any of
-that module's row-parsing logic. The only coupling point is the public
-method sync_with_ocr_standings(), which the caller's own main loop can
-invoke with whatever {driver_name: race_position} ground truth the OCR
-module already produced, entirely independently of how this module
-reaches its own best-guess ordering.
+Reads GT7's top-right course map from the same capture frames the
+leaderboard relay already grabs, and reports where EVERY car is around
+the lap relative to the driver -- including the cars the on-screen
+leaderboard doesn't show.
 
-Why a separate 1D spline-projection tracker is needed at all: GT7's
-mini-map renders all 15 opponents as identical plain dots (no name, no
-number), so there's no way to identify *who* a given dot is from the
-mini-map alone -- only track its MOTION over time and periodically
-re-anchor that motion against the leaderboard OCR's real driver names
-(which only shows ~9 rows at once and shifts during overtakes, but
-reliably carries identity). Projecting every dot onto a 1D normalized
-lap-progress coordinate (rather than tracking in raw 2D x/y) is what
-makes "which blob is which car" tractable at all when dots merge into
-a single blob under braking/at hairpins: two cars at the same on-track
-point also have the same (or very close) lap_progress_s, so their
-distinguishing signal is their velocity_ds (how fast they're each
-closing on that point), not their instantaneous screen position.
+What the map actually looks like (confirmed against real captures): a
+thick white line for the circuit, opponents as light-blue arrowheads
+sitting ON that line, the driver as a red arrowhead, all drawn straight
+over the game scene (no backing panel -- sky, trees and clouds show
+through). Opponents are almost the same blue as the sky, so they can't
+be found by colour alone. Instead:
+
+1. TrackOutline learns the circuit's shape over the first samples of a
+   session: a pixel is "track" if it was white in enough of those
+   frames (cars move and the sky changes, the line doesn't). No
+   hand-traced outline is needed per circuit.
+2. Each frame, a car is wherever a known-track pixel is currently BLUE
+   (an arrowhead covering the line). Cars bunched together merge into
+   one blob; its area gives an estimated car count.
+3. Each blob is placed along the lap (0-1000, see TrackOutline.project),
+   and turned into seconds behind the driver using the driver's own
+   recent trajectory: we passed every point of the track at a known
+   time, so a car sitting at a point we passed 3.2s ago is 3.2s behind.
+
+Deliberately NOT attempted: telling which arrow is which driver (they're
+identical and constantly merge). For traffic around a pit stop, where
+the cars are matters, not who they are.
+
+Known limitation: a circuit whose map crosses over itself (figure-of-8,
+e.g. Suzuka) doesn't form a single loop and isn't supported yet --
+TrackOutline reports not ready rather than guessing.
 """
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
-from pathlib import Path
+from bisect import bisect_left
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
-from scipy.optimize import linear_sum_assignment
-from scipy.spatial import cKDTree
 
-# Lap progress is normalized to this range regardless of the real
-# track's physical length -- keeps all the kinematic/assignment math
-# below independent of which circuit is loaded.
+# Lap progress is normalised to 0..LAP_PROGRESS_MAX regardless of the
+# circuit's real length.
 LAP_PROGRESS_MAX = 1000.0
 
-# A detected dot snaps to the nearest spline point if it's within this
-# many pixels of the track outline -- generous enough to still count a
-# car that's visibly off the raw outline while it's in the pit lane
-# (which mini-maps often render as a short spur off the main loop, or
-# don't render at all), without being so large that two adjacent
-# straights/hairpin apexes get confused for each other.
-SNAP_RADIUS_PX = 15.0
+# Generous top-right search box (1080p reference coordinates) for the
+# course map. Different circuits draw differently-shaped maps, so this
+# is wider than any one map; it stops above GT7's wind indicator
+# ("3.3 m/s", y~265-295), whose white text would otherwise read as track.
+REFERENCE_WIDTH = 1920
+REFERENCE_HEIGHT = 1080
+MINIMAP_X_MIN = 1440
+MINIMAP_X_MAX = 1910
+MINIMAP_Y_MIN = 8
+MINIMAP_Y_MAX = 262
 
-# Below this measured pixel movement per frame (after projection to
-# lap-progress space), a dot's velocity contribution is treated as
-# noise rather than real motion -- prevents a stationary, jittering
-# blob (e.g. a crashed/stopped car) from accumulating a nonzero
-# velocity purely from detection pixel noise.
-MIN_MEANINGFUL_DS_PER_FRAME = 0.05
+# Colour classes (OpenCV HSV, H 0-180). Measured on real captures:
+# track line is near-white, opponents light blue, the driver red.
+WHITE_MAX_SATURATION = 60
+WHITE_MIN_VALUE = 200
+BLUE_HUE_RANGE = (90, 112)
+BLUE_MIN_SATURATION = 60
+BLUE_MIN_VALUE = 170
+RED_MIN_SATURATION = 120
+RED_MIN_VALUE = 120
 
-# Smoothing factor for velocity_ds's exponential moving average --
-# higher reacts faster to genuine acceleration/braking, lower is more
-# resistant to single-frame detection noise. 0.3 is a reasonable middle
-# ground matching the kind of smoothing already used elsewhere in this
-# project (e.g. GapTracker's rolling-window approach for gap trends).
-VELOCITY_SMOOTHING_ALPHA = 0.3
+# Outline learning: the minimum frames to learn from, and the fraction
+# of them a pixel must be white in to count as track. If the loop isn't
+# closed yet (e.g. the pack sat on one stretch for most of those
+# frames), learning simply continues -- cars move on and uncover it --
+# up to OUTLINE_MAX_LEARNING_FRAMES before starting over.
+OUTLINE_LEARNING_FRAMES = 12
+OUTLINE_MAX_LEARNING_FRAMES = 90
+OUTLINE_MIN_WHITE_FRACTION = 0.3
+# The learned loop must be at least this long (1080p pixels) to be
+# believable as a circuit rather than a stray white shape.
+OUTLINE_MIN_LOOP_LENGTH_PX = 250
 
-# If a predicted car and the nearest detected blob are farther apart
-# than this (in lap-progress units) after projection, they're NOT
-# considered a plausible match at all for the Hungarian assignment --
-# avoids ever assigning a car's identity to a wildly distant blob just
-# because fewer blobs than cars were detected that frame.
-MAX_PLAUSIBLE_MATCH_DISTANCE = 60.0
+# A blob of covered track smaller than this (1080p px) is noise; one
+# arrowhead covers about SINGLE_CAR_COVERED_PX of track.
+MIN_CAR_BLOB_PX = 6
+SINGLE_CAR_COVERED_PX = 40
+MIN_PLAYER_BLOB_PX = 15
 
-# HSV color ranges for dot classification. GT7's mini-map renders
-# opponent cars as small white/light-grey dots and the player's own car
-# as a distinct bright marker (commonly red/orange depending on team
-# color settings) -- these ranges are intentionally conservative
-# starting points and are the first thing to re-tune against a real
-# captured mini-map frame if dot detection misses cars or misclassifies
-# the player marker (see detect_dots's docstring for how to do that).
-OPPONENT_HSV_LOWER = np.array([0, 0, 180], dtype=np.uint8)
-OPPONENT_HSV_UPPER = np.array([180, 60, 255], dtype=np.uint8)
-PLAYER_HSV_LOWER = np.array([0, 120, 120], dtype=np.uint8)
-PLAYER_HSV_UPPER = np.array([12, 255, 255], dtype=np.uint8)
-# Red wraps around hue=0 in HSV -- a second range catches the
-# high-hue-end red that the single range above would miss.
-PLAYER_HSV_LOWER_WRAP = np.array([168, 120, 120], dtype=np.uint8)
-PLAYER_HSV_UPPER_WRAP = np.array([180, 255, 255], dtype=np.uint8)
+# How far (1080p px) a blob's centre may be from the learned line and
+# still be placed on it.
+SNAP_RADIUS_PX = 12
 
-# A detected contour's pixel area must fall in this range to be
-# considered a real car dot rather than noise (too small) or a merged
-# blob of implausibly many cars / a UI element (too large). Tune
-# against a real frame if dots are a visibly different size.
-MIN_DOT_AREA_PX = 3
-MAX_DOT_AREA_PX = 250
+# If fewer than this fraction of the learned track pixels look like
+# track (white or covered by a car) for RELEARN_AFTER_BAD_FRAMES samples
+# in a row, the circuit has changed (or the map is gone) -- relearn.
+MIN_OUTLINE_MATCH_FRACTION = 0.5
+RELEARN_AFTER_BAD_FRAMES = 8
 
-# Strict static mini-map crop, as real pixel coordinates measured
-# against a 4K (3840x2160) GT7 HDMI capture with the Full Circuit Map
-# HUD option active: GT7's mini-map is locked to fixed screen-space
-# coordinates in the top-right corner (not scaled/repositioned based on
-# car count or other HUD state), so -- same approach as ocr_relay.py's
-# LEADERBOARD_X_MIN/MAX/Y_MIN/MAX -- a tight, hand-measured bounding
-# box is used directly rather than a percentage-of-frame region, and is
-# scaled proportionally for other capture resolutions (e.g. 1080p) via
-# MINIMAP_REFERENCE_WIDTH/HEIGHT below rather than needing a second
-# hardcoded coordinate set per resolution.
-MINIMAP_REFERENCE_WIDTH = 3840
-MINIMAP_REFERENCE_HEIGHT = 2160
-
-MINIMAP_X_MIN = 3040
-MINIMAP_X_MAX = 3770
-MINIMAP_Y_MIN = 70
-MINIMAP_Y_MAX = 680
+# Driving direction is decided once the driver's marker has moved
+# forward/backward consistently over this many samples.
+DIRECTION_DECISION_SAMPLES = 5
 
 
-def _scale_minimap_box(x_min, x_max, y_min, y_max, frame_width, frame_height):
-    """Scales a box measured against the 4K reference frame to the
-    actual captured frame's resolution (e.g. 1080p), preserving GT7's
-    HUD proportions rather than assuming a fixed pixel box regardless
-    of capture resolution -- mirrors ocr_relay.py's _scale_box."""
-    scale_x = frame_width / MINIMAP_REFERENCE_WIDTH
-    scale_y = frame_height / MINIMAP_REFERENCE_HEIGHT
-    return (
-        int(x_min * scale_x),
-        int(x_max * scale_x),
-        int(y_min * scale_y),
-        int(y_max * scale_y),
-    )
+def _scale(frame_width: int, frame_height: int) -> tuple[float, float]:
+    return frame_width / REFERENCE_WIDTH, frame_height / REFERENCE_HEIGHT
 
 
-def crop_minimap_roi(
-    frame_bgr: np.ndarray,
-    x_min: int | None = None,
-    x_max: int | None = None,
-    y_min: int | None = None,
-    y_max: int | None = None,
-) -> np.ndarray:
-    """Crops the top-right full-circuit mini-map region out of a raw
-    captured frame. With no arguments, uses the hand-measured
-    MINIMAP_X_MIN/MAX/Y_MIN/MAX box above, scaled from its 4K reference
-    to the actual frame's resolution (so this works unchanged against
-    a 1080p or 4K capture). Explicit x_min/x_max/y_min/y_max can still
-    be passed to override that default entirely -- e.g. if a different
-    HUD mini-map layout (not Full Circuit Map) is ever supported and
-    needs its own measured box.
-    """
+def crop_minimap(frame_bgr: np.ndarray) -> np.ndarray:
+    """The course-map search box, scaled to the frame's resolution."""
     height, width = frame_bgr.shape[:2]
-    if x_min is None or x_max is None or y_min is None or y_max is None:
-        x_min, x_max, y_min, y_max = _scale_minimap_box(
-            MINIMAP_X_MIN, MINIMAP_X_MAX, MINIMAP_Y_MIN, MINIMAP_Y_MAX, width, height
-        )
-    x_min, x_max = max(0, x_min), min(width, x_max)
-    y_min, y_max = max(0, y_min), min(height, y_max)
-    return frame_bgr[y_min:y_max, x_min:x_max]
+    sx, sy = _scale(width, height)
+    return frame_bgr[int(MINIMAP_Y_MIN * sy) : int(MINIMAP_Y_MAX * sy), int(MINIMAP_X_MIN * sx) : int(MINIMAP_X_MAX * sx)]
 
 
-class TrackSpline:
-    """An ordered, closed-loop track outline, normalized to a 1D lap
-    progress coordinate s in [0, LAP_PROGRESS_MAX). Every car's
-    position is ultimately expressed as a point along THIS coordinate,
-    not raw mini-map (x, y) -- this is what turns "is car A ahead of
-    car B" into a trivial 1D comparison (modulo lap wraparound) instead
-    of needing any understanding of the track's actual 2D shape at
-    runtime.
-    """
-
-    def __init__(self, points_xy: list[tuple[float, float]]):
-        """points_xy: an ORDERED list of (x, y) mini-map pixel
-        coordinates tracing the track outline once around, in the
-        direction cars actually drive (matters for lap-progress
-        direction, not just shape). The loop is closed automatically
-        (the last point connects back to the first), so don't repeat
-        the first point at the end.
-        """
-        if len(points_xy) < 3:
-            raise ValueError("TrackSpline needs at least 3 points to form a closed loop")
-
-        self._points = np.asarray(points_xy, dtype=np.float64)
-
-        # Cumulative arc length (real pixel distance) around the loop,
-        # ending back at the start -- this is the raw (unnormalized)
-        # "distance traveled" coordinate that LAP_PROGRESS_MAX-normalized
-        # lap_progress_s is derived from below.
-        deltas = np.diff(np.vstack([self._points, self._points[:1]]), axis=0)
-        segment_lengths = np.hypot(deltas[:, 0], deltas[:, 1])
-        self._cumulative_length = np.concatenate([[0.0], np.cumsum(segment_lengths)])
-        self._total_length = self._cumulative_length[-1]
-        if self._total_length <= 0:
-            raise ValueError("TrackSpline points produce a zero-length loop")
-
-        # A KD-tree over the raw points for fast nearest-point lookup --
-        # a real track outline is usually a few hundred points at most,
-        # so this isn't strictly required for performance, but it's a
-        # cheap way to keep project() fast if a denser outline is ever
-        # loaded (e.g. extracted from a traced mini-map image rather
-        # than hand-placed waypoints).
-        self._kdtree = cKDTree(self._points)
-
-    @classmethod
-    def build_from_points(cls, points_xy: list[tuple[float, float]]) -> "TrackSpline":
-        """Clean, explicit initialization helper -- construct directly
-        from a manually-traced or externally-extracted ordered list of
-        (x, y) mini-map pixel coordinates. This is the primary/
-        recommended way to build a TrackSpline: trace the track outline
-        once (e.g. by clicking waypoints around a screenshot of the
-        mini-map in any image tool, or via a one-off contour-extraction
-        script), save the points, and load them here.
-        """
-        return cls(points_xy)
-
-    @classmethod
-    def load_from_json(cls, path: str | Path) -> "TrackSpline":
-        """Loads a previously-saved list of [x, y] points from a JSON
-        file (see save_to_json) -- the usual way to reuse a traced
-        track outline across sessions without re-tracing it every
-        time the app starts.
-        """
-        with open(path) as f:
-            points = json.load(f)
-        return cls([tuple(p) for p in points])
-
-    def save_to_json(self, path: str | Path) -> None:
-        with open(path, "w") as f:
-            json.dump(self._points.tolist(), f)
-
-    @property
-    def total_length_px(self) -> float:
-        return float(self._total_length)
-
-    def project(self, x: float, y: float, snap_radius_px: float = SNAP_RADIUS_PX):
-        """Projects a single detected dot (x, y) onto the nearest point
-        on the track outline, returning its normalized lap_progress_s
-        in [0, LAP_PROGRESS_MAX), or None if the dot is farther than
-        snap_radius_px from every point on the outline (e.g. a false
-        detection well off the track, not a car in the pit lane -- pit
-        lanes within snap_radius_px of the main loop are intentionally
-        still caught, per the generous default radius).
-        """
-        distance, index = self._kdtree.query([x, y])
-        if distance > snap_radius_px:
-            return None
-
-        arc_length = self._cumulative_length[index]
-        return (arc_length / self._total_length) * LAP_PROGRESS_MAX
-
-    def project_many(self, points_xy: np.ndarray, snap_radius_px: float = SNAP_RADIUS_PX) -> list[float | None]:
-        """Vectorized convenience wrapper over project() for a batch of
-        detected dots in one call (e.g. every blob found in a single
-        frame) -- same snap/None semantics as project().
-        """
-        if len(points_xy) == 0:
-            return []
-        distances, indices = self._kdtree.query(points_xy)
-        results = []
-        for distance, index in zip(distances, indices):
-            if distance > snap_radius_px:
-                results.append(None)
-            else:
-                arc_length = self._cumulative_length[index]
-                results.append((arc_length / self._total_length) * LAP_PROGRESS_MAX)
-        return results
+def _masks(map_bgr: np.ndarray):
+    hsv = cv2.cvtColor(map_bgr, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    white = (s < WHITE_MAX_SATURATION) & (v > WHITE_MIN_VALUE)
+    blue = (h >= BLUE_HUE_RANGE[0]) & (h <= BLUE_HUE_RANGE[1]) & (s > BLUE_MIN_SATURATION) & (v > BLUE_MIN_VALUE)
+    red = ((h <= 10) | (h >= 170)) & (s > RED_MIN_SATURATION) & (v > RED_MIN_VALUE)
+    return white, blue, red
 
 
-def circular_distance(a: float, b: float, modulus: float = LAP_PROGRESS_MAX) -> float:
-    """Shortest distance between two lap-progress values on a circular
-    (wraparound) track, e.g. circular_distance(995, 5) == 10, not 990 --
-    this is the metric EVERY downstream comparison (prediction error,
-    Hungarian cost, overtake detection) needs to use instead of naive
-    subtraction, or a car crossing the start/finish line would look
-    like it teleported backward by almost a full lap.
-    """
-    raw = abs(a - b) % modulus
-    return min(raw, modulus - raw)
+def circular_delta(previous_s: float, current_s: float) -> float:
+    """Signed shortest move from previous_s to current_s around the lap,
+    in (-LAP_PROGRESS_MAX/2, LAP_PROGRESS_MAX/2]."""
+    d = (current_s - previous_s) % LAP_PROGRESS_MAX
+    return d - LAP_PROGRESS_MAX if d > LAP_PROGRESS_MAX / 2 else d
 
 
-def circular_delta(previous_s: float, current_s: float, modulus: float = LAP_PROGRESS_MAX) -> float:
-    """Signed forward progress from previous_s to current_s around the
-    circular track (always >= 0 for a car moving forward, even across
-    a start/finish wraparound) -- this is what lets velocity_ds and lap
-    counting treat "999 -> 2" as "+3 forward", not a huge backward jump.
-    Assumes the car only ever moves forward by less than half a lap
-    between consecutive samples (true at any reasonable sample rate).
-    """
-    return (current_s - previous_s) % modulus
+class TrackOutline:
+    """The circuit's shape on the map, learned from the white line."""
 
+    def __init__(self, area_scale: float = 1.0):
+        self._area_scale = area_scale
+        self._votes: np.ndarray | None = None
+        self._frames = 0
+        self.mask: np.ndarray | None = None  # learned track pixels (uint8 0/1)
+        self._points: np.ndarray | None = None  # ordered loop, Nx2 (x, y)
+        self._cumulative: np.ndarray | None = None
+        self._length = 0.0
+        self.ready = False
 
-@dataclass
-class CarState:
-    """Tracked state for a single car, in 1D lap-progress space. One of
-    these exists for every one of the 16 grid slots for the whole race
-    -- a car is never "dropped" just because its dot wasn't
-    individually resolvable this frame (see MinimapTracker.update's
-    merged-blob handling), only ever re-labeled via
-    sync_with_ocr_standings if the tracker's own guess turns out wrong.
-    """
-
-    driver_name: str
-    lap_progress_s: float = 0.0
-    velocity_ds: float = 0.0
-    laps_completed: int = 0
-
-    # True only for the single car representing the player's own
-    # vehicle -- see MinimapTracker.player_driver_name. The player's
-    # dot is unambiguous (distinct color), so this car's lap_progress_s
-    # is always taken directly from the player-colored detection, never
-    # from the Hungarian assignment used for the other 15.
-    is_player: bool = False
-
-    # How many consecutive frames this car has gone without a
-    # confidently-assigned dot of its own (i.e. it's "riding along"
-    # inside a merged blob with another car, per the merged-blob
-    # handling in MinimapTracker.update) -- purely diagnostic/for
-    # tuning, not used in any decision logic itself.
-    frames_since_own_detection: int = 0
-
-    def advance(self, measured_s: float | None, dt_seconds: float) -> None:
-        """Updates this car's position/velocity/lap count for one
-        frame. If measured_s is None (this car didn't get its own
-        detected blob this frame -- it's inside a merged blob with
-        another car), its position is DEAD-RECKONED forward using its
-        last known velocity_ds instead of standing still, which is what
-        "rely on their individual velocities to carry them through the
-        overlap until the blobs split again" means in practice.
-        """
-        if measured_s is None:
-            predicted_s = (self.lap_progress_s + self.velocity_ds * dt_seconds) % LAP_PROGRESS_MAX
-            self._apply_new_s(predicted_s)
-            self.frames_since_own_detection += 1
+    def learn(self, white: np.ndarray) -> None:
+        if self.ready:
             return
+        if self._votes is None or self._votes.shape != white.shape:
+            self._votes = np.zeros(white.shape, np.uint16)
+            self._frames = 0
+        self._votes += white.astype(np.uint16)
+        self._frames += 1
+        if self._frames >= OUTLINE_LEARNING_FRAMES:
+            self._build()
 
-        delta = circular_delta(self.lap_progress_s, measured_s)
-        if dt_seconds > 0:
-            instantaneous_ds = delta / dt_seconds
-            if abs(instantaneous_ds) >= MIN_MEANINGFUL_DS_PER_FRAME:
-                self.velocity_ds = (
-                    VELOCITY_SMOOTHING_ALPHA * instantaneous_ds
-                    + (1 - VELOCITY_SMOOTHING_ALPHA) * self.velocity_ds
-                )
-        self._apply_new_s(measured_s)
-        self.frames_since_own_detection = 0
+    def _build(self) -> None:
+        track = (self._votes >= max(1, OUTLINE_MIN_WHITE_FRACTION * self._frames)).astype(np.uint8)
+        # Bridge the small gaps GT7 draws in the line (sector ticks) and
+        # any spot a car happened to sit on in most learning frames.
+        track = cv2.morphologyEx(track, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(track)
+        if count < 2:
+            return self._not_closed_yet()
+        largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        track = (labels == largest).astype(np.uint8)
 
-    def _apply_new_s(self, new_s: float) -> None:
-        # A new s that's numerically SMALLER than the old one only
-        # means "crossed the start/finish line" (a genuine new lap) if
-        # the car was already near the end of the lap -- otherwise a
-        # small negative-looking delta is just normal frame-to-frame
-        # jitter near a fixed point, not a lap completing. Comparing
-        # against LAP_PROGRESS_MAX * 0.5 as the wraparound threshold
-        # means a car has to have covered at least half the lap's
-        # length forward before a "wrap" is credited, which real lap
-        # transitions always will have (the alternative -- jitter --
-        # moves at most a few units per frame).
-        if new_s < self.lap_progress_s and (self.lap_progress_s - new_s) > LAP_PROGRESS_MAX * 0.5:
-            self.laps_completed += 1
-        self.lap_progress_s = new_s
+        # A closed circuit is a band with a hole in the middle; the
+        # hole's boundary is an ordered loop running along the line.
+        contours, hierarchy = cv2.findContours(track, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+        holes = [c for c, h in zip(contours, hierarchy[0]) if h[3] != -1] if hierarchy is not None else []
+        # Ignore pinholes left by compression/noise inside the line.
+        holes = [h for h in holes if cv2.contourArea(h) >= 200 * self._area_scale]
+        if len(holes) != 1:
+            # No hole: the loop isn't closed (yet). Several: a circuit
+            # that crosses itself, which isn't supported.
+            return self._not_closed_yet()
+        loop = holes[0][:, 0, :].astype(np.float64)
+        deltas = np.diff(np.vstack([loop, loop[:1]]), axis=0)
+        cumulative = np.concatenate([[0.0], np.cumsum(np.hypot(deltas[:, 0], deltas[:, 1]))])
+        if cumulative[-1] < OUTLINE_MIN_LOOP_LENGTH_PX * np.sqrt(self._area_scale):
+            return self._not_closed_yet()
+
+        self.mask = track
+        self._points = loop
+        self._cumulative = cumulative
+        self._length = float(cumulative[-1])
+        self.ready = True
+
+    def _not_closed_yet(self) -> None:
+        if self._frames >= OUTLINE_MAX_LEARNING_FRAMES:
+            self._votes = None
+            self._frames = 0
+
+    def reverse(self) -> None:
+        """Flips the lap direction (the loop's traced order may be the
+        opposite of the way cars drive)."""
+        if self._points is None:
+            return
+        self._points = self._points[::-1].copy()
+        deltas = np.diff(np.vstack([self._points, self._points[:1]]), axis=0)
+        self._cumulative = np.concatenate([[0.0], np.cumsum(np.hypot(deltas[:, 0], deltas[:, 1]))])
+
+    def project(self, x: float, y: float) -> float | None:
+        """Lap progress (0..1000) of the nearest point on the loop, or
+        None if (x, y) is too far from the line to be on it."""
+        if self._points is None:
+            return None
+        d2 = (self._points[:, 0] - x) ** 2 + (self._points[:, 1] - y) ** 2
+        index = int(np.argmin(d2))
+        if d2[index] > (SNAP_RADIUS_PX**2) * self._area_scale:
+            return None
+        return self._cumulative[index] / self._length * LAP_PROGRESS_MAX
+
+    def match_fraction(self, white: np.ndarray, blue: np.ndarray, red: np.ndarray) -> float:
+        """How much of the learned track currently looks like track."""
+        if self.mask is None:
+            return 0.0
+        on_track = self.mask > 0
+        return float(((white | blue | red) & on_track).sum()) / max(1, int(on_track.sum()))
 
 
 @dataclass
-class _Detection:
-    x: float
-    y: float
-    lap_progress_s: float
+class TrafficCar:
+    """One blob of opponent arrowhead(s) on the line."""
+
+    lap_progress: float
+    count: int
+    # How long ago the driver passed this point, 0..lap time (i.e. how
+    # far behind us around the lap, in seconds). None until a full lap
+    # of the driver's own trajectory has been recorded.
+    seconds_behind: float | None = None
 
 
-class MinimapTracker:
-    """Tracks all 16 cars' lap-progress position via the mini-map,
-    independently of (and completely decoupled from) the leaderboard
-    OCR relay -- the only integration point with that module is
-    sync_with_ocr_standings(), called from the shared main loop with
-    whatever ground-truth {driver_name: race_position} the OCR module
-    already produced that frame.
-    """
+@dataclass
+class TrafficSnapshot:
+    track_ready: bool
+    player_lap_progress: float | None
+    lap_seconds: float | None
+    cars: list[TrafficCar] = field(default_factory=list)
 
-    def __init__(self, track_spline: TrackSpline, driver_names_in_grid_order: list[str], player_driver_name: str):
-        """driver_names_in_grid_order: all 16 drivers, in STARTING GRID
-        order (pole position first) -- used only to seed each car's
-        initial lap_progress_s spread out along the grid at t=0, not
-        assumed to stay accurate as the race progresses (that's the
-        whole point of tracking + OCR re-anchoring below).
-        """
-        self.track_spline = track_spline
-        self.player_driver_name = player_driver_name
+    def to_payload(self) -> dict:
+        return {
+            "trackReady": self.track_ready,
+            "playerLapProgress": None if self.player_lap_progress is None else round(self.player_lap_progress, 1),
+            "lapSeconds": None if self.lap_seconds is None else round(self.lap_seconds, 2),
+            "cars": [
+                {
+                    "lapProgress": round(c.lap_progress, 1),
+                    "count": c.count,
+                    "secondsBehind": None if c.seconds_behind is None else round(c.seconds_behind, 2),
+                }
+                for c in self.cars
+            ],
+        }
 
-        car_count = len(driver_names_in_grid_order)
-        self.cars: list[CarState] = [
-            CarState(
-                driver_name=name,
-                # Spread starting grid positions slightly apart along
-                # the spline (rather than all at s=0) so the very first
-                # frame's Hungarian assignment isn't working from a
-                # degenerate all-cars-identical starting state.
-                lap_progress_s=(LAP_PROGRESS_MAX - (index * (LAP_PROGRESS_MAX / max(car_count, 1)) / 10)) % LAP_PROGRESS_MAX,
-                is_player=(name == player_driver_name),
-            )
-            for index, name in enumerate(driver_names_in_grid_order)
-        ]
 
-    def car_by_name(self, driver_name: str) -> CarState | None:
-        return next((c for c in self.cars if c.driver_name == driver_name), None)
+class TrafficTracker:
+    """Per-session state: the learned outline, the driving direction,
+    and the driver's own trajectory used to turn distance into time."""
 
-    def standings(self) -> list[str]:
-        """Returns driver names in the tracker's current best-guess
-        race order (leader first), purely from accumulated
-        laps_completed + lap_progress_s -- this is what
-        sync_with_ocr_standings compares against the real OCR ground
-        truth to detect/correct swapped identities.
-        """
-        ordered = sorted(self.cars, key=lambda c: (-c.laps_completed, -c.lap_progress_s))
-        return [c.driver_name for c in ordered]
+    def __init__(self):
+        self._outline: TrackOutline | None = None
+        self._bad_frames = 0
+        self._direction_votes: list[float] = []
+        self._direction_known = False
+        # Driver trajectory: (timestamp, unwrapped lap progress), oldest first.
+        self._trail_t: list[float] = []
+        self._trail_s: list[float] = []
+        self._last_s: float | None = None
 
-    def detect_dots(self, minimap_bgr: np.ndarray) -> tuple[list[tuple[float, float]], tuple[float, float] | None]:
-        """Finds every car dot in a cropped mini-map frame via HSV
-        color thresholding, returning (opponent_dot_centroids,
-        player_dot_centroid_or_None). Separated as its own method
-        (rather than inlined into update()) so it can be re-tuned/
-        tested against a real captured mini-map frame in isolation --
-        if cars are being missed or the player marker isn't being
-        found, start by visualizing the two masks this method builds
-        (cv2.inRange against OPPONENT_HSV_LOWER/UPPER and the two
-        PLAYER_HSV_* ranges) against a real frame and adjust those
-        constants at the top of this file.
-        """
-        hsv = cv2.cvtColor(minimap_bgr, cv2.COLOR_BGR2HSV)
+    def reset(self) -> None:
+        self.__init__()
 
-        opponent_mask = cv2.inRange(hsv, OPPONENT_HSV_LOWER, OPPONENT_HSV_UPPER)
-        player_mask = cv2.inRange(hsv, PLAYER_HSV_LOWER, PLAYER_HSV_UPPER) | cv2.inRange(
-            hsv, PLAYER_HSV_LOWER_WRAP, PLAYER_HSV_UPPER_WRAP
+    def update(self, frame_bgr: np.ndarray, timestamp: float) -> TrafficSnapshot:
+        map_bgr = crop_minimap(frame_bgr)
+        sx, sy = _scale(frame_bgr.shape[1], frame_bgr.shape[0])
+        area_scale = sx * sy
+        white, blue, red = _masks(map_bgr)
+
+        if self._outline is None:
+            self._outline = TrackOutline(area_scale)
+        outline = self._outline
+        if not outline.ready:
+            outline.learn(white)
+            return TrafficSnapshot(track_ready=False, player_lap_progress=None, lap_seconds=None)
+
+        if outline.match_fraction(white, blue, red) < MIN_OUTLINE_MATCH_FRACTION:
+            self._bad_frames += 1
+            if self._bad_frames >= RELEARN_AFTER_BAD_FRAMES:
+                self.reset()
+            return TrafficSnapshot(track_ready=False, player_lap_progress=None, lap_seconds=None)
+        self._bad_frames = 0
+
+        player_s = self._locate_player(red, outline)
+        if player_s is not None:
+            self._record_player(player_s, timestamp)
+
+        cars = self._locate_cars(blue, outline, area_scale)
+        if player_s is not None and self._direction_known:
+            for car in cars:
+                car.seconds_behind = self._seconds_behind(player_s, car.lap_progress)
+
+        return TrafficSnapshot(
+            track_ready=True,
+            player_lap_progress=player_s if self._direction_known else None,
+            lap_seconds=self._lap_seconds(),
+            cars=cars if self._direction_known else [],
         )
-        # The player's marker is also bright/white-ish at its edges on
-        # some HUD themes and can bleed into the opponent mask -- remove
-        # any overlap so a single dot is never double-counted as both.
-        opponent_mask = cv2.bitwise_and(opponent_mask, cv2.bitwise_not(player_mask))
 
-        opponent_centroids = self._contour_centroids(opponent_mask)
-        player_centroids = self._contour_centroids(player_mask)
-
-        # The player marker should be unambiguous (exactly one blob) --
-        # if more than one is found (e.g. a UI element coincidentally
-        # matching the color range), take whichever was found first
-        # rather than guessing wrong and silently picking noise.
-        player_centroid = player_centroids[0] if player_centroids else None
-
-        return opponent_centroids, player_centroid
+    # --- detection -------------------------------------------------------
 
     @staticmethod
-    def _contour_centroids(mask: np.ndarray) -> list[tuple[float, float]]:
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        scored: list[tuple[float, tuple[float, float]]] = []
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < MIN_DOT_AREA_PX or area > MAX_DOT_AREA_PX:
+    def _locate_player(red: np.ndarray, outline: TrackOutline) -> float | None:
+        count, _labels, stats, centroids = cv2.connectedComponentsWithStats(red.astype(np.uint8))
+        best = None
+        for i in range(1, count):
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area >= MIN_PLAYER_BLOB_PX and (best is None or area > stats[best, cv2.CC_STAT_AREA]):
+                best = i
+        if best is None:
+            return None
+        return outline.project(*centroids[best])
+
+    @staticmethod
+    def _locate_cars(blue: np.ndarray, outline: TrackOutline, area_scale: float) -> list[TrafficCar]:
+        covered = (blue & (outline.mask > 0)).astype(np.uint8)
+        covered = cv2.morphologyEx(covered, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        count, _labels, stats, centroids = cv2.connectedComponentsWithStats(covered)
+        cars = []
+        for i in range(1, count):
+            area = stats[i, cv2.CC_STAT_AREA] / area_scale
+            if area < MIN_CAR_BLOB_PX:
                 continue
-            moments = cv2.moments(contour)
-            if moments["m00"] == 0:
+            s = outline.project(*centroids[i])
+            if s is None:
                 continue
-            centroid = (moments["m10"] / moments["m00"], moments["m01"] / moments["m00"])
-            scored.append((area, centroid))
-        # Largest-first so a caller taking only the first N (e.g. the
-        # player-marker fallback above) prefers a real dot over noise.
-        scored.sort(key=lambda item: -item[0])
-        return [centroid for _, centroid in scored]
+            cars.append(TrafficCar(lap_progress=s, count=max(1, round(area / SINGLE_CAR_COVERED_PX))))
+        cars.sort(key=lambda c: c.lap_progress)
+        return cars
 
-    def update(self, minimap_bgr: np.ndarray, dt_seconds: float) -> None:
-        """Processes one frame: detects dots, projects them onto the
-        track spline, associates them with tracked cars (via the
-        Hungarian algorithm on predicted-vs-measured lap-progress
-        distance), and advances every car's state -- including cars
-        whose dot merged with another's this frame (see
-        CarState.advance's dead-reckoning fallback).
-        """
-        opponent_xy, player_xy = self.detect_dots(minimap_bgr)
+    # --- driver trajectory -----------------------------------------------
 
-        if player_xy is not None:
-            player_s = self.track_spline.project(*player_xy)
-            player_car = self.car_by_name(self.player_driver_name)
-            if player_car is not None and player_s is not None:
-                player_car.advance(player_s, dt_seconds)
+    def _record_player(self, s: float, timestamp: float) -> None:
+        if self._last_s is None:
+            self._last_s = s
+            return
+        delta = circular_delta(self._last_s, s)
+        self._last_s = s
 
-        opponent_detections = []
-        for x, y in opponent_xy:
-            s = self.track_spline.project(x, y)
-            if s is not None:
-                opponent_detections.append(_Detection(x=x, y=y, lap_progress_s=s))
-
-        opponent_cars = [c for c in self.cars if not c.is_player]
-        self._assign_and_advance(opponent_cars, opponent_detections, dt_seconds)
-
-    def _assign_and_advance(self, cars: list[CarState], detections: list[_Detection], dt_seconds: float) -> None:
-        """Associates predicted car positions with this frame's
-        detected blobs via the Hungarian algorithm (scipy's
-        linear_sum_assignment), using CIRCULAR lap-progress distance as
-        the cost -- then advances every car, whether or not it got an
-        unambiguous detection this frame.
-
-        When there are FEWER detections than cars (the merged-blob
-        case this whole module exists to handle), linear_sum_assignment
-        itself only ever produces a one-to-one matching up to
-        min(len(cars), len(detections)) -- it cannot natively assign
-        two cars to the same blob. So after the one-to-one solve, any
-        car left unmatched is given a SECOND chance to match against
-        whichever blob (already claimed or not) is closest to its own
-        predicted position, within MAX_PLAUSIBLE_MATCH_DISTANCE -- this
-        is what "allow multiple predicted cars to share the same merged
-        blob centroid" means in practice: the Hungarian solve picks the
-        best unique pairing first, and any leftover cars still snap to
-        the nearest plausible (possibly already-used) blob rather than
-        going fully blind.
-        """
-        if not cars:
+        if not self._direction_known:
+            if abs(delta) > 0.5:
+                self._direction_votes.append(delta)
+            if len(self._direction_votes) >= DIRECTION_DECISION_SAMPLES:
+                forward = sum(1 for d in self._direction_votes if d > 0)
+                if forward < len(self._direction_votes) / 2:
+                    self._outline.reverse()
+                    self._last_s = (LAP_PROGRESS_MAX - s) % LAP_PROGRESS_MAX
+                self._direction_known = True
             return
 
-        predicted_s = {id(car): (car.lap_progress_s + car.velocity_ds * dt_seconds) % LAP_PROGRESS_MAX for car in cars}
-
-        if not detections:
-            for car in cars:
-                car.advance(None, dt_seconds)
+        if delta < 0:
+            # Jitter (or a brief misread): never move the trail backwards.
             return
+        unwrapped = (self._trail_s[-1] if self._trail_s else self._last_s) + delta
+        self._trail_t.append(timestamp)
+        self._trail_s.append(unwrapped)
+        # Keep a little over two laps of history.
+        while self._trail_s and self._trail_s[-1] - self._trail_s[0] > 2.2 * LAP_PROGRESS_MAX:
+            self._trail_t.pop(0)
+            self._trail_s.pop(0)
 
-        cost_matrix = np.array(
-            [[circular_distance(predicted_s[id(car)], d.lap_progress_s) for d in detections] for car in cars]
-        )
+    def _time_at(self, unwrapped_s: float) -> float | None:
+        """When the driver was at unwrapped_s (linear interpolation), or
+        None if outside the recorded trail."""
+        if not self._trail_s or unwrapped_s < self._trail_s[0] or unwrapped_s > self._trail_s[-1]:
+            return None
+        i = bisect_left(self._trail_s, unwrapped_s)
+        if self._trail_s[i] == unwrapped_s or i == 0:
+            return self._trail_t[i]
+        s0, s1 = self._trail_s[i - 1], self._trail_s[i]
+        t0, t1 = self._trail_t[i - 1], self._trail_t[i]
+        return t0 + (t1 - t0) * (unwrapped_s - s0) / (s1 - s0)
 
-        row_indices, col_indices = linear_sum_assignment(cost_matrix)
+    def _seconds_behind(self, player_s: float, car_s: float) -> float | None:
+        """How long ago the driver passed the car's current point."""
+        if not self._trail_s:
+            return None
+        distance_behind = (player_s - car_s) % LAP_PROGRESS_MAX
+        now_s, now_t = self._trail_s[-1], self._trail_t[-1]
+        passed_at = self._time_at(now_s - distance_behind)
+        return None if passed_at is None else now_t - passed_at
 
-        matched_s: dict[int, float] = {}
-        for row, col in zip(row_indices, col_indices):
-            if cost_matrix[row, col] <= MAX_PLAUSIBLE_MATCH_DISTANCE:
-                matched_s[row] = detections[col].lap_progress_s
-
-        # Leftover cars (either because there were fewer detections
-        # than cars, or because their best Hungarian-assigned match was
-        # farther than MAX_PLAUSIBLE_MATCH_DISTANCE and got rejected
-        # above) each independently snap to whichever detection is
-        # closest to THEIR OWN predicted position, even if another car
-        # already claimed that same detection -- this is the
-        # "multiple cars share a merged blob centroid" behavior.
-        for row, car in enumerate(cars):
-            if row in matched_s:
-                continue
-            distances = [circular_distance(predicted_s[id(car)], d.lap_progress_s) for d in detections]
-            best_index = int(np.argmin(distances))
-            if distances[best_index] <= MAX_PLAUSIBLE_MATCH_DISTANCE:
-                matched_s[row] = detections[best_index].lap_progress_s
-
-        for row, car in enumerate(cars):
-            car.advance(matched_s.get(row), dt_seconds)
-
-    def sync_with_ocr_standings(self, confirmed_positions: dict[str, int]) -> None:
-        """Ground-truth correction: accepts {driver_name: race_position}
-        for however many drivers the leaderboard OCR module confidently
-        resolved this frame (typically ~9, the visible HUD rows) and
-        re-labels this tracker's car states if its own inferred
-        ordering contradicts that ground truth -- e.g. two
-        visually-identical dots swapped identities during an off-screen
-        pileup the mini-map tracker had no way to disambiguate on its
-        own.
-
-        Correction strategy: rather than trusting the mini-map
-        tracker's absolute lap_progress_s values (which may have
-        drifted/been mis-assigned), this REORDERS the CONFIRMED
-        drivers' (lap_progress_s, velocity_ds, laps_completed) tuples
-        among themselves to match the OCR's relative order, while
-        leaving every unconfirmed car (and the confirmed cars' actual
-        kinematic state values) untouched -- this fixes "who is who"
-        without discarding the real motion data those state values
-        represent, which would otherwise cost the tracker everything
-        it had learned about those cars' speed/position up to this
-        point.
-        """
-        confirmed_names = [name for name in confirmed_positions if self.car_by_name(name) is not None]
-        if len(confirmed_names) < 2:
-            # Nothing to reconcile -- a single confirmed driver has no
-            # relative order to contradict.
-            return
-
-        # The tracker's OWN inferred order for exactly the confirmed
-        # drivers (ignoring every other car), to compare against OCR's.
-        tracker_order = [name for name in self.standings() if name in confirmed_names]
-        ocr_order = sorted(confirmed_names, key=lambda name: confirmed_positions[name])
-
-        if tracker_order == ocr_order:
-            return  # Already agrees -- nothing to correct.
-
-        # Swap the underlying kinematic state (lap_progress_s,
-        # velocity_ds, laps_completed) among the confirmed cars so the
-        # tracker's state for "whichever car is in P<n>" ends up
-        # attached to the driver OCR says is actually in P<n> --
-        # identity moves, motion data doesn't.
-        tracker_states = [self.car_by_name(name) for name in tracker_order]
-        state_values = [(c.lap_progress_s, c.velocity_ds, c.laps_completed) for c in tracker_states]
-
-        for ocr_rank, driver_name in enumerate(ocr_order):
-            target_car = self.car_by_name(driver_name)
-            lap_progress_s, velocity_ds, laps_completed = state_values[ocr_rank]
-            target_car.lap_progress_s = lap_progress_s
-            target_car.velocity_ds = velocity_ds
-            target_car.laps_completed = laps_completed
+    def _lap_seconds(self) -> float | None:
+        """Duration of the driver's most recent full lap on the map."""
+        if not self._trail_s:
+            return None
+        start = self._time_at(self._trail_s[-1] - LAP_PROGRESS_MAX)
+        return None if start is None else self._trail_t[-1] - start

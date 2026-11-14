@@ -306,13 +306,13 @@ ocr_results_11 = [
     *row(80, ("5", 62)),
     *row(193, ("1", 60), ("K. Wilson", 89)),
     *row(233, ("2", 60), ("G. De Simone", 93)),
-    *row(273, ("3", 60), ("Wllly-SwerveX", 89)),  # misread of a real roster entry, directly ahead
+    *row(273, ("3", 60), ("Chuck_E8", 89)),  # misread of a real roster entry, directly ahead
     *row(382, ("4", 60), ("Willy Swerve", 88)),
 ]
 result11 = parse_leaderboard(ocr_results_11, driver_name="Willy Swerve")
 check(
     "driverAhead's garbled-but-close roster name is corrected to the exact real entry",
-    result11["driverAhead"] == "Willy-SwerveX",
+    result11["driverAhead"] == "Chuck_E82",
 )
 
 ocr_results_12 = [
@@ -395,5 +395,81 @@ check(
     result16["rivalPositions"] == {},
 )
 
+
+# Replays show GT7 profile NICKNAMES instead of PSN IDs. A known
+# nickname (driver_roster.NICKNAME_ALIASES) must resolve to its PSN ID
+# everywhere: driverAhead/driverBehind, rival positions, own-row
+# lookup, and the mixed-case noise filter's roster exemption.
+ocr_results_17 = [
+    *row(56, ("POSITION", 128)),
+    *row(80, ("6", 62)),
+    *row(193, ("4", 60), ("Willy Swerve", 89)),  # nickname of roster's Willy-SwerveX
+    *row(382, ("5", 60), ("Chuck_E82", 88)),
+]
+result17 = parse_leaderboard(ocr_results_17, driver_name="Chuck_E82", rival_names=["Willy-SwerveX"])
+check("a known nickname directly ahead resolves to its PSN ID", result17["driverAhead"] == "Willy-SwerveX")
+check("a rival shown by nickname is found by PSN ID", result17["rivalPositions"] == {"Willy-SwerveX": 4})
+check("own row found from the name match, giving the right position", result17["gridPosition"] == 5)
+
+# --driver-name given as the PSN ID still finds the on-screen nickname
+# row, and that row is never reported as a rival's position.
+ocr_results_18 = [
+    *row(56, ("POSITION", 128)),
+    *row(80, ("6", 62)),
+    *row(193, ("2", 60), ("Chuck_E82", 89)),
+    *row(382, ("3", 60), ("Willy Swerve", 88)),
+]
+result18 = parse_leaderboard(ocr_results_18, driver_name="Willy-SwerveX", rival_names=["Willy-SwerveX", "Chuck_E82"])
+check("PSN-ID --driver-name matches the on-screen nickname row", result18["gridPosition"] == 3)
+check("driverAhead is found relative to the nickname row", result18["driverAhead"] == "Chuck_E82")
+check("own nickname row is not reported as a rival", result18["rivalPositions"] == {"Chuck_E82": 2})
+
+
+# A header tile reading supplied by the live loop (read_header_position)
+# beats the own row's small position digit, and is still reported when
+# the own row can't be found at all.
+ocr_results_19 = [
+    *row(193, ("1", 60), ("Willy Swerve", 89)),
+    *row(261, ("2", 60), ("LocoRx2", 88)),
+]
+result19 = parse_leaderboard(ocr_results_19, driver_name="Willy Swerve", header_position=1)
+check("header tile position is used for the own row", result19["gridPosition"] == 1)
+check("the leader has nobody ahead", result19["driverAhead"] is None)
+check("the car behind the leader is found", result19["driverBehind"] == "LocoRx2")
+result19b = parse_leaderboard(
+    [*row(193, ("4", 60), ("Willy Swerve", 89))], driver_name="Willy Swerve", header_position=3
+)
+check("header tile wins over a disagreeing row digit", result19b["gridPosition"] == 3)
+result19c = parse_leaderboard([*row(261, ("2", 60), ("LocoRx2", 88))], driver_name="Willy Swerve", header_position=7)
+check("header tile position is reported even when the own row is not found", result19c["gridPosition"] == 7)
+result19d = parse_leaderboard([*row(193, ("4", 60), ("Willy Swerve", 89))], driver_name="Willy Swerve", header_position=0)
+check("an unreadable header tile (0) falls back to the row digit", result19d["gridPosition"] == 4)
+
+# driversInPit: rows the pit_marker_fn flags, roster-corrected, never
+# the driver's own car, and an empty dict when nobody is in the pits.
+ocr_results_20 = [
+    *row(193, ("1", 60), ("LocoRx2", 89)),
+    *row(233, ("2", 60), ("Daywalkar", 88)),
+    *row(301, ("3", 60), ("Willy Swerve", 88)),
+]
+result20 = parse_leaderboard(
+    ocr_results_20, driver_name="Willy Swerve", pit_marker_fn=lambda r: any(t in ("Daywalkar", "Willy Swerve") for t, _x, _y in r)
+)
+check(
+    "a flagged row is reported in driversInPit by roster ID",
+    result20["driversInPit"] == {"Daywalkar86": {"position": 2, "tyre": None, "fuel": None}},
+)
+result20c = parse_leaderboard(
+    ocr_results_20,
+    driver_name="Willy Swerve",
+    pit_marker_fn=lambda r: any(t == "Daywalkar" for t, _x, _y in r),
+    pit_service_fn=lambda r: {"tyre": "S", "fuel": 57},
+)
+check(
+    "tyre and fuel from pit_service_fn are attached to the pitting driver",
+    result20c["driversInPit"] == {"Daywalkar86": {"position": 2, "tyre": "S", "fuel": 57}},
+)
+result20b = parse_leaderboard(ocr_results_20, driver_name="Willy Swerve")
+check("driversInPit is an empty dict without a pit_marker_fn", result20b["driversInPit"] == {})
 
 print("\nAll parse_leaderboard checks passed.")

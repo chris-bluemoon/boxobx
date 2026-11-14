@@ -16,11 +16,13 @@ import socket
 import time
 
 import cv2
+import numpy as np
 import easyocr
 
 from ocr_preprocessing import preprocess_cell, POSITION_DIGIT_ALLOWLIST
 from tire_wear_reader import read_tire_wear
-from driver_roster import correct_driver_name, is_close_to_roster_entry
+from minimap_tracker import TrafficTracker
+from driver_roster import correct_driver_name, is_close_to_roster_entry, is_same_driver
 
 UDP_PORT = 33746
 
@@ -184,8 +186,68 @@ REFERENCE_HEIGHT = 1080
 # to ~16-20 rows depending on race grid size.
 LEADERBOARD_X_MIN = 40
 LEADERBOARD_X_MAX = 340
-LEADERBOARD_Y_MIN = 220
+# Y_MIN must sit ABOVE the first standings row, which GT7 draws at
+# y~175-212. It used to be 220, which silently cut off the P1 row --
+# so whenever the driver was leading, their own row was never seen
+# and the relay reported P0 with no car ahead/behind.
+LEADERBOARD_Y_MIN = 165
 LEADERBOARD_Y_MAX = 780
+
+# The large "current position" digit tile in GT7's top-left
+# "POSITION n / total" box (1080p reference coordinates). Its digits
+# are several times bigger than the per-row position numbers, which
+# EasyOCR frequently misreads or misses, so this is the primary source
+# for the driver's own gridPosition -- see read_header_position.
+HEADER_POSITION_TILE_X_MIN = 40
+HEADER_POSITION_TILE_X_MAX = 116
+HEADER_POSITION_TILE_Y_MIN = 40
+HEADER_POSITION_TILE_Y_MAX = 116
+
+# Minimum EasyOCR confidence to accept a header tile reading.
+HEADER_POSITION_MIN_CONFIDENCE = 0.5
+
+# GT7 marks a car in the pit lane with a white box holding a black "P",
+# immediately LEFT of that row's position number -- i.e. outside the
+# leaderboard crop, so it's detected from pixels on the full frame
+# rather than OCR'd (see row_has_pit_marker). 1080p reference x-range
+# of the sampled area (inset from the box's edges), and half the
+# sampled height around the row's centre.
+PIT_MARKER_X_MIN = 4
+PIT_MARKER_X_MAX = 34
+PIT_MARKER_HALF_HEIGHT = 14
+# Measured on a real replay capture: the marker area is ~89% white with
+# ~9% dark (the letter); every non-marker row, against sky/trees/track,
+# measured <= 18% white.
+PIT_MARKER_MIN_WHITE_FRACTION = 0.6
+PIT_MARKER_MIN_DARK_FRACTION = 0.03
+PIT_MARKER_MAX_DARK_FRACTION = 0.35
+
+# While a car is in the pit lane GT7 also shows, to the right of its
+# row: a coloured tyre-compound circle (the letter is ~6px wide -- too
+# small to OCR reliably, so the circle's COLOUR is classified instead),
+# then a fuel-pump icon with the amount of fuel going in. 1080p x-ranges,
+# measured on a real replay capture; sampled +/- PIT_SERVICE_HALF_HEIGHT
+# around the row centre.
+PIT_TYRE_X_MIN = 288
+PIT_TYRE_X_MAX = 322
+PIT_FUEL_X_MIN = 355  # just past the pump icon, which otherwise reads as a leading "1"
+PIT_FUEL_X_MAX = 400
+PIT_SERVICE_HALF_HEIGHT = 16
+PIT_FUEL_MIN_CONFIDENCE = 0.5
+
+# GT7's compound colours: red = Soft, yellow = Medium, white = Hard,
+# green = Intermediate, blue = Heavy Wet (red confirmed against a
+# capture; the rest as GT7 colours them). OpenCV hue ranges (0-180) for
+# the coloured ones; white has no hue and is detected separately (see
+# read_pit_service).
+PIT_TYRE_HUE_RANGES = (
+    ((0, 10), "S"),
+    ((170, 180), "S"),
+    ((20, 35), "M"),
+    ((40, 85), "IM"),
+    ((90, 130), "W"),
+)
+PIT_TYRE_MIN_CIRCLE_FRACTION = 0.3
 
 # Sub-column boundaries WITHIN the leaderboard crop above (measured as
 # ABSOLUTE 1080p frame coordinates: position col x=45-85, name col
@@ -235,6 +297,107 @@ def crop_roi(frame, roi_width_pct: float = None):
         LEADERBOARD_X_MIN, LEADERBOARD_X_MAX, LEADERBOARD_Y_MIN, LEADERBOARD_Y_MAX, width, height
     )
     return frame[y_min:y_max, x_min:x_max]
+
+
+def read_header_position(reader, frame_bgr) -> int:
+    """Reads the driver's own position off the big digit tile in GT7's
+    "POSITION n / total" HUD box (see HEADER_POSITION_TILE_*), or 0 if
+    it can't be read confidently. Uses recognize() rather than
+    readtext(): readtext's text-detection stage routinely misses a
+    lone digit, whereas recognize() treats the whole tile as one text
+    box -- confirmed against a real replay capture, where readtext
+    found nothing and recognize read "1" at 1.0 confidence."""
+    if frame_bgr is None or frame_bgr.size == 0:
+        return 0
+    height, width = frame_bgr.shape[:2]
+    x_min, x_max, y_min, y_max = _scale_box(
+        HEADER_POSITION_TILE_X_MIN,
+        HEADER_POSITION_TILE_X_MAX,
+        HEADER_POSITION_TILE_Y_MIN,
+        HEADER_POSITION_TILE_Y_MAX,
+        width,
+        height,
+    )
+    tile = frame_bgr[y_min:y_max, x_min:x_max]
+    if tile.size == 0:
+        return 0
+    results = reader.recognize(tile, allowlist=POSITION_DIGIT_ALLOWLIST, detail=1)
+    if not results:
+        return 0
+    _bbox, text, confidence = results[0]
+    text = text.strip()
+    if confidence < HEADER_POSITION_MIN_CONFIDENCE or not ROW_POSITION_PATTERN.match(text):
+        return 0
+    return int(text)
+
+
+def leaderboard_y_offset(frame_bgr) -> int:
+    """Frame y-coordinate of the leaderboard crop's top edge -- adds to a
+    crop-relative row y to get the full-frame y."""
+    height, width = frame_bgr.shape[:2]
+    return _scale_box(LEADERBOARD_X_MIN, LEADERBOARD_X_MAX, LEADERBOARD_Y_MIN, LEADERBOARD_Y_MAX, width, height)[2]
+
+
+def row_has_pit_marker(frame_bgr, row_center_y: float) -> bool:
+    """True if GT7's "P" (in pit lane) box is drawn left of the
+    leaderboard row centred at row_center_y (FULL-frame coordinates):
+    a mostly white, colourless area with a few dark pixels (the letter)."""
+    if frame_bgr is None or frame_bgr.size == 0:
+        return False
+    height, width = frame_bgr.shape[:2]
+    x_min, x_max, _y0, _y1 = _scale_box(PIT_MARKER_X_MIN, PIT_MARKER_X_MAX, 0, 0, width, height)
+    half = max(2, int(PIT_MARKER_HALF_HEIGHT * height / REFERENCE_HEIGHT))
+    y_min = max(0, int(row_center_y) - half)
+    y_max = min(height, int(row_center_y) + half)
+    area = frame_bgr[y_min:y_max, x_min:x_max]
+    if area.size == 0:
+        return False
+    hsv = cv2.cvtColor(area, cv2.COLOR_BGR2HSV)
+    white = ((hsv[..., 1] < 40) & (hsv[..., 2] > 200)).mean()
+    dark = (hsv[..., 2] < 90).mean()
+    return (
+        white >= PIT_MARKER_MIN_WHITE_FRACTION
+        and PIT_MARKER_MIN_DARK_FRACTION <= dark <= PIT_MARKER_MAX_DARK_FRACTION
+    )
+
+
+def read_pit_service(reader, frame_bgr, row_center_y: float) -> dict:
+    """For a row showing the pit marker, reads the tyre compound being
+    fitted (from the circle's colour, see PIT_TYRE_HUE_RANGES) and the
+    fuel amount going in. Either is None when unreadable -- e.g. GT7
+    hasn't drawn it yet this early in the stop."""
+    result = {"tyre": None, "fuel": None}
+    if frame_bgr is None or frame_bgr.size == 0:
+        return result
+    height, width = frame_bgr.shape[:2]
+    half = max(2, int(PIT_SERVICE_HALF_HEIGHT * height / REFERENCE_HEIGHT))
+    y_min = max(0, int(row_center_y) - half)
+    y_max = min(height, int(row_center_y) + half)
+
+    tx0, tx1, _a, _b = _scale_box(PIT_TYRE_X_MIN, PIT_TYRE_X_MAX, 0, 0, width, height)
+    tyre_area = frame_bgr[y_min:y_max, tx0:tx1]
+    if tyre_area.size:
+        hsv = cv2.cvtColor(tyre_area, cv2.COLOR_BGR2HSV)
+        saturated = (hsv[..., 1] > 120) & (hsv[..., 2] > 120)
+        white = (hsv[..., 1] < 40) & (hsv[..., 2] > 200)
+        if saturated.mean() >= PIT_TYRE_MIN_CIRCLE_FRACTION:
+            hue = float(np.median(hsv[..., 0][saturated]))
+            result["tyre"] = next(
+                (letter for (low, high), letter in PIT_TYRE_HUE_RANGES if low <= hue <= high), None
+            )
+        elif white.mean() >= PIT_TYRE_MIN_CIRCLE_FRACTION:
+            result["tyre"] = "H"
+
+    fx0, fx1, _a, _b = _scale_box(PIT_FUEL_X_MIN, PIT_FUEL_X_MAX, 0, 0, width, height)
+    fuel_area = frame_bgr[y_min:y_max, fx0:fx1]
+    if fuel_area.size:
+        reads = reader.recognize(fuel_area, allowlist=POSITION_DIGIT_ALLOWLIST, detail=1)
+        if reads:
+            _bbox, text, confidence = reads[0]
+            text = text.strip()
+            if confidence >= PIT_FUEL_MIN_CONFIDENCE and text.isdigit() and 0 < int(text) <= 200:
+                result["fuel"] = int(text)
+    return result
 
 
 def _group_into_rows(ocr_results):
@@ -395,6 +558,22 @@ def reread_position_column(reader, roi_bgr, row_items, roi_width: int):
     return digits or None
 
 
+_reported_unmatched_names = set()
+
+
+def _report_unmatched_names(entries) -> None:
+    """--debug helper: prints each on-screen name that doesn't resolve
+    to a league roster driver, once per run -- the list to turn into
+    NICKNAME_ALIASES entries in driver_roster.py when GT7 is showing
+    nicknames (e.g. in replays) instead of PSN IDs."""
+    for entry in entries:
+        name = entry["name"]
+        if name in _reported_unmatched_names or is_close_to_roster_entry(name):
+            continue
+        _reported_unmatched_names.add(name)
+        print(f"[debug] on-screen name not in roster (add to NICKNAME_ALIASES if it's a league driver): {name!r}")
+
+
 def parse_leaderboard(
     ocr_results,
     driver_name: str,
@@ -404,6 +583,9 @@ def parse_leaderboard(
     debug: bool = False,
     position_reread_fn=None,
     rival_names=None,
+    header_position=None,
+    pit_marker_fn=None,
+    pit_service_fn=None,
 ) -> dict:
     """Finds the driver's own row in the numbered standings list (each
     row: a 1-2 digit position number, driver name, national flag icon
@@ -440,9 +622,25 @@ def parse_leaderboard(
     0 value). GT7's leaderboard renders several rows at once (the top
     few plus a sliding window around the driver's own car), so a
     chosen rival is often directly readable even when they're not
-    immediately ahead/behind the driver."""
+    immediately ahead/behind the driver.
+
+    header_position, when provided, is the driver's position as read off
+    the big HUD digit tile (see read_header_position; 0 = unreadable).
+    It's preferred over the own row's small position digit, and is
+    still reported when the own row can't be found at all. When not
+    provided, falls back to looking for the header in ocr_results
+    (only possible if the OCR'd region includes it, as in tests).
+
+    pit_marker_fn, when provided, is called as pit_marker_fn(row_items)
+    -> bool for each standings row (see row_has_pit_marker); rows with
+    the marker are returned in "driversInPit" as roster-corrected name
+    -> {"position": n or 0, "tyre": ..., "fuel": ...}, excluding the
+    driver's own car. pit_service_fn(row_items) -> {"tyre", "fuel"}
+    (see read_pit_service) fills in the last two for those rows only."""
     rows = _group_into_rows(ocr_results)
-    header_position = _extract_header_position(ocr_results, debug=debug)
+    header_from_tile = header_position is not None
+    if not header_from_tile:
+        header_position = _extract_header_position(ocr_results, debug=debug)
 
     # With the strict static leaderboard crop (see crop_roi/
     # LEADERBOARD_X_MIN/MAX/Y_MIN/MAX), header/billboard/lap-timer junk
@@ -564,6 +762,8 @@ def parse_leaderboard(
                 "gap_to_leader": inline_gap,
                 "position": int(position_fragment) if position_fragment else None,
                 "highlighted": _row_is_highlighted(frame_bgr, row, roi_width),
+                "in_pit": bool(pit_marker_fn(row)) if pit_marker_fn else False,
+                "row": row,
             }
         )
         pending_gap_to_ahead = None
@@ -581,37 +781,45 @@ def parse_leaderboard(
     # driverBehind get below (against the full LEAGUE_ROSTER instead).
     rival_positions = {}
     if rival_names:
-        driver_name_lower = driver_name.lower()
         for entry in entries:
             if entry["position"] is None:
                 continue
-            entry_name_lower = entry["name"].lower()
-            # The driver's OWN row can itself be a close fuzzy match to
-            # a rival's gamertag (observed here: "Willy Swerve" vs.
-            # "Willy-SwerveX", two genuinely different people whose
-            # names just happen to look alike) -- exclude it explicitly
-            # using the same loose substring check used elsewhere in
-            # this file to find the driver's own row, rather than
-            # letting a rival's position accidentally resolve to the
-            # driver's own.
-            if driver_name_lower in entry_name_lower or entry_name_lower in driver_name_lower:
+            # Never report the driver's OWN row as a rival's position --
+            # matched by name or nickname alias (see is_same_driver), so
+            # it holds whether --driver-name is the on-screen nickname
+            # or the PSN ID.
+            if is_same_driver(driver_name, entry["name"]):
                 continue
             corrected = correct_driver_name(entry["name"], roster=rival_names)
             if corrected in rival_names:
                 rival_positions[corrected] = entry["position"]
+
+    drivers_in_pit = {}
+    for entry in entries:
+        if not entry["in_pit"] or is_same_driver(driver_name, entry["name"]):
+            continue
+        service = pit_service_fn(entry["row"]) if pit_service_fn else {}
+        drivers_in_pit[correct_driver_name(entry["name"])] = {
+            "position": entry["position"] or 0,
+            "tyre": service.get("tyre"),
+            "fuel": service.get("fuel"),
+        }
 
     # Prefer the highlighted row; only fall back to name matching if no
     # row was confidently highlighted this frame.
     own_index = next((i for i, e in enumerate(entries) if e["highlighted"]), None)
 
     if own_index is None:
-        driver_name_lower = driver_name.lower()
         for index, entry in enumerate(entries):
-            # Loose substring match since OCR frequently drops/garbles a
-            # character or two (e.g. "Willy Swerve" -> "Wiily Swerve").
-            if driver_name_lower in entry["name"].lower() or entry["name"].lower() in driver_name_lower:
+            # Loose substring match (OCR frequently drops/garbles a
+            # character, e.g. "Wiily Swerve"), or the same roster ID via
+            # a nickname alias (PSN ID vs. replay nickname).
+            if is_same_driver(driver_name, entry["name"]):
                 own_index = index
                 break
+
+    if debug:
+        _report_unmatched_names(entries)
 
     if own_index is None:
         if debug:
@@ -633,16 +841,21 @@ def parse_leaderboard(
             "gapBehindSeconds": None,
             "gapToLeaderSeconds": None,
             "rivalPositions": rival_positions,
+            "driversInPit": drivers_in_pit,
+            "playerInPit": False,
+            "playerPitService": None,
         }
 
     own_entry = entries[own_index]
     ahead_entry = entries[own_index - 1] if own_index > 0 else None
     behind_entry = entries[own_index + 1] if own_index + 1 < len(entries) else None
 
-    # gridPosition preference order: (1) the matched row's own OCR'd
-    # position digit, when EasyOCR actually read it -- most direct and
-    # the only source guaranteed correct regardless of which rows are
-    # on screen; (2) the separate header digit tile, as a fallback.
+    # gridPosition preference order: when the live loop has read the
+    # big header digit tile directly (read_header_position), that
+    # reading wins -- its digits are several times larger than the
+    # row's and read far more reliably. Otherwise: (1) the matched
+    # row's own OCR'd position digit, when EasyOCR actually read it;
+    # (2) a header found within the OCR'd region, as a fallback.
     #
     # own_index + 1 (the row's position WITHIN the parsed list) was
     # REMOVED as a fallback -- it silently assumes the on-screen
@@ -659,7 +872,10 @@ def parse_leaderboard(
     # (restarting a race in P5, displayed as P4) that GridPositionStabilizer
     # alone could not fix, since the WRONG value was being read
     # consistently enough to pass the stability check.
-    grid_position = own_entry["position"] or header_position
+    if header_from_tile:
+        grid_position = header_position or own_entry["position"]
+    else:
+        grid_position = own_entry["position"] or header_position
 
     # gapAheadSeconds is OUR gap to the car directly ahead (our own
     # gap_to_ahead); gapBehindSeconds is the car directly behind's gap
@@ -688,7 +904,34 @@ def parse_leaderboard(
         "gapBehindSeconds": behind_entry["gap_to_ahead"] if behind_entry else None,
         "gapToLeaderSeconds": own_entry["gap_to_leader"],
         "rivalPositions": rival_positions,
+        "driversInPit": drivers_in_pit,
+        # Our own car shows the same "P" marker (and tyre/fuel boxes)
+        # while in the pit lane.
+        "playerInPit": own_entry["in_pit"],
+        "playerPitService": (pit_service_fn(own_entry["row"]) if pit_service_fn else None)
+        if own_entry["in_pit"]
+        else None,
     }
+
+
+class PitMarkerStabilizer:
+    """Only reports a driver as in the pits once their row has shown the
+    "P" marker on stability_threshold consecutive samples, so a single
+    misdetection never logs a pit stop. Dropping out is immediate -- the
+    app's PitLaneMonitor separately waits several readings before
+    treating a driver as having left the pits."""
+
+    def __init__(self, stability_threshold: int = 2):
+        self.stability_threshold = stability_threshold
+        self._streaks = {}
+
+    def update(self, drivers_in_pit: dict) -> dict:
+        self._streaks = {name: self._streaks.get(name, 0) + 1 for name in drivers_in_pit}
+        return {
+            name: position
+            for name, position in drivers_in_pit.items()
+            if self._streaks[name] >= self.stability_threshold
+        }
 
 
 _NO_CANDIDATE = object()  # sentinel: distinct from a tracked candidate of None
@@ -1043,6 +1286,11 @@ def main() -> None:
     stabilizer = NameStabilizer(stability_threshold=args.name_stability)
     position_stabilizer = GridPositionStabilizer(stability_threshold=args.position_stability)
     gap_tracker = GapTracker()
+    pit_marker_stabilizer = PitMarkerStabilizer()
+    # Every car's position around the lap, from GT7's course map (see
+    # minimap_tracker.py) -- learns the circuit outline by itself.
+    traffic_tracker = TrafficTracker()
+    player_in_pit_streak = 0
     rival_names = [name.strip() for name in args.rival_names.split(",") if name.strip()]
     rival_position_stabilizers = {
         name: GridPositionStabilizer(stability_threshold=args.position_stability) for name in rival_names
@@ -1077,6 +1325,7 @@ def main() -> None:
             last_sample_time = now
 
             roi = crop_roi(frame, args.roi_width_pct)
+            roi_y_offset = leaderboard_y_offset(frame)
             # detail=1 returns (bbox, text, confidence) tuples -- needed
             # to group fragments into rows by y-position and find the
             # driver's own row, rather than guessing based on line order.
@@ -1110,7 +1359,20 @@ def main() -> None:
                     reader, roi, row_items, roi.shape[1]
                 ),
                 rival_names=rival_names,
+                header_position=read_header_position(reader, frame),
+                pit_marker_fn=lambda row_items: row_has_pit_marker(
+                    frame, roi_y_offset + sum(y for _t, _x, y in row_items) / len(row_items)
+                ),
+                pit_service_fn=lambda row_items: read_pit_service(
+                    reader, frame, roi_y_offset + sum(y for _t, _x, y in row_items) / len(row_items)
+                ),
             )
+            parsed["driversInPit"] = pit_marker_stabilizer.update(parsed["driversInPit"])
+            # Same two-sample rule for our own marker.
+            player_in_pit_streak = player_in_pit_streak + 1 if parsed["playerInPit"] else 0
+            parsed["playerInPit"] = player_in_pit_streak >= pit_marker_stabilizer.stability_threshold
+            if not parsed["playerInPit"]:
+                parsed["playerPitService"] = None
 
             # Each rival gets the SAME debounce treatment as the
             # driver's own gridPosition (see GridPositionStabilizer) --
@@ -1162,6 +1424,8 @@ def main() -> None:
             parsed["tireWearRearLeftPercent"] = tire_wear.rear_left_percent
             parsed["tireWearRearRightPercent"] = tire_wear.rear_right_percent
             parsed["tireCompound"] = last_tire_compound
+
+            parsed["traffic"] = traffic_tracker.update(frame, now).to_payload()
 
             payload = json.dumps(parsed).encode("utf-8")
             sock.sendto(payload, (args.device_ip, UDP_PORT))
