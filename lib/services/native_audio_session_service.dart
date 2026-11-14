@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 ///
 /// Thin wrapper over a native platform channel that configures
 /// AVAudioSession with voiceChat mode + mixWithOthers + duckOthers +
-/// defaultToSpeaker. Gunther's voice plays entirely independently of the
+/// defaultToSpeaker. Boxington's voice plays entirely independently of the
 /// PS5 → Fosi K7 → headphones chain: it comes out of the iPad's own
 /// built-in speaker (or a paired Bluetooth speaker/earbud), never routed
 /// through the K7, so PS5 game audio quality is never affected.

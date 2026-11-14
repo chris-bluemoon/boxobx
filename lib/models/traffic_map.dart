@@ -57,7 +57,7 @@ class TrafficMap {
     return behind <= lap / 2 ? behind : behind - lap;
   }
 
-  /// Compact summary for Gunther: how many cars are close behind/ahead,
+  /// Compact summary for Boxington: how many cars are close behind/ahead,
   /// and the nearest few with their gap in seconds.
   Map<String, dynamic>? toPromptContext({double windowSeconds = 3.0, int nearest = 6}) {
     if (!trackReady || lapSeconds == null) return null;

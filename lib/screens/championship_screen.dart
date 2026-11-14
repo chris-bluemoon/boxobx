@@ -10,7 +10,7 @@ import '../services/league_roster.dart';
 /// ChampionshipStandingsStore.sortedByPosition).
 ///
 /// Standings entry ONLY -- there is deliberately no rival
-/// selection/monitoring UI here. Which drivers Gunther actively tracks
+/// selection/monitoring UI here. Which drivers Boxington actively tracks
 /// on-track (see RivalMonitor/parse_leaderboard's rival_names) is
 /// configured as a command-line flag (--rival-names) on the laptop OCR
 /// relay itself, not through this screen -- the driver picks the 2

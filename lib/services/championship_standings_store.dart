@@ -16,7 +16,7 @@ import '../models/championship_standing.dart';
 /// place to extend into a keyed-by-week history instead.
 ///
 /// NOTE: rival selection/monitoring has NO presence here at all --
-/// which drivers Gunther actively tracks on-track is a --rival-names
+/// which drivers Boxington actively tracks on-track is a --rival-names
 /// command-line flag on the laptop OCR relay (see
 /// laptop_ocr/ocr_relay.py and lib/services/rival_monitor.dart), not
 /// something persisted from this screen.

@@ -142,7 +142,7 @@ void main() {
     expect(reloaded.references.values.single.hasSpeedAndBrake, isTrue);
   });
 
-  test("Gunther's corner call is for Time Trialing only", () {
+  test("Boxington's corner call is for Time Trialing only", () {
     expect(AppMode.timeTrial.cornerCalls, isTrue);
     expect(AppMode.race.cornerCalls, isFalse);
     expect(AppMode.practice.cornerCalls, isFalse);

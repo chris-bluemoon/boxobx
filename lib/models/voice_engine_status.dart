@@ -1,5 +1,5 @@
 /// Lifecycle state of the voice pipeline (Section 4), surfaced to the UI
-/// so the driver can see whether Gunther is idle, listening, thinking,
+/// so the driver can see whether Boxington is idle, listening, thinking,
 /// or actively transmitting.
 enum VoiceEngineStatus {
   idle,
@@ -19,7 +19,7 @@ extension VoiceEngineStatusLabel on VoiceEngineStatus {
       case VoiceEngineStatus.transcribing:
         return 'PROCESSING';
       case VoiceEngineStatus.responding:
-        return 'GUNTHER TALKING';
+        return 'BOXINGTON TALKING';
       case VoiceEngineStatus.error:
         return 'VOICE ERROR';
     }

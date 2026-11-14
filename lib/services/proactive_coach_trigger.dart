@@ -1,7 +1,7 @@
 import '../models/shift_event.dart';
 import 'shift_coach_advisor.dart';
 
-/// Decides when Gunther should speak up UNPROMPTED (no push-to-talk)
+/// Decides when Boxington should speak up UNPROMPTED (no push-to-talk)
 /// about a sustained shift-habit problem, with a per-pattern cooldown
 /// so a detected bad pattern doesn't trigger a new callout on every
 /// single frame it remains true.

@@ -15,7 +15,7 @@ void main() {
 
   setUp(() {
     dotenv.testLoad(fileInput: 'GROQ_API_KEY=test\nTTS_API_KEY=test\n');
-    // Native audio session channel (Gunther's ducking) and the audio
+    // Native audio session channel (Boxington's ducking) and the audio
     // plugins: answered with nothing.
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     for (final channel in ['boxbox/audio_session', 'com.ryanheise.just_audio.methods', 'com.llfbandit.record/messages']) {

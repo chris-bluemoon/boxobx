@@ -18,7 +18,7 @@ enum PitCallAdvice {
   boxNowForced,
 }
 
-/// One unprompted pit call for Gunther (see [PitCallAdvisor]).
+/// One unprompted pit call for Boxington (see [PitCallAdvisor]).
 class PitCall {
   final PitCallReason reason;
   final PitCallAdvice advice;
@@ -47,7 +47,7 @@ class PitCall {
   });
 
   /// Synthetic prompt for VoiceEngine.speakProactively. The decision is
-  /// made here, deterministically; Gunther only phrases it.
+  /// made here, deterministically; Boxington only phrases it.
   String toPrompt() {
     final why = switch (reason) {
       PitCallReason.plannedStop =>
@@ -92,7 +92,7 @@ class PitCall {
   }
 }
 
-/// Decides when Gunther should make an unprompted pit call, and what
+/// Decides when Boxington should make an unprompted pit call, and what
 /// to recommend.
 ///
 /// When: only while a stop is actually on the cards --

@@ -117,7 +117,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   VoiceEngineStatus _voiceStatus = VoiceEngineStatus.idle;
 
   /// Last Whisper transcript, surfaced on-screen so it's obvious when
-  /// "Gunther's response seems unrelated" is actually Whisper
+  /// "Boxington's response seems unrelated" is actually Whisper
   /// mis-transcribing noisy/silent mic input (very common on the iOS
   /// Simulator's virtual mic) rather than a bug in the LLM/TTS pipeline.
   String? _lastTranscript;
@@ -176,7 +176,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// in from the race-state stream.
   /// If any of the driver's chosen championship rivals (see
   /// ChampionshipScreen/RivalMonitor) just changed on-screen position,
-  /// has Gunther call it out unprompted -- same proactive-callout
+  /// has Boxington call it out unprompted -- same proactive-callout
   /// mechanism ProactiveCoachTrigger uses for shift-habit callouts, but
   /// unconditionally enabled here (unlike the currently-disabled shift
   /// coaching) since this is Phase B's actual deliverable.
@@ -187,7 +187,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _voiceEngine.speakProactively(syntheticPrompt, state);
   }
 
-  /// Gunther's test-plan call (Practice Mode): the running test has
+  /// Boxington's test-plan call (Practice Mode): the running test has
   /// reached its target.
   void _maybeMakeTestPlanCall(FusedRaceState state) {
     final plan = _testPlan;
@@ -203,7 +203,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
     if (prompt == null) return;
 
-    // Once Gunther has finished saying it (or after 15s, should the voice
+    // Once Boxington has finished saying it (or after 15s, should the voice
     // fail), the test is closed off automatically -- nothing to tap --
     // and the panel moves on to the next test.
     final testNumber = logger.activeTestNumber;
@@ -221,7 +221,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     Timer(const Duration(seconds: 15), closeTest);
   }
 
-  /// Time Trialing: after each clean lap, Gunther names the corner where
+  /// Time Trialing: after each clean lap, Boxington names the corner where
   /// the most time went against the reference lap and what to change
   /// (see CornerReport) -- once per lap, and only if it's worth saying.
   void _maybeMakeCornerCall(FusedRaceState state) {
@@ -252,7 +252,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => CornerReportScreen(report: report)));
   }
 
-  /// The test Gunther last called complete -- shown on the panel until
+  /// The test Boxington last called complete -- shown on the panel until
   /// the next test starts.
   PlannedTestStint? _justCompletedTest;
 
@@ -385,7 +385,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   };
 
   static String _modeDescription(AppMode mode) => switch (mode) {
-    AppMode.race => 'Race calls, pit strategy, traffic and Gunther',
+    AppMode.race => 'Race calls, pit strategy, traffic and Boxington',
     AppMode.practice => 'Run the test plan: full-tank stints per compound',
     AppMode.timeTrial => 'Qualifying pace: lap times only, as your baseline',
   };
@@ -497,7 +497,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   /// Console (telemetry) and laptop relay (HUD OCR) connection status --
   /// always bottom left, on the home page and every mode's screen.
-  Widget _connectionBadges({bool gunther = false}) => Align(
+  Widget _connectionBadges({bool boxington = false}) => Align(
     alignment: Alignment.centerLeft,
     child: Wrap(
       spacing: 8,
@@ -505,9 +505,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       children: [
         StatusBadge(label: 'TELEMETRY', status: _telemetryStatus),
         StatusBadge(label: 'HUD OCR', status: _hudStatus),
-        // Gunther only speaks in practice to end a test, so his status
+        // Boxington only speaks in practice to end a test, so his status
         // belongs to the race screen.
-        if (gunther) VoiceStatusBadge(status: _voiceStatus),
+        if (boxington) VoiceStatusBadge(status: _voiceStatus),
       ],
     ),
   );
@@ -563,7 +563,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// Synthetic prompt for Gunther when other drivers enter the pits.
+  /// Synthetic prompt for Boxington when other drivers enter the pits.
   /// Championship rivals (those the relay tracks positions for) are
   /// flagged so he can treat them as the priority.
   String _opponentPitCalloutPrompt(List<OpponentPitStop> stops) {
@@ -701,9 +701,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// this with fresh live data once you're driving again.
   /// Checks the latest fused state for a sustained short-shifting/
   /// over-revving pattern and, if the ProactiveCoachTrigger's pattern +
-  /// cooldown gate says it's time, has Gunther call it out unprompted
+  /// cooldown gate says it's time, has Boxington call it out unprompted
   /// -- no push-to-talk needed. The synthetic prompt isn't shown to the
-  /// driver; it just tells Gunther what to react to this time (see
+  /// driver; it just tells Boxington what to react to this time (see
   /// VoiceEngine.speakProactively).
   ///
   /// NOT currently called (see the commented-out call site above) --
@@ -919,11 +919,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 },
               ),
               const SizedBox(height: 12),
-              // Bottom bar: connection (and, racing, Gunther) status on the
+              // Bottom bar: connection (and, racing, Boxington) status on the
               // left, as on the home page; HOME on the right.
               Row(
                 children: [
-                  Expanded(child: _connectionBadges(gunther: _mode == AppMode.race)),
+                  Expanded(child: _connectionBadges(boxington: _mode == AppMode.race)),
                   OutlinedButton.icon(
                     onPressed: _goHome,
                     icon: const Icon(Icons.home, color: Colors.white),
@@ -1458,7 +1458,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         const SizedBox(height: 4),
         Text(progress.targetFor(running), style: small),
         Text(
-          'Gunther calls it complete when the target is reached -- nothing to tap.',
+          'Boxington calls it complete when the target is reached -- nothing to tap.',
           style: TextStyle(color: Colors.indigo.shade100, fontSize: 11),
         ),
         const SizedBox(height: 10),

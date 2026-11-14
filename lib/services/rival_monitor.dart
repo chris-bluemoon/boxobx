@@ -1,7 +1,7 @@
 /// Watches the live rivalPositions feed (see HudOverlayData, populated
 /// by the laptop OCR relay's --rival-names) for a position CHANGE on
 /// any of the driver's chosen championship rivals, and builds a
-/// synthetic prompt for Gunther to call it out unprompted -- the same
+/// synthetic prompt for Boxington to call it out unprompted -- the same
 /// "no push-to-talk needed" mechanism ProactiveCoachTrigger already
 /// uses for shift-habit callouts (see VoiceEngine.speakProactively).
 ///
@@ -40,7 +40,7 @@ class RivalMonitor {
   }
 
   /// Feeds the latest rivalPositions reading in. Returns a synthetic
-  /// prompt for Gunther covering EVERY tracked rival whose position
+  /// prompt for Boxington covering EVERY tracked rival whose position
   /// change was confirmed by this reading, or null if none was.
   ///
   /// The very first reading for a rival this session just establishes

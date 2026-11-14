@@ -1,4 +1,4 @@
-/// Holds proactive (unprompted) Gunther callouts that arrived while he
+/// Holds proactive (unprompted) Boxington callouts that arrived while he
 /// was busy -- listening to push-to-talk, transcribing, or mid-reply --
 /// so they're spoken once he's free instead of being silently dropped.
 ///
@@ -6,7 +6,7 @@
 /// up to P3" heard 30 seconds later is wrong, not just late. Anything
 /// older than [maxAge] is discarded rather than spoken, and the queue
 /// is capped at [maxLength] (oldest dropped first) so a burst of events
-/// can't build up a backlog Gunther would spend the next minute on.
+/// can't build up a backlog Boxington would spend the next minute on.
 class ProactiveCalloutQueue {
   final Duration maxAge;
   final int maxLength;

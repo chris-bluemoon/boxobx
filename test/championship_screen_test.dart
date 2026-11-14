@@ -64,7 +64,7 @@ void main() {
   testWidgets('tapping a driver row does nothing -- no rival selection UI on this screen', (tester) async {
     // Regression-shaped test for the opposite requirement now: rival
     // selection/highlighting was intentionally REMOVED from this
-    // screen (which drivers Gunther tracks on-track is now a
+    // screen (which drivers Boxington tracks on-track is now a
     // --rival-names flag on the laptop relay, not picked here). Tapping
     // a driver's name should have no visible effect at all.
     await tester.pumpWidget(const MaterialApp(home: ChampionshipScreen()));

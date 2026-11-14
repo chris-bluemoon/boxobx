@@ -217,7 +217,7 @@ void main() {
       expect(p.expectedLaps.last, isNull, reason: 'low-fuel stints are a fixed lap count');
     });
 
-    test('Gunther names the next test with its estimate when known', () {
+    test('Boxington names the next test with its estimate when known', () {
       final caller = TestPlanCaller();
       final laps = [..._stint(1, tyre: 'Racing Soft', count: 4), ..._stint(2, test: 1, count: 10)];
       final call = caller.check(plan, laps, activeTestNumber: 1, currentStintNumber: 2, liveWearRemaining: 25);
@@ -225,7 +225,7 @@ void main() {
     });
   });
 
-  group('Gunther calls', () {
+  group('Boxington calls', () {
     final plan = TestPlan.fromBriefing(_briefing(['Racing Medium', 'Racing Soft']));
 
     test('calls "box" once when the live wear reaches the target, naming the next test', () {

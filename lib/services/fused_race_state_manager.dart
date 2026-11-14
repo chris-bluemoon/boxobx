@@ -50,7 +50,7 @@ class FusedRaceStateManager {
   final _opponentPittedController = StreamController<List<OpponentPitStop>>.broadcast();
 
   /// Fires with pit stops ready to announce (see PitLaneMonitor) --
-  /// the dashboard has Gunther call these out. The full log, kept
+  /// the dashboard has Boxington call these out. The full log, kept
   /// up to date with tyre/fuel, is FusedRaceState.opponentPitStops.
   Stream<List<OpponentPitStop>> get opponentPitted => _opponentPittedController.stream;
 
@@ -424,7 +424,7 @@ class FusedRaceStateManager {
     _controller.add(_state);
   }
 
-  /// The running test has reached its target (Gunther has called it):
+  /// The running test has reached its target (Boxington has called it):
   /// closes off its data and ends it -- see
   /// PracticeLapLogger.completeActiveTest.
   Future<void> completeActiveTest() async {

@@ -23,7 +23,7 @@ void main() {
     expect(await AppModeStore.load(), AppMode.race);
   });
 
-  test('Gunther is told which mode he is in', () {
+  test('Boxington is told which mode he is in', () {
     expect(FusedRaceState.initial().toPromptContext()['mode'], 'practice');
     expect(FusedRaceState.initial().copyWith(mode: AppMode.race).toPromptContext()['mode'], 'race');
   });

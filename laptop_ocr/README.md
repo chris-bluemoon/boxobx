@@ -82,7 +82,7 @@ sends the structured JSON payload (`gridPosition`, `driverAhead`,
 ### Gap seconds and trend (the actually-useful metric)
 
 Just showing who's ahead/behind by name is something the driver can
-already see directly on GT7's own HUD. The metric Gunther actually needs
+already see directly on GT7's own HUD. The metric Boxington actually needs
 is whether that gap is **shrinking or growing** -- that's what
 `gapAheadTrend`/`gapBehindTrend` report, as one of `"closing"`,
 `"losing"`, `"steady"`, or `"unknown"` (not enough recent history yet,

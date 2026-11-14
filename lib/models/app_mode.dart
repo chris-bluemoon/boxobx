@@ -1,5 +1,5 @@
 /// Which of the app's three screens/jobs is active: decides which
-/// unprompted calls Gunther makes, which widgets show, and where laps are
+/// unprompted calls Boxington makes, which widgets show, and where laps are
 /// recorded.
 ///
 /// * [race]: race calls and widgets; laps logged as stints too, so race
@@ -20,10 +20,10 @@ enum AppMode {
   bool get opponentPitCallouts => this == race;
   bool get trafficChip => this == race;
 
-  /// Gunther's "biggest loss" call after each lap (see CornerReport).
+  /// Boxington's "biggest loss" call after each lap (see CornerReport).
   bool get cornerCalls => this == timeTrial;
 
-  /// The test plan and Gunther's "test complete" call.
+  /// The test plan and Boxington's "test complete" call.
   bool get testPlan => this == practice;
 
   /// Where completed laps go: stints (practice log) or time-trial laps.

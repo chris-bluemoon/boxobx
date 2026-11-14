@@ -14,9 +14,9 @@ import 'native_audio_session_service.dart';
 import 'proactive_callout_queue.dart';
 
 /// Orchestrates the full low-latency voice pipeline (Section 4):
-/// PTT release -> Whisper STT -> streamed Llama "Gunther" response ->
+/// PTT release -> Whisper STT -> streamed Llama "Boxington" response ->
 /// streamed TTS audio -> playback through the headphone amp, with
-/// native iOS auto-ducking engaged while Gunther is speaking.
+/// native iOS auto-ducking engaged while Boxington is speaking.
 class VoiceEngine {
   final PushToTalkService pushToTalk;
   final GroqService groqService;
@@ -33,12 +33,12 @@ class VoiceEngine {
   Stream<VoiceEngineStatus> get statusStream => _statusController.stream;
   VoiceEngineStatus get status => _status;
 
-  /// Callouts that arrived while Gunther was busy -- see
+  /// Callouts that arrived while Boxington was busy -- see
   /// ProactiveCalloutQueue and speakProactively.
   final ProactiveCalloutQueue _proactiveQueue;
 
   /// Supplies the freshest race state when a queued callout is finally
-  /// spoken, so Gunther reacts to the race as it is now rather than to
+  /// spoken, so Boxington reacts to the race as it is now rather than to
   /// the state captured when the callout was queued.
   FusedRaceState Function()? latestRaceState;
 
@@ -81,17 +81,17 @@ class VoiceEngine {
     await pushToTalk.startRecording();
   }
 
-  /// Has Gunther speak up UNPROMPTED -- no push-to-talk, no Whisper
+  /// Has Boxington speak up UNPROMPTED -- no push-to-talk, no Whisper
   /// transcription step -- triggered by the app detecting a sustained
   /// problem (e.g. a consistent short-shifting/over-revving habit; see
   /// ProactiveCoachTrigger) rather than the driver asking a question.
   ///
   /// [syntheticPrompt] is not shown to the driver or spoken aloud -- it
-  /// stands in for "what the driver said" in Gunther's system prompt so
+  /// stands in for "what the driver said" in Boxington's system prompt so
   /// the same streamResponse() plumbing can be reused, instructing him
   /// on what to proactively call out this time.
   ///
-  /// If Gunther is already listening/mid-response, the callout is
+  /// If Boxington is already listening/mid-response, the callout is
   /// queued and spoken once he's idle again (unless it goes stale
   /// first -- see ProactiveCalloutQueue), so it never interrupts the
   /// driver's push-to-talk but isn't lost either.
@@ -101,7 +101,7 @@ class VoiceEngine {
       return;
     }
     try {
-      await _streamGuntherResponse(syntheticPrompt, raceState);
+      await _streamBixResponse(syntheticPrompt, raceState);
     } catch (error, stackTrace) {
       debugPrint('VoiceEngine.speakProactively failed: $error\n$stackTrace');
       _setStatus(VoiceEngineStatus.error);
@@ -119,14 +119,14 @@ class VoiceEngine {
     try {
       _setStatus(VoiceEngineStatus.transcribing);
       final transcript = await groqService.transcribe(audioPath);
-      // Debug visibility: helps diagnose "Gunther's response seems
+      // Debug visibility: helps diagnose "Boxington's response seems
       // unrelated to what I said" reports, which are very often actually
       // Whisper mis-transcribing noisy/silent mic input (e.g. the iOS
-      // Simulator's virtual mic) rather than Gunther reacting randomly.
+      // Simulator's virtual mic) rather than Boxington reacting randomly.
       debugPrint('VoiceEngine: Whisper transcribed "$transcript"');
       _transcriptController.add(transcript);
 
-      await _streamGuntherResponse(transcript, raceState);
+      await _streamBixResponse(transcript, raceState);
     } catch (error, stackTrace) {
       // Previously swallowed completely silently -- any failure here
       // (bad API key, network drop, TTS error) would just show the
@@ -139,7 +139,7 @@ class VoiceEngine {
     }
   }
 
-  Future<void> _streamGuntherResponse(String utterance, FusedRaceState raceState) async {
+  Future<void> _streamBixResponse(String utterance, FusedRaceState raceState) async {
     _setStatus(VoiceEngineStatus.responding);
     await ttsService.connect();
     await audioSession.setDucking(true);
@@ -151,10 +151,10 @@ class VoiceEngine {
     // stream via .toList() before returning). That race meant playback
     // started against a source that hadn't finished loading yet, so
     // just_audio silently played nothing -- visible as the UI reaching
-    // "GUNTHER TALKING" with total silence. Collecting all bytes first,
+    // "BOXINGTON TALKING" with total silence. Collecting all bytes first,
     // writing them to a temp file, and only then loading+playing removes
     // the race entirely, at the cost of waiting for the full response
-    // before any audio starts (acceptable for Gunther's <12-word
+    // before any audio starts (acceptable for Boxington's <12-word
     // transmissions, which only take ~1-4s to fully synthesize anyway).
     final audioBytes = <int>[];
     final ttsSub = ttsService.audioChunks.listen(audioBytes.addAll);
@@ -173,7 +173,7 @@ class VoiceEngine {
       // audio for this utterance (Cartesia's done:true / ElevenLabs'
       // isFinal:true), rather than guessing with a fixed delay -- a
       // fixed delay was occasionally too short on a slow/jittery
-      // connection, cutting off the tail end of Gunther's line.
+      // connection, cutting off the tail end of Boxington's line.
       await ttsService.waitForCompletion();
       // Tiny safety margin: some providers' completion signal can
       // arrive a beat before the very last audio chunk is fully
@@ -197,7 +197,7 @@ class VoiceEngine {
 
     final dir = await getTemporaryDirectory();
     final outputFile = File(
-      '${dir.path}/gunther_response_${DateTime.now().millisecondsSinceEpoch}.$extension',
+      '${dir.path}/bix_response_${DateTime.now().millisecondsSinceEpoch}.$extension',
     );
     await outputFile.writeAsBytes(outputBytes);
 
@@ -206,7 +206,7 @@ class VoiceEngine {
       await player.setFilePath(outputFile.path);
       await player.play();
       // Wait for playback to actually finish before releasing ducking
-      // and resetting status, otherwise Gunther's voice would be
+      // and resetting status, otherwise Boxington's voice would be
       // un-ducked/cut short mid-sentence.
       await player.playerStateStream.firstWhere(
         (state) => state.processingState == ProcessingState.completed,

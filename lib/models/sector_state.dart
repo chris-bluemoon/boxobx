@@ -1,6 +1,6 @@
 /// Live sector timing (see SectorCalculator).
 class SectorState {
-  /// Kept for Gunther's context; not currently set (layouts are
+  /// Kept for Boxington's context; not currently set (layouts are
   /// recognised by position, not by name).
   final String? activeTrackName;
 

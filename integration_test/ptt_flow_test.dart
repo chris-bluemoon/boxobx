@@ -4,7 +4,7 @@
 // long enough to capture a few seconds of simulator microphone input,
 // releases it, and watches the on-screen VoiceStatusBadge progress
 // through listening -> transcribing -> responding -> idle, confirming
-// the full PTT -> Whisper -> Gunther -> TTS pipeline runs without
+// the full PTT -> Whisper -> Boxington -> TTS pipeline runs without
 // crashing and reaches a terminal state within a generous timeout.
 //
 // Requires a real .env with valid GROQ_API_KEY / TTS_API_KEY / TTS_VOICE_ID
@@ -26,7 +26,7 @@ import 'package:boxbox/screens/dashboard_screen.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('Push-to-talk produces a Gunther response', (tester) async {
+  testWidgets('Push-to-talk produces a Boxington response', (tester) async {
     await dotenv.load(fileName: '.env');
 
     await tester.pumpWidget(const MaterialApp(home: DashboardScreen()));
@@ -51,7 +51,7 @@ void main() {
     expect(find.text('HOLD TO TALK'), findsOneWidget);
 
     // Poll the on-screen VoiceStatusBadge text for up to ~30s, since the
-    // real pipeline (Whisper transcription + streamed Gunther response +
+    // real pipeline (Whisper transcription + streamed Boxington response +
     // streamed TTS) takes a few seconds over a live network call.
     const pollInterval = Duration(milliseconds: 500);
     const timeout = Duration(seconds: 30);

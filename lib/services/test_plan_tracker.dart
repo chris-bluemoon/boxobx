@@ -145,7 +145,7 @@ class TestPlanTracker {
   }
 }
 
-/// Gunther's test-plan call (Practice Mode): once per test stint, when
+/// Boxington's test-plan call (Practice Mode): once per test stint, when
 /// the running test reaches its target.
 class TestPlanCaller {
   /// The (test, stint) last called, so each run is called once.

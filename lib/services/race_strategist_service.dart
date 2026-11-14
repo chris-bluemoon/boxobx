@@ -22,7 +22,7 @@ import 'pit_stop_calculator.dart';
 /// arithmetic -- this redesign fixes that inconsistency.)
 ///
 /// Deliberately separate from GroqService's streamResponse() -- that is
-/// Gunther's live, low-latency, <12-word radio personality for
+/// Boxington's live, low-latency, <12-word radio personality for
 /// in-race callouts; this is a one-shot, structured-JSON strategic
 /// write-up done before the race even starts, with a completely
 /// different system prompt and response shape (not meant to be heard,

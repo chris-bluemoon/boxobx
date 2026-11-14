@@ -4,7 +4,7 @@ import '../models/shift_event.dart';
 /// and decides whether there's a clear enough bad pattern to proactively
 /// warn the driver about -- distinct from the dashboard card's "dominant
 /// timing" display, this is specifically the trigger condition for
-/// Gunther to speak up unprompted (see ProactiveCoachTrigger).
+/// Boxington to speak up unprompted (see ProactiveCoachTrigger).
 class ShiftCoachAdvisor {
   /// Minimum number of the tracked shifts that must share the same bad
   /// timing before it's considered a real pattern worth calling out,

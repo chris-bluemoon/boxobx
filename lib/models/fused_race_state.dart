@@ -61,7 +61,7 @@ class FusedRaceState {
   /// Traffic at the pit exit if we stopped now (see RejoinForecaster).
   final RejoinForecast? rejoinForecast;
 
-  /// Practice or race (the dashboard toggle) -- tells Gunther which
+  /// Practice or race (the dashboard toggle) -- tells Boxington which
   /// kind of session he's helping with.
   final AppMode mode;
 
@@ -152,12 +152,12 @@ class FusedRaceState {
     );
   }
 
-  /// Compact representation injected into the Gunther system prompt
+  /// Compact representation injected into the Boxington system prompt
   /// (Component B, Section 4) so the LLM has race-situational context.
   ///
   /// gapAheadTrend/gapBehindTrend ("closing"/"losing"/"steady") are the
   /// actually-useful strategy signal here -- the driver can already see
-  /// who's ahead/behind by name directly on the GT7 HUD, so Gunther's
+  /// who's ahead/behind by name directly on the GT7 HUD, so Boxington's
   /// value-add is calling out whether that gap is shrinking or growing,
   /// not repeating a name the driver can already read themselves.
   Map<String, dynamic> toPromptContext() => {
@@ -201,7 +201,7 @@ class FusedRaceState {
   };
 
   /// Time-trial best (qualifying pace) and how the last lap compares --
-  /// lets Gunther judge race pace against it.
+  /// lets Boxington judge race pace against it.
   Map<String, dynamic> _timeTrialContext() {
     final best = TimeTrialLap.best(timeTrialLaps);
     if (best == null) return const {};

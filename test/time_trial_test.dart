@@ -112,7 +112,7 @@ void main() {
     expect(await TimeTrialStore.load(), isEmpty);
   });
 
-  test('Gunther gets the time-trial best and how the last lap compares', () {
+  test('Boxington gets the time-trial best and how the last lap compares', () {
     final manager = _manager()..setMode(AppMode.timeTrial);
     manager.handleTelemetryFrame(_frame(1));
     manager.handleTelemetryFrame(_frame(2, lastLapTimeMs: 89950));

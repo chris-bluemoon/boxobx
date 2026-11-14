@@ -84,7 +84,7 @@ class CornerResult {
   double get entryDeltaKmh => lap.entryKmh - reference.entryKmh;
   double get exitDeltaKmh => lap.exitKmh - reference.exitKmh;
 
-  /// One line for Gunther, e.g. "corner 4: 0.21 s lost, braked 8 m
+  /// One line for Boxington, e.g. "corner 4: 0.21 s lost, braked 8 m
   /// earlier, minimum speed 6 km/h lower, exit 3 km/h lower".
   String describe() {
     final parts = <String>[
