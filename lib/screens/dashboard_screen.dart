@@ -736,6 +736,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         : TestPlan.fromBriefing(briefing, startCompound: strategy?.startingTireCompound);
     _raceStateManager.setPitStopTime(briefing?.pitStopTimeSeconds);
     _raceStateManager.setRound(name);
+    _raceStateManager.setRaceLength(minutes: briefing?.raceLengthMinutes, plannedLaps: briefing?.totalLaps);
     if (briefing == null) return;
     setState(() {
       _activeRoundName = name;

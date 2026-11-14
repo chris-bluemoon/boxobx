@@ -11,6 +11,7 @@ import 'opponent_pit_stop.dart';
 import 'app_mode.dart';
 import 'time_trial_lap.dart';
 import '../services/corner_report.dart';
+import '../services/race_lap_estimator.dart';
 import '../services/rejoin_forecaster.dart';
 
 /// Where the driver is, from GT7's status flags (see TelemetryFlags).
@@ -72,6 +73,10 @@ class FusedRaceState {
   /// (see CornerReport); null until there's one to compare.
   final CornerReport? cornerReport;
 
+  /// How many laps the race is -- GT7's count, or an estimate in a timed
+  /// race (see RaceLapEstimator). Null if unknown.
+  final RaceLaps? raceLaps;
+
   const FusedRaceState({
     required this.telemetry,
     required this.hud,
@@ -89,6 +94,7 @@ class FusedRaceState {
     this.mode = AppMode.practice,
     this.timeTrialLaps = const [],
     this.cornerReport,
+    this.raceLaps,
   });
 
   factory FusedRaceState.initial() => FusedRaceState(
@@ -119,6 +125,8 @@ class FusedRaceState {
     AppMode? mode,
     List<TimeTrialLap>? timeTrialLaps,
     CornerReport? cornerReport,
+    RaceLaps? raceLaps,
+    bool clearRaceLaps = false,
   }) {
     return FusedRaceState(
       telemetry: telemetry ?? this.telemetry,
@@ -140,6 +148,7 @@ class FusedRaceState {
       mode: mode ?? this.mode,
       timeTrialLaps: timeTrialLaps ?? this.timeTrialLaps,
       cornerReport: cornerReport ?? this.cornerReport,
+      raceLaps: clearRaceLaps ? null : raceLaps ?? this.raceLaps,
     );
   }
 
@@ -176,6 +185,8 @@ class FusedRaceState {
       'lastLapSectorsSeconds': [for (final ms in sectors.lastLapSectorsMs!) (ms / 1000).toStringAsFixed(3)],
     'activeTrackName': sectors.activeTrackName,
     'currentLap': telemetry.currentLap,
+    if (mode == AppMode.race && raceLaps != null) 'totalLaps': raceLaps!.total,
+    if (mode == AppMode.race && (raceLaps?.estimated ?? false)) 'totalLapsEstimatedFromTimeLimit': true,
     'predictedEmptyLap': fuelPrediction.predictedEmptyLap,
     'tireDegradationPercent': tireWearEstimate.percentSlowerThanStintBest,
     'consecutiveDegradingLaps': tireWearEstimate.consecutiveDegradingLaps,

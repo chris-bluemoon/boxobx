@@ -9,6 +9,7 @@ import '../models/tire_wear_estimate.dart';
 import 'telemetry_udp_service.dart';
 import 'hud_ocr_service.dart';
 import 'corner_report.dart';
+import 'race_lap_estimator.dart';
 import 'sector_calculator.dart';
 import 'fuel_predictor.dart';
 import 'tire_wear_tracker.dart';
@@ -34,6 +35,10 @@ import '../models/practice_lap_record.dart';
 class FusedRaceStateManager {
   final TelemetryUdpService telemetryService;
   final HudOcrService hudService;
+
+  /// A timed race's lap count (see RaceLapEstimator).
+  final RaceLapEstimator raceLapEstimator = RaceLapEstimator();
+
   final SectorCalculator sectorCalculator;
   final FuelPredictor fuelPredictor;
   final TireWearTracker tireWearTracker;
@@ -200,6 +205,7 @@ class FusedRaceStateManager {
     final lapCountBefore = practiceLapLogger.laps.length;
     // Time Trialing keeps its laps apart from the stints (a low-fuel
     // qualifying lap would skew fuel and wear figures).
+    final raceLaps = raceLapEstimator.update(frame, pitLaps: pitStopTracker.pitLaps);
     final lapSectors = sectorState.justCompletedSectorsMs;
     if (sectorState.lapJustCompleted) _updateCornerReport();
     practiceLapLogger.completedLapSectorsMs = lapSectors;
@@ -219,6 +225,8 @@ class FusedRaceStateManager {
       recentShifts: shiftHistoryTracker.recentShifts,
       practiceLaps: practiceLapLogger.laps,
       sessionPhase: _flagsTrusted ? SessionPhase.driving : SessionPhase.unknown,
+      raceLaps: raceLaps,
+      clearRaceLaps: raceLaps == null,
     );
     _controller.add(_state);
 
@@ -346,6 +354,7 @@ class FusedRaceStateManager {
     practiceLapLogger.startNewSession();
     timeTrialLogger.startNewSession();
     sectorCalculator.reset();
+    raceLapEstimator.reset();
     _lastLapForStartLine = null;
     _state = _state.copyWith(
       // The next session may be on a different circuit.
@@ -388,6 +397,13 @@ class FusedRaceStateManager {
     final report = CornerReport.compare(lap, reference, sectorCalculator.corners);
     if (report != null) _state = _state.copyWith(cornerReport: report);
   }
+
+  /// The round's time limit (null for a lap race) and the strategy's
+  /// lap count -- a timed race's laps are estimated from them and the
+  /// pace (see RaceLapEstimator).
+  void setRaceLength({int? minutes, int? plannedLaps}) => raceLapEstimator
+    ..raceLengthMinutes = minutes
+    ..plannedLaps = plannedLaps;
 
   /// The round now saved on the strategy screen -- the live delta's
   /// reference lap belongs to a round (see SectorCalculator.round).

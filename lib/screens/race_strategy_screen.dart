@@ -11,6 +11,9 @@ import '../services/race_strategist_service.dart';
 import '../services/track_database.dart';
 import '../services/saved_briefing_store.dart';
 import '../services/practice_fuel_calculator.dart';
+import '../services/race_lap_estimator.dart';
+import '../services/time_trial_store.dart';
+import '../models/time_trial_lap.dart';
 
 /// Pre-race strategy planning screen: enter this week's APRL driver
 /// briefing and get an AI-generated pit-stop strategy, informed by
@@ -61,10 +64,10 @@ const List<int> _mandatoryPitStopOptions = [0, 1, 2, 3];
 /// sim-racing pit-calculator's "maximum tyre stint" input.
 const List<int> _maxTyreStintLapsOptions = [0, 5, 8, 10, 12, 15, 18, 20, 25, 30];
 
-/// Every lap count from 1-36 -- covers the full range APRL races use,
-/// as a plain dropdown avoids fat-finger typos (e.g. "32" vs "320")
+/// Every lap count from 1-120 -- enough for a 90-minute race on a short
+/// lap, as a plain dropdown avoids fat-finger typos (e.g. "32" vs "320")
 /// more reliably than free text entry.
-final List<int> _totalLapsOptions = List.generate(36, (i) => i + 1);
+final List<int> _totalLapsOptions = List.generate(120, (i) => i + 1);
 
 class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   late final RaceStrategistService _strategist;
@@ -115,6 +118,63 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     _strategist = RaceStrategistService(dotenv.env['GROQ_API_KEY'] ?? '');
     _tracksFuture = TrackDatabase.load();
     _loadSavedBriefing();
+    TimeTrialStore.load().then((laps) {
+      if (mounted) setState(() => _timeTrialBest = TimeTrialLap.best(laps));
+    });
+    _raceLengthMinutesController.addListener(() => setState(() {}));
+  }
+
+  TimeTrialLap? _timeTrialBest;
+
+  /// Race pace for a timed race's lap count: the typical (median) clean
+  /// lap from stint testing and test races, or else the time-trial best
+  /// plus 2% (race fuel and wear); null if neither exists yet.
+  (int, String)? _racePace() {
+    final clean = [
+      for (final lap in widget.getPracticeLaps())
+        if (!lap.isPitLap && lap.lapTimeMs > 0) lap.lapTimeMs,
+    ]..sort();
+    if (clean.length >= 3) return (clean[clean.length ~/ 2], 'your typical stint lap');
+    final best = _timeTrialBest;
+    if (best != null) return ((best.lapTimeMs * 1.02).round(), 'time-trial best + 2%');
+    return null;
+  }
+
+  /// Under the laps/time row for a timed race: the lap count at race
+  /// pace, with a button to use it.
+  Widget _timedRaceLapsHint() {
+    final minutes = int.tryParse(_raceLengthMinutesController.text.trim());
+    if (minutes == null || minutes <= 0) return const SizedBox.shrink();
+    final pace = _racePace();
+    final style = TextStyle(color: Colors.grey.shade400, fontSize: 12);
+    if (pace == null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Text(
+          'Timed race: set total laps to your estimate. Log some laps (Stint Testing or Time Trialing) '
+          'and the app suggests it. During the race the lap count is re-estimated from your pace.',
+          style: style,
+        ),
+      );
+    }
+    final (lapMs, source) = pace;
+    final laps = RaceLapEstimator.lapsFor(minutes, lapMs).clamp(1, _totalLapsOptions.last);
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '$minutes min ≈ $laps laps at ${TimeTrialLap.format(lapMs)} ($source). '
+              'Re-estimated from your pace during the race.',
+              style: style,
+            ),
+          ),
+          if (laps != _totalLaps)
+            TextButton(onPressed: () => setState(() => _totalLaps = laps), child: Text('USE $laps')),
+        ],
+      ),
+    );
   }
 
   /// The pit stop time field as a number, or null if empty/invalid.
@@ -352,6 +412,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                   ),
                 ],
               ),
+              _timedRaceLapsHint(),
               const SizedBox(height: 8),
               Row(
                 children: [

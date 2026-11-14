@@ -1,5 +1,6 @@
 import '../models/fused_race_state.dart';
 import '../models/race_strategy.dart';
+import 'race_lap_estimator.dart';
 import 'rejoin_forecaster.dart';
 
 enum PitCallReason { plannedStop, fuel }
@@ -31,6 +32,9 @@ class PitCall {
   final String? carBehindName;
   final double? carBehindSecondsAfterStop;
 
+  /// In a timed race, the estimated lap count (see RaceLapEstimator).
+  final int? timedRaceLaps;
+
   const PitCall({
     required this.reason,
     required this.advice,
@@ -39,6 +43,7 @@ class PitCall {
     this.forecast,
     this.carBehindName,
     this.carBehindSecondsAfterStop,
+    this.timedRaceLaps,
   });
 
   /// Synthetic prompt for VoiceEngine.speakProactively. The decision is
@@ -59,9 +64,11 @@ class PitCall {
     final who = carBehindName ?? 'the car behind';
     final after = carBehindSecondsAfterStop;
     if (after != null) {
-      details.add(after >= 0
-          ? 'boxing now we come out ahead of $who (${after.toStringAsFixed(1)}s behind us after the stop)'
-          : 'boxing now $who gets past and we come out ${(-after).toStringAsFixed(1)}s behind them');
+      details.add(
+        after >= 0
+            ? 'boxing now we come out ahead of $who (${after.toStringAsFixed(1)}s behind us after the stop)'
+            : 'boxing now $who gets past and we come out ${(-after).toStringAsFixed(1)}s behind them',
+      );
     }
     final f = forecast;
     if (f != null) {
@@ -69,11 +76,15 @@ class PitCall {
         details.add('rejoin in clear air');
       } else if (f.rejoinTraffic.isNotEmpty) {
         final nearest = f.rejoinTraffic.first;
-        details.add(nearest >= 0
-            ? 'rejoin with a car ${nearest.toStringAsFixed(1)}s behind us'
-            : 'rejoin ${(-nearest).toStringAsFixed(1)}s behind a car');
+        details.add(
+          nearest >= 0
+              ? 'rejoin with a car ${nearest.toStringAsFixed(1)}s behind us'
+              : 'rejoin ${(-nearest).toStringAsFixed(1)}s behind a car',
+        );
       }
     }
+
+    if (timedRaceLaps != null) details.add('timed race, about $timedRaceLaps laps in total at our pace');
 
     return 'Pit call -- $why. Recommendation: $call.'
         '${details.isEmpty ? '' : ' ${details.join('; ')}.'}'
@@ -124,13 +135,16 @@ class PitCallAdvisor {
     required Set<int> pitLapsThisSession,
   }) {
     final lap = state.telemetry.currentLap;
-    final totalLaps = state.telemetry.totalLaps;
+    // GT7's lap count, or the estimate in a timed race.
+    final raceLaps =
+        state.raceLaps ?? (state.telemetry.totalLaps > 0 ? RaceLaps(total: state.telemetry.totalLaps) : null);
+    final totalLaps = raceLaps?.total ?? -1;
     if (state.sessionPhase == SessionPhase.paused || state.sessionPhase == SessionPhase.offTrack) return null;
     if (state.hud.playerInPit || lap <= 0 || totalLaps <= 0 || lap >= totalLaps) return null;
     if (_lastCalledLap == lap) return null;
 
     final planned = _duePlannedStop(lap, plannedStops, pitLapsThisSession);
-    final fuelEmpty = _fuelEmptyLapIfDue(state, lap, totalLaps);
+    final fuelEmpty = _fuelEmptyLapIfDue(state, lap, raceLaps!.fuelSafeTotal);
     if (planned == null && fuelEmpty == null) return null;
     if (!_isCallPoint(state)) return null;
 
@@ -140,8 +154,8 @@ class PitCallAdvisor {
     final advice = forced
         ? PitCallAdvice.boxNowForced
         : stuck
-            ? PitCallAdvice.stayOutOneMore
-            : PitCallAdvice.boxNow;
+        ? PitCallAdvice.stayOutOneMore
+        : PitCallAdvice.boxNow;
 
     final (behindName, behindAfter) = _carBehind(state);
     _lastCalledLap = lap;
@@ -153,6 +167,7 @@ class PitCallAdvisor {
       forecast: forecast,
       carBehindName: behindName,
       carBehindSecondsAfterStop: behindAfter,
+      timedRaceLaps: raceLaps.estimated ? raceLaps.total : null,
     );
   }
 
