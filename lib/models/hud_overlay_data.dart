@@ -1,3 +1,4 @@
+import 'weather_radar.dart';
 import 'opponent_pit_stop.dart';
 import 'traffic_map.dart';
 
@@ -96,6 +97,9 @@ class HudOverlayData {
   /// laptop_ocr/water_gauge_reader.py); null when it isn't on screen.
   final double? waterPercent;
 
+  /// GT7's Weather Radar, while the central display is on it.
+  final WeatherRadar? radar;
+
   /// Every leaderboard row visible this frame, top to bottom (the top
   /// few cars plus a window around ours) -- where the race rival's
   /// position, gap and pit flag are read from (see RaceRivalTracker).
@@ -131,6 +135,7 @@ class HudOverlayData {
     this.tireWearRearRightPercent,
     this.tireCompound,
     this.waterPercent,
+    this.radar,
     this.standings = const [],
     this.driversInPit = const {},
     this.traffic = TrafficMap.empty,
@@ -156,6 +161,7 @@ class HudOverlayData {
         tireWearRearRightPercent: (map['tireWearRearRightPercent'] as num?)?.toDouble(),
         tireCompound: map['tireCompound'] as String?,
         waterPercent: (map['waterPercent'] as num?)?.toDouble(),
+        radar: WeatherRadar.fromJson(map['radar']),
         standings: [
           for (final row in (map['standings'] as List? ?? const []))
             StandingsRow.fromJson(row as Map<String, dynamic>),

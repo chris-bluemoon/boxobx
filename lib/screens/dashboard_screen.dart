@@ -27,6 +27,7 @@ import '../services/rejoin_forecaster.dart';
 import '../services/pit_call_advisor.dart';
 import '../services/test_plan_tracker.dart';
 import '../services/stint_summary.dart';
+import '../services/water_trend.dart';
 import '../services/wet_tyre_caller.dart';
 import '../services/race_report.dart';
 import '../services/corner_report.dart';
@@ -281,6 +282,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       plannedStopLaps: [for (final s in _plannedStops) s.lap],
       opponentStops: state.opponentPitStops,
       waterPercent: water,
+      waterPercentPerMinute: state.waterPercentPerMinute,
+      lapSeconds: state.telemetry.lastLapTimeMs > 0 ? state.telemetry.lastLapTimeMs / 1000 : null,
+      radar: state.hud.radar,
     );
     if (prompt != null) _voiceEngine.speakProactively(prompt, state);
   }
@@ -320,6 +324,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       inPitLane: state.hud.playerInPit,
       traffic: state.hud.traffic,
       now: DateTime.now(),
+      raceOver: state.raceLaps != null && state.telemetry.currentLap > state.raceLaps!.total,
     );
     if (call != null) _voiceEngine.speakClip(_rejoinWords[call]!);
   }
@@ -1226,10 +1231,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   /// Practice's weather chip: the GT7 weather the laps are being
   /// tested in (set the same in the practice lobby), for wet testing.
+  /// " ↑" / " ↓" when the water gauge is clearly rising or falling.
+  String _waterArrow() {
+    final rate = _state.waterPercentPerMinute;
+    if (rate == null || rate.abs() < WaterTrend.steadyPercentPerMinute) return '';
+    return rate > 0 ? ' ↑' : ' ↓';
+  }
+
   Widget _weatherChip() {
     final weather = _raceStateManager.practiceLapLogger.currentWeather;
     return _chip(
-      'WEATHER: ${weather ?? 'DRY'}${_state.hud.waterPercent == null ? '' : ' · WATER ${_state.hud.waterPercent!.round()}%'} ▾',
+      'WEATHER: ${weather ?? 'DRY'}${_state.hud.waterPercent == null ? '' : ' · WATER ${_state.hud.waterPercent!.round()}%${_waterArrow()}'} ▾',
       color: weather == null ? Colors.amber.shade900.withValues(alpha: 0.35) : const Color(0xFF0D47A1),
       border: weather == null ? Colors.amber.shade700 : Colors.lightBlue.shade400,
       onTap: _pickWeather,

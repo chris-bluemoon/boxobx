@@ -99,15 +99,24 @@ check(
     result_with_reread["gridPosition"] == 2,
 )
 
-# --- Without position_reread_fn, behavior is unchanged (falls back to
-# own_index + 1, as before this feature existed). ---
+# --- Without position_reread_fn (and no header tile), the position is
+# unknown rather than guessed from the row's place in the list: that
+# fallback (own_index + 1) was removed because GT7's leaderboard shows
+# the top few cars plus a separate window around ours, so a row's list
+# index isn't its position (it reported P7 for a real P12). Unknown is
+# 0, which the app treats as "not read"; GridPositionStabilizer keeps the
+# last good reading. ---
 result_without_reread = parse_leaderboard(
     ocr_results_dropped_position,
     driver_name="Willy Swerve",
 )
 check(
-    "without position_reread_fn, gridPosition still falls back to the row's list position",
-    result_without_reread["gridPosition"] == 2,
+    "without position_reread_fn, gridPosition is unknown (0), not guessed from the list position",
+    not result_without_reread["gridPosition"],
+)
+check(
+    "without position_reread_fn, the rest of the row is still parsed",
+    result_without_reread["driverAhead"] == "K. Wilson",
 )
 
 print("\nAll reread_position_column checks passed.")

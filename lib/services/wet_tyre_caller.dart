@@ -1,7 +1,9 @@
 import '../models/opponent_pit_stop.dart';
 import '../models/practice_lap_record.dart';
 import '../models/weather_forecast.dart';
+import '../models/weather_radar.dart';
 import 'water_pace_model.dart';
+import 'water_trend.dart';
 import 'wet_pace_table.dart';
 
 /// Box or stay out, for a tyre change.
@@ -36,6 +38,13 @@ class WetTyreDecision {
   final double? crossoverPercent;
   final bool crossoverMeasured;
 
+  /// The gauge's trend, percentage points a lap (negative = drying), and
+  /// -- for a call made a lap early off the trend -- the water now
+  /// ([waterPercent] is then where the trend puts it a lap on, when a
+  /// stop made this lap would be done).
+  final double? waterPerLap;
+  final double? waterNowPercent;
+
   const WetTyreDecision({
     required this.verdict,
     required this.current,
@@ -49,7 +58,26 @@ class WetTyreDecision {
     this.waterPercent,
     this.crossoverPercent,
     this.crossoverMeasured = false,
+    this.waterPerLap,
+    this.waterNowPercent,
   });
+
+  WetTyreDecision withTrend(double perLap, {double? waterNow}) => WetTyreDecision(
+    verdict: verdict,
+    current: current,
+    target: target,
+    level: level,
+    lapsOnTarget: lapsOnTarget,
+    gainPerLapMs: gainPerLapMs,
+    pitLossSeconds: pitLossSeconds,
+    plannedStopLap: plannedStopLap,
+    rivalsOnTarget: rivalsOnTarget,
+    waterPercent: waterPercent,
+    crossoverPercent: crossoverPercent,
+    crossoverMeasured: crossoverMeasured,
+    waterPerLap: perLap,
+    waterNowPercent: waterNow,
+  );
 
   /// Seconds won (or lost, negative) by switching now, if tested.
   double? get netSeconds => gainPerLapMs == null ? null : gainPerLapMs! * lapsOnTarget / 1000 - pitLossSeconds;
@@ -84,6 +112,14 @@ class WetTyreCaller {
 
   /// How far ahead rain is warned of.
   static const int warnAheadLaps = 2;
+
+  /// Radar rain arriving within this many laps is warned of; once the
+  /// radar is clear for this far around, the next rain is a new warning.
+  static const double rainWarnLaps = 3;
+  static const double rainClearKm = 80;
+
+  /// A drying track is flagged this many laps before it crosses a line.
+  static const double dryWarnLaps = 3;
 
   /// Pirelli's rule of thumb: once slick laps are 110-112% of dry pace
   /// the track is wet enough for intermediates. Used when wet testing
@@ -390,6 +426,9 @@ class WetTyreCaller {
     List<int> plannedStopLaps = const [],
     List<OpponentPitStop> opponentStops = const [],
     double? waterPercent,
+    double? waterPercentPerMinute,
+    double? lapSeconds,
+    WeatherRadar? radar,
   }) {
     if (currentLap <= 0 || totalLaps <= 0 || currentLap > totalLaps) return null;
     final stop = '${pitLossSeconds.round()}s${pitLossAssumed ? ' (assumed)' : ''}';
@@ -398,24 +437,50 @@ class WetTyreCaller {
       // The gauge is the truth about the surface: it replaces the brief's
       // timing and the lap-time read. The brief still warns of rain.
       final race = laps.where((l) => l.isRaceLap && !l.isPitLap).toList();
-      final decision = fromWater(
-        water: waterPercent,
-        lastLapWater: race.isEmpty ? null : race.last.waterPercent,
+      final model = WaterPaceModel.fromLaps(laps);
+      WetTyreDecision? decideAt(double water, double? lastLapWater) => fromWater(
+        water: water,
+        lastLapWater: lastLapWater,
         forecast: forecast,
         currentLap: currentLap,
         totalLaps: totalLaps,
         currentCompound: currentCompound,
-        model: WaterPaceModel.fromLaps(laps),
+        model: model,
         pitLossSeconds: pitLossSeconds,
         plannedStopLaps: plannedStopLaps,
         opponentStops: opponentStops,
       );
+      // The gauge's trend a lap: where the water will be once a stop made
+      // this lap is done.
+      final rate = waterPercentPerMinute;
+      final perLap = rate == null || lapSeconds == null || rate.abs() < WaterTrend.steadyPercentPerMinute
+          ? null
+          : rate * lapSeconds / 60;
+      final ahead = perLap == null ? null : (waterPercent + perLap).clamp(0.0, 100.0);
+      final current = WetPaceTable.tyreOf(currentCompound);
+
+      var decision = decideAt(waterPercent, race.isEmpty ? null : race.last.waterPercent)?.withTrend(perLap ?? 0);
+      // The track is heading back the other way: by the time a stop's done
+      // the tyre we're on is right again.
+      if (decision != null && ahead != null && model.tyreFor(ahead) == current) decision = null;
+      // A lap early: the trend crosses the line before a stop could be done.
+      if (decision == null && ahead != null) decision = decideAt(ahead, null)?.withTrend(perLap!, waterNow: waterPercent);
+
       if (decision == null) {
         _waterCall = null; // back on the right tyre (or no call due): the next mismatch is new
       } else if (decision.verdict != WetVerdict.stayOut && _waterCall != decision.target) {
         _waterCall = decision.target;
         return _switchPrompt(decision, stop, _recentLaps(laps));
       }
+      final early = _earlyWarning(
+        radar: radar,
+        water: waterPercent,
+        perLap: perLap,
+        lapSeconds: lapSeconds,
+        current: current,
+        model: model,
+      );
+      if (early != null) return early;
       return forecast == null ? null : _rainWarning(forecast, currentLap, totalLaps, currentCompound);
     }
     if (forecast == null) return null;
@@ -513,9 +578,63 @@ class WetTyreCaller {
   static String _waterOpening(WetTyreDecision d) {
     final drier = d.target.index < d.current.index;
     final line = d.crossoverMeasured ? 'our measured crossover' : "GT7's gauge line";
-    return 'Tyre call from the water gauge: ${d.waterPercent!.round()}% water, '
+    final trend = d.waterPerLap == null || d.waterPerLap == 0
+        ? ''
+        : ' (${d.waterPerLap! < 0 ? 'falling' : 'rising'} about ${d.waterPerLap!.abs().toStringAsFixed(0)}% a lap)';
+    if (d.waterNowPercent != null) {
+      return 'Tyre call from the water gauge trend: ${d.waterNowPercent!.round()}% water now$trend, so about '
+          '${d.waterPercent!.round()}% by the time a stop this lap is done -- ${drier ? 'below' : 'above'} $line at '
+          '${d.crossoverPercent!.round()}%: ${d.target.label} territory; we are on ${d.current.label}. '
+          'Boxing this lap means the new tyres go on as the track turns. ';
+    }
+    return 'Tyre call from the water gauge: ${d.waterPercent!.round()}% water$trend, '
         '${drier ? 'below' : 'above'} $line at ${d.crossoverPercent!.round()}%, so ${d.target.label} territory; '
         'we are on ${d.current.label}. ';
+  }
+
+  /// A heads-up before the gauge crosses a line, once each time: rain on
+  /// its way (from the radar), or the track drying towards slicks (the
+  /// gauge falling with the radar clear over the track). The box call
+  /// itself comes off the gauge.
+  String? _earlyWarning({
+    required WeatherRadar? radar,
+    required double water,
+    required double? perLap,
+    required double? lapSeconds,
+    required WeatherTyre current,
+    required WaterPaceModel model,
+  }) {
+    // Rain coming while on slicks (on Inters, more rain is what they're for).
+    if (radar != null && current == WeatherTyre.slicks) {
+      final (wetLine, _) = model.crossover(current);
+      final arrivingLaps = radar.arrivalSeconds == null || lapSeconds == null ? null : radar.arrivalSeconds! / lapSeconds;
+      final coming = arrivingLaps != null && arrivingLaps <= rainWarnLaps;
+      final overButDry = radar.overTrack && water < wetLine;
+      if (radar.clearOverTrack && (radar.nearestRainKm == null || radar.nearestRainKm! > rainClearKm)) _called.remove('radar:rain');
+      if ((coming || overButDry) && _called.add('radar:rain')) {
+        final where = overButDry
+            ? 'shows rain over the track now${radar.building ? ', building' : ''} -- the water gauge (${water.round()}%) will follow'
+            : 'has rain ${radar.nearestRainKm!.round()} km out, reaching the track in about '
+                  '${arrivingLaps! < 1 ? 'a lap' : '${arrivingLaps.toStringAsFixed(arrivingLaps < 2 ? 1 : 0)} laps'}';
+        return 'Weather call from the radar: it $where. We are on ${current.label}. '
+            'Warn the driver rain is coming -- the box call will come off the water gauge, no pit call yet. One short transmission.';
+      }
+    }
+
+    // Drying towards the next tyre down.
+    if (current != WeatherTyre.slicks && perLap != null && perLap < 0 && (radar == null || radar.clearOverTrack)) {
+      if (radar != null && radar.overTrack) _called.remove('radar:dry');
+      final drier = WeatherTyre.values[current.index - 1];
+      final (line, measured) = model.crossover(drier);
+      final lapsTo = (water - line) / -perLap;
+      if (lapsTo > 0.5 && lapsTo <= dryWarnLaps && _called.add('radar:dry')) {
+        return 'Weather call: ${radar == null ? 'the water gauge' : "the radar's clear over the track and the water gauge"} is falling about '
+            '${(-perLap).toStringAsFixed(0)}% a lap (${water.round()}% now). It reaches '
+            '${measured ? 'our measured crossover' : "GT7's gauge line"} at ${line.round()}% in about ${lapsTo.toStringAsFixed(lapsTo < 2 ? 1 : 0)} laps '
+            '-- ${drier.label} then, if the dry spell pays for the stop. Tell the driver to get ready, not to box yet. One short transmission.';
+      }
+    }
+    return null;
   }
 
   static String _lapTimesOpening(WetTyreDecision d) {

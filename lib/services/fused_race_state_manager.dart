@@ -17,6 +17,7 @@ import 'crash_detector.dart';
 import 'race_rival_tracker.dart';
 import 'tire_wear_tracker.dart';
 import 'practice_lap_logger.dart';
+import 'water_trend.dart';
 import 'practice_log_store.dart';
 import 'shift_history_tracker.dart';
 import 'pit_stop_tracker.dart';
@@ -46,6 +47,9 @@ class FusedRaceStateManager {
   final FuelPredictor fuelPredictor;
   final TireWearTracker tireWearTracker;
   final PracticeLapLogger practiceLapLogger;
+
+  /// Which way the water gauge is going (see WaterTrend).
+  final waterTrend = WaterTrend();
   final ShiftHistoryTracker shiftHistoryTracker;
   final PitStopTracker pitStopTracker;
   final PitLaneMonitor pitLaneMonitor;
@@ -295,7 +299,11 @@ class FusedRaceStateManager {
     }
 
     if (hud.gridPosition > 0) practiceLapLogger.currentPosition = hud.gridPosition;
-    if (hud.waterPercent case final water?) practiceLapLogger.reportWater(water);
+    if (hud.waterPercent case final water?) {
+      practiceLapLogger.reportWater(water);
+      waterTrend.add(water, DateTime.now());
+      _state = _state.copyWith(waterPercentPerMinute: waterTrend.percentPerMinute, clearWaterTrend: waterTrend.percentPerMinute == null);
+    }
 
     if (hud.playerInPit) {
       if (!_playerWasInPit) _applyPitStopUpdate(pitStopTracker.reportPlayerInPit());

@@ -22,6 +22,7 @@ import easyocr
 from ocr_preprocessing import preprocess_cell, POSITION_DIGIT_ALLOWLIST
 from tire_wear_reader import read_tire_wear
 from water_gauge_reader import read_water_percent
+from weather_radar_reader import RadarTracker
 from minimap_tracker import TrafficTracker
 from driver_roster import correct_driver_name, is_close_to_roster_entry, is_same_driver
 
@@ -1258,6 +1259,7 @@ def main() -> None:
     # Every car's position around the lap, from GT7's course map (see
     # minimap_tracker.py) -- learns the circuit outline by itself.
     traffic_tracker = TrafficTracker()
+    radar_tracker = RadarTracker()
     player_in_pit_streak = 0
 
     sample_interval = 1.0 / args.sample_hz
@@ -1379,6 +1381,11 @@ def main() -> None:
             parsed["waterPercent"] = read_water_percent(frame)
 
             parsed["traffic"] = traffic_tracker.update(frame, now).to_payload()
+
+            # GT7's Weather Radar page (weather_radar_reader.py), when the
+            # central display is on it: rain over the track, the nearest
+            # rain and when it arrives, building/fading. None otherwise.
+            parsed["radar"] = radar_tracker.update(frame, now)
 
             payload = json.dumps(parsed).encode("utf-8")
             sock.sendto(payload, (args.device_ip, UDP_PORT))

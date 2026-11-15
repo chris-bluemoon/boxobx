@@ -92,6 +92,10 @@ class FusedRaceState {
   /// The round's pit stop time from its briefing (seconds), if entered.
   final double? pitStopTimeSeconds;
 
+  /// How fast the water gauge is moving, percentage points a minute
+  /// (negative = drying); null until there's a trend (see WaterTrend).
+  final double? waterPercentPerMinute;
+
   /// What a stop is taken to cost when none is entered.
   static const double assumedPitStopSeconds = 30;
 
@@ -116,6 +120,7 @@ class FusedRaceState {
     this.raceRival,
     this.weather,
     this.pitStopTimeSeconds,
+    this.waterPercentPerMinute,
   });
 
   factory FusedRaceState.initial() => FusedRaceState(
@@ -154,6 +159,8 @@ class FusedRaceState {
     bool clearWeather = false,
     double? pitStopTimeSeconds,
     bool clearPitStopTime = false,
+    double? waterPercentPerMinute,
+    bool clearWaterTrend = false,
   }) {
     return FusedRaceState(
       telemetry: telemetry ?? this.telemetry,
@@ -179,6 +186,7 @@ class FusedRaceState {
       raceRival: clearRaceRival ? null : raceRival ?? this.raceRival,
       weather: clearWeather ? null : weather ?? this.weather,
       pitStopTimeSeconds: clearPitStopTime ? null : pitStopTimeSeconds ?? this.pitStopTimeSeconds,
+      waterPercentPerMinute: clearWaterTrend ? null : waterPercentPerMinute ?? this.waterPercentPerMinute,
     );
   }
 
@@ -244,9 +252,12 @@ class FusedRaceState {
     final table = WetPaceTable.fromLaps(practiceLaps);
     final water = hud.waterPercent;
     final model = WaterPaceModel.fromLaps(practiceLaps);
-    if (table.isEmpty && weather == null && water == null && model.isEmpty) return const {};
+    if (table.isEmpty && weather == null && water == null && model.isEmpty && hud.radar == null) return const {};
     return {
       if (water != null) 'surfaceWaterPercentNow': water.round(),
+      if (waterPercentPerMinute != null)
+        'surfaceWaterTrend': '${waterPercentPerMinute! >= 0 ? '+' : ''}${waterPercentPerMinute!.toStringAsFixed(1)}% a minute',
+      if (hud.radar != null) 'weatherRadar': hud.radar!.toPromptContext(),
       'waterTesting': model.toPromptContext(),
       'wetTyrePace': table.toPromptContext(pitLossSeconds: pitStopTimeSeconds ?? assumedPitStopSeconds),
       'pitStopSeconds': pitStopTimeSeconds ?? '${assumedPitStopSeconds.round()} (assumed, not entered)',

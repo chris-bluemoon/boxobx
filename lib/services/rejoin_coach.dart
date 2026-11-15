@@ -25,6 +25,12 @@ enum RejoinCall {
 /// Arrival times come from the course map (TrafficCar.secondsToReach),
 /// which is only read about 5 times a second, so [clearSeconds] keeps a
 /// margin. With no map, it says nothing.
+///
+/// Kept to as few words as do the job: a car has to read close on
+/// [confirmReads] map updates in a row before a "wait" (and clear on as
+/// many before a "go"), so one phantom or missed blob on the map says
+/// nothing; and "wait" repeats only every [waitRepeatS]. Nothing after
+/// the chequered flag (slowing down on the in-lap isn't an incident).
 class RejoinCoach {
   static const double atSpeedKmh = 80;
   static const double slowKmh = 25;
@@ -38,13 +44,22 @@ class RejoinCoach {
   /// crosses [clearSeconds], which would contradict the go a second
   /// after it was given.
   static const double lateWaitSeconds = 3;
-  static const double waitRepeatS = 1.5;
+  static const double waitRepeatS = 4;
+
+  /// Map updates in a row a reading has to hold for before it's said.
+  static const int confirmReads = 2;
 
   bool _beenAtSpeed = false;
   DateTime? _slowSince;
   bool _active = false;
   DateTime? _lastWait;
   bool _saidGo = false;
+
+  /// The last course map seen, and how many map updates in a row have
+  /// read a car close / the way clear.
+  TrafficMap? _lastMap;
+  int _closeReads = 0;
+  int _clearReads = 0;
 
   /// True while coaching a rejoin.
   bool get active => _active;
@@ -55,8 +70,9 @@ class RejoinCoach {
     required bool inPitLane,
     required TrafficMap traffic,
     required DateTime now,
+    bool raceOver = false,
   }) {
-    if (inPitLane) {
+    if (inPitLane || raceOver) {
       _standDown();
       return null;
     }
@@ -79,15 +95,23 @@ class RejoinCoach {
 
     final next = traffic.nextArrivalSeconds();
     if (next == null) return null;
+    final close = next < (_saidGo ? lateWaitSeconds : clearSeconds);
+    if (!identical(traffic, _lastMap)) {
+      // A new map reading (telemetry arrives far more often than the map).
+      _lastMap = traffic;
+      _closeReads = close ? _closeReads + 1 : 0;
+      _clearReads = close ? 0 : _clearReads + 1;
+    }
 
-    if (next < (_saidGo ? lateWaitSeconds : clearSeconds)) {
+    if (close) {
+      if (_closeReads < confirmReads) return null;
       _saidGo = false;
       final last = _lastWait;
       if (last != null && _seconds(now, last) < waitRepeatS) return null;
       _lastWait = now;
       return RejoinCall.wait;
     }
-    if (_saidGo) return null;
+    if (_saidGo || _clearReads < confirmReads) return null;
     _saidGo = true;
     return RejoinCall.go;
   }
@@ -97,6 +121,9 @@ class RejoinCoach {
     _slowSince = null;
     _lastWait = null;
     _saidGo = false;
+    _lastMap = null;
+    _closeReads = 0;
+    _clearReads = 0;
   }
 
   /// Session end: the next session starts from the grid.

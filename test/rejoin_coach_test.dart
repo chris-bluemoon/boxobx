@@ -35,7 +35,7 @@ class _Drive {
 }
 
 void main() {
-  test('stopped with a car coming: wait, wait, wait... go once it has passed', () {
+  test('stopped with a car coming: wait (not a stream of them)... go once it has passed', () {
     final d = _Drive()..run(5, speed: 150);
     final stopAt = d.t;
     // A car 4.5 s away when we stop; it passes us (and drops off the
@@ -47,7 +47,7 @@ void main() {
 
     d.run(10, speed: 5, map: map);
     final waits = d.words.where((w) => w == RejoinCall.wait).length;
-    expect(waits, inInclusiveRange(3, 5));
+    expect(waits, inInclusiveRange(1, 2));
     expect(d.words.last, RejoinCall.go);
     expect(d.words.where((w) => w == RejoinCall.go), hasLength(1));
     // No wait after the go.
@@ -62,11 +62,11 @@ void main() {
   test('a go is not taken back the moment a car crosses the clear line', () {
     final d = _Drive()..run(5, speed: 150);
     final stopAt = d.t;
-    // 6 s away: clear, go. Driver sits there; at 3 s away: wait.
-    d.run(5, speed: 0, map: (t) => _map([6 - (t - stopAt)]));
+    // 7 s away: clear, go. Driver sits there; at 3 s away: wait.
+    d.run(6, speed: 0, map: (t) => _map([7 - (t - stopAt)]));
     expect(d.words.first, RejoinCall.go);
     final firstWait = d.calls.firstWhere((c) => c.$2 == RejoinCall.wait).$1 - stopAt;
-    expect(firstWait, greaterThanOrEqualTo(2.9));
+    expect(firstWait, greaterThanOrEqualTo(3.9));
   });
 
   test('stopped with nobody near: go straight away', () {
@@ -91,6 +91,29 @@ void main() {
     expect(d.words.first, RejoinCall.go);
     expect(d.words, contains(RejoinCall.wait));
     expect(d.words.last, RejoinCall.go);
+  });
+
+  test('a single phantom car on the map says nothing', () {
+    final d = _Drive()..run(5, speed: 150);
+    var n = 0;
+    // One map read shows a car 2 s away; every other read is clear.
+    d.run(3, speed: 0, map: (_) => _map([n++ == 6 ? 2 : 30]));
+    expect(d.words, [RejoinCall.go]);
+  });
+
+  test('a single missed read of a close car is not a go', () {
+    final d = _Drive()..run(5, speed: 150);
+    var n = 0;
+    d.run(3, speed: 0, map: (_) => _map([n++ == 8 ? 30 : 2]));
+    expect(d.words, isNot(contains(RejoinCall.go)));
+  });
+
+  test('nothing after the chequered flag', () {
+    final d = _Drive()..run(5, speed: 150);
+    for (var i = 0; i < 20; i++) {
+      expect(d.coach.update(speedKmh: 5, inPitLane: false, traffic: _map([2]), now: d.now, raceOver: true), isNull);
+      d.now = d.now.add(const Duration(milliseconds: 200));
+    }
   });
 
   test('not on the grid before the start, nor in the pit lane', () {
