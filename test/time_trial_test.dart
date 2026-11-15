@@ -40,7 +40,7 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test('the three modes and what each turns on', () {
-    expect(AppMode.values.map((m) => m.label), ['RACE MODE', 'PRACTICE', 'TIME TRIALING']);
+    expect(AppMode.values.map((m) => m.label), ['RACE MODE', 'PRACTICE', 'TIME TRIAL']);
     expect(AppMode.fromName('timeTrial'), AppMode.timeTrial);
     expect(AppMode.fromName(null), AppMode.practice);
     const tt = AppMode.timeTrial;

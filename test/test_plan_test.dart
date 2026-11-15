@@ -143,7 +143,7 @@ void main() {
 
     test('the stint label names the test', () {
       final s = StintSummary.fromLaps(_stint(3, test: 2, tyre: 'Racing Soft')).single;
-      expect(s.label('Round 5'), 'Round 5 Practice - Stint 3 (Test 2) - Fuel 100%, Tyre RS');
+      expect(s.label('Round 5'), 'Round 5 Practice - Stint 3 (Stint Test 2) - Fuel 100%, Tyre RS');
     });
   });
 
@@ -221,7 +221,7 @@ void main() {
       final caller = TestPlanCaller();
       final laps = [..._stint(1, tyre: 'Racing Soft', count: 4), ..._stint(2, test: 1, count: 10)];
       final call = caller.check(plan, laps, activeTestNumber: 1, currentStintNumber: 2, liveWearRemaining: 25);
-      expect(call, contains('next test: Soft · 100% fuel · until 70% worn (about 23 laps)'));
+      expect(call, contains('next stint test: Soft · 100% fuel · until 70% worn (about 23 laps)'));
     });
   });
 
@@ -235,10 +235,10 @@ void main() {
           caller.check(plan, laps, activeTestNumber: 1, currentStintNumber: 1, liveWearRemaining: wear);
       expect(check(40), isNull);
       final call = check(26);
-      expect(call, contains('Test 1 complete: tyres at 26% left'));
-      expect(call, contains('move on to the next test'));
+      expect(call, contains('Stint Test 1 complete: tyres at 26% left'));
+      expect(call, contains('move on to the next stint test'));
       expect(call, isNot(contains('box')));
-      expect(call, contains('next test: Soft · 100% fuel · until 70% worn'));
+      expect(call, contains('next stint test: Soft · 100% fuel · until 70% worn'));
       expect(check(24), isNull, reason: 'once only');
     });
 
@@ -286,7 +286,7 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Test 1: Medium · 100% fuel · until 70% worn (about 23 laps)'), findsOneWidget);
+    expect(find.text('Stint Test 1: Medium · 100% fuel · until 70% worn (about 23 laps)'), findsOneWidget);
     expect(find.byIcon(Icons.check_circle), findsOneWidget);
     expect(find.byIcon(Icons.play_circle), findsOneWidget);
     expect(find.byIcon(Icons.radio_button_unchecked), findsOneWidget);

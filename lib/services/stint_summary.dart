@@ -277,7 +277,7 @@ class StintSummary {
   String label(String? roundName) {
     if (stintNumber == 0) return '${roundName ?? 'Practice'} - Earlier laps (before stints)';
     final round = roundName ?? 'Practice';
-    final test = testNumber == null ? '' : ' (Test $testNumber)';
+    final test = testNumber == null ? '' : ' (Stint Test $testNumber)';
     return '$round ${isRace ? 'Race' : 'Practice'} - Stint $stintNumber$test - '
         'Fuel ${startFuelPercent.toStringAsFixed(0)}%, Tyre ${compoundCode(tyreCompound)}'
         '${weatherLevel == 'DRY' ? '' : ', Weather $weatherLevel'}'

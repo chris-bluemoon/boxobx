@@ -6,6 +6,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../models/fused_race_state.dart';
 import '../models/connection_status.dart';
 import '../models/voice_engine_status.dart';
+import '../widgets/voice_status_badge.dart';
 import '../services/telemetry_udp_service.dart';
 import '../services/hud_ocr_service.dart';
 import '../services/sector_calculator.dart';
@@ -40,7 +41,8 @@ import '../models/race_strategy.dart';
 import '../models/weather_forecast.dart';
 import 'race_strategy_screen.dart';
 import 'practice_log_screen.dart';
-import 'championship_screen.dart';
+import 'aprl_standings_view.dart';
+import '../services/tyre_best_laps.dart';
 import 'race_reports_screen.dart';
 import 'corner_report_screen.dart';
 import '../widgets/telemetry_card.dart';
@@ -53,7 +55,6 @@ import '../widgets/box_box_logo.dart';
 import '../widgets/track_header.dart';
 import '../services/track_outlines.dart';
 import '../models/league_calendar.dart';
-import '../widgets/voice_status_badge.dart';
 
 /// Section 6: Hyper-minimalist, high-contrast, dark mode dashboard.
 class DashboardScreen extends StatefulWidget {
@@ -100,11 +101,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// calls and widgets. Remembered between launches.
   AppMode _mode = AppMode.practice;
 
-  /// True while the launch page (Race Mode / Practice / Time
-  /// Trialing) is showing -- at every launch, and again when the mode
-  /// chip is tapped. The connection stays up meanwhile; unprompted calls
-  /// are held.
-  bool _choosingMode = true;
+  /// The bottom bar's tab: Home at every launch. Off the three mode tabs
+  /// (Home, APRL) the connection stays up but unprompted calls are held.
+  _Tab _tab = _Tab.home;
+
+  bool get _choosingMode => _tab == _Tab.home || _tab == _Tab.aprl;
+
+  static _Tab _tabFor(AppMode mode) => switch (mode) {
+    AppMode.race => _Tab.race,
+    AppMode.practice => _Tab.practice,
+    AppMode.timeTrial => _Tab.timeTrial,
+  };
 
   /// Practice with the test plan folded to one line: free practice. A
   /// running test always shows in full.
@@ -127,7 +134,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _setMode(AppMode mode) {
-    setState(() => _choosingMode = false);
+    setState(() => _tab = _tabFor(mode));
     if (mode == _mode) return;
     setState(() => _mode = mode);
     _raceStateManager.setMode(mode);
@@ -138,9 +145,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   FusedRaceState _state = FusedRaceState.initial();
 
+  /// Boxington's voice pipeline, a dot in the Race Mode heading.
+  VoiceEngineStatus _voiceStatus = VoiceEngineStatus.idle;
+
   ConnectionStatus _telemetryStatus = ConnectionStatus.disconnected;
   ConnectionStatus _hudStatus = ConnectionStatus.disconnected;
-  VoiceEngineStatus _voiceStatus = VoiceEngineStatus.idle;
 
   /// Last Whisper transcript, surfaced on-screen so it's obvious when
   /// "Boxington's response seems unrelated" is actually Whisper
@@ -353,9 +362,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: Colors.grey.shade900,
-        title: Text('Start test ${test.number}?', style: const TextStyle(color: Colors.white)),
+        title: Text('Start stint test ${test.number}?', style: const TextStyle(color: Colors.white)),
         content: Text(
-          '${_testPlanProgress(_testPlan!).targetFor(test)}\n\nYour next lap starts this test. Fit ${test.compoundShort}s with '
+          '${_testPlanProgress(_testPlan!).targetFor(test)}\n\nYour next lap starts this stint test. Fit ${test.compoundShort}s with '
           '${test.startFuelPercent.toStringAsFixed(0)}% fuel.',
           style: TextStyle(color: Colors.grey.shade300),
         ),
@@ -387,14 +396,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: Colors.grey.shade900,
-        title: Text('End test ${test.number}?', style: const TextStyle(color: Colors.white)),
+        title: Text('End stint test ${test.number}?', style: const TextStyle(color: Colors.white)),
         content: Text(
-          'Your next lap starts a normal stint. The test only counts if it reached its target.',
+          'Your next lap starts a normal stint. The stint test only counts if it reached its target.',
           style: TextStyle(color: Colors.grey.shade300),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('End test')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('End stint test')),
         ],
       ),
     );
@@ -422,7 +431,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   TestStatus.toDo => Icons.radio_button_unchecked,
                 }, color: progress.statuses[i] == TestStatus.done ? Colors.greenAccent : Colors.grey.shade400),
                 title: Text(
-                  'Test ${test.number}: ${progress.targetFor(test)}',
+                  'Stint Test ${test.number}: ${progress.targetFor(test)}',
                   style: const TextStyle(color: Colors.white),
                 ),
                 subtitle: Text(test.purpose, style: TextStyle(color: Colors.grey.shade500)),
@@ -470,12 +479,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     AppMode.timeTrial => Colors.deepPurple.shade700,
   };
 
-  static String _modeDescription(AppMode mode) => switch (mode) {
-    AppMode.race => 'Race calls, pit strategy, traffic and Boxington',
-    AppMode.practice => 'Free practice and the test plan: every lap logged as stints',
-    AppMode.timeTrial => 'Qualifying pace: lap times only, as your baseline',
-  };
-
   static IconData _modeIcon(AppMode mode) => switch (mode) {
     AppMode.race => Icons.sports_score,
     AppMode.practice => Icons.directions_car,
@@ -496,84 +499,87 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// The launch page: the three modes as large buttons.
-  Widget _modeChooser() {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+  /// The Home tab: the round, the best lap on each tyre so far, the
+  /// saved race strategy in short, and the round's records.
+  Widget _homePage() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: BoxBoxLogo(size: 40, tagline: 'YOUR GT7 ENGINEER'),
+        ),
+        const SizedBox(height: 16),
+        _trackHeader(accent: Colors.blueGrey.shade600, large: true, onTap: _pickRound),
+        const SizedBox(height: 16),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 900;
+              final cards = [_bestLapsCard(), _strategySummaryCard()];
+              return wide
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [Expanded(child: cards[0]), const SizedBox(width: 16), Expanded(child: cards[1])],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [Expanded(child: cards[0]), const SizedBox(height: 16), Expanded(child: cards[1])],
+                    );
+            },
+          ),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            _homeButton(Icons.flag, 'RACE STRATEGY', _openRaceStrategy),
+            const SizedBox(width: 12),
+            _homeButton(Icons.list_alt, 'PRACTICE LOG', _openPracticeLog),
+            const SizedBox(width: 12),
+            _homeButton(
+              Icons.assessment,
+              'RACE REPORTS (${RaceReport.fromLaps(_state.practiceLaps).length})',
+              _openRaceReports,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// A Home card: a heading and its content, tappable to open the page
+  /// behind it.
+  Widget _homeCard({required IconData icon, required String title, required Widget child, VoidCallback? onTap}) {
+    return Material(
+      color: Colors.grey.shade900,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white12),
+          ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: BoxBoxLogo(size: 40, tagline: 'YOUR GT7 ENGINEER'),
-              ),
-              const SizedBox(height: 16),
-              _trackHeader(accent: Colors.blueGrey.shade600, large: true, onTap: _pickRound),
-              const SizedBox(height: 16),
-              for (final mode in AppMode.values) ...[
-                Expanded(
-                  child: InkWell(
-                    onTap: () => _setMode(mode),
-                    borderRadius: BorderRadius.circular(20),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                      decoration: BoxDecoration(
-                        color: _modeColour(mode),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: mode == _mode ? Colors.white : Colors.white24, width: 2),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(_modeIcon(mode), color: Colors.white, size: 56),
-                          const SizedBox(width: 24),
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  mode.label,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 28,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  _modeDescription(mode),
-                                  style: const TextStyle(color: Colors.white70, fontSize: 16),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (mode == _mode)
-                            const Text('LAST USED', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
               Row(
                 children: [
-                  _homeButton(Icons.flag, 'RACE STRATEGY', _openRaceStrategy),
-                  const SizedBox(width: 12),
-                  _homeButton(Icons.emoji_events, 'STANDINGS', _openChampionship),
-                  const SizedBox(width: 12),
-                  _homeButton(
-                    Icons.assessment,
-                    'RACE REPORTS (${RaceReport.fromLaps(_state.practiceLaps).length})',
-                    _openRaceReports,
+                  Icon(icon, color: Colors.white70, size: 24),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+                    ),
                   ),
+                  if (onTap != null) const Icon(Icons.chevron_right, color: Colors.white54),
                 ],
               ),
-              const SizedBox(height: 16),
-              _connectionBadges(),
+              const SizedBox(height: 12),
+              Expanded(child: child),
             ],
           ),
         ),
@@ -581,24 +587,147 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// Console (telemetry) and laptop relay (HUD OCR) connection status --
-  /// always bottom left, on the home page and every mode's screen.
-  Widget _connectionBadges({bool boxington = false}) => Align(
-    alignment: Alignment.centerLeft,
-    child: Wrap(
-      spacing: 8,
-      runSpacing: 6,
-      children: [
-        StatusBadge(label: 'TELEMETRY', status: _telemetryStatus),
-        StatusBadge(label: 'HUD OCR', status: _hudStatus),
-        // Boxington only speaks in practice to end a test, so his status
-        // belongs to the race screen.
-        if (boxington) VoiceStatusBadge(status: _voiceStatus),
-      ],
-    ),
-  );
+  /// Best (and average) clean dry lap on each tyre, practice and races
+  /// together, with the time-trial best beside it.
+  Widget _bestLapsCard() {
+    final tyres = TyreBestLap.fromLaps(_state.practiceLaps, timeTrial: _state.timeTrialLaps);
+    String time(num? ms) => ms == null ? '--' : TimeTrialLap.format(ms);
+    const head = TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1);
+    final quickest = tyres.isEmpty ? null : tyres.first.quickestMs;
+    return _homeCard(
+      icon: Icons.timer,
+      title: 'BEST LAPS BY TYRE',
+      onTap: _openPracticeLog,
+      child: tyres.isEmpty
+          ? Text(
+              'No laps yet. Drive in Practice, a race or a time trial and each tyre\'s best lap shows here.',
+              style: TextStyle(color: Colors.grey.shade400, fontSize: 16),
+            )
+          : ListView(
+              children: [
+                const Row(
+                  children: [
+                    Expanded(flex: 3, child: Text('TYRE', style: head)),
+                    Expanded(flex: 3, child: Text('BEST', style: head, textAlign: TextAlign.right)),
+                    Expanded(flex: 3, child: Text('AVERAGE', style: head, textAlign: TextAlign.right)),
+                    Expanded(flex: 3, child: Text('TIME TRIAL', style: head, textAlign: TextAlign.right)),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                for (final t in tyres)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  switch (t.compound) {
+                                    'Intermediate' => 'Inters',
+                                    'Heavy Wet' => 'Wets',
+                                    final c => c.replaceFirst('Racing ', ''),
+                                  },
+                                  maxLines: 1,
+                                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              Text(
+                                t.laps == 0 ? 'time trial only' : '${t.laps} clean lap${t.laps == 1 ? '' : 's'}',
+                                style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            time(t.bestMs),
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              color: t.bestMs != null && t.bestMs == quickest ? Colors.purpleAccent.shade100 : Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            time(t.averageMs),
+                            textAlign: TextAlign.right,
+                            style: TextStyle(color: Colors.grey.shade300, fontSize: 18),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            time(t.timeTrialMs),
+                            textAlign: TextAlign.right,
+                            style: TextStyle(color: Colors.deepPurple.shade100, fontSize: 18),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+    );
+  }
 
-  void _goHome() => setState(() => _choosingMode = true);
+  /// The saved race strategy in short: start tyre, each stop, the
+  /// summary.
+  Widget _strategySummaryCard() {
+    final strategy = _savedStrategy;
+    String short(String compound) => compound.replaceFirst('Racing ', '');
+    const big = TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold);
+    return _homeCard(
+      icon: Icons.flag,
+      title: 'RACE STRATEGY',
+      onTap: _openRaceStrategy,
+      child: strategy == null
+          ? Text(
+              'No strategy yet. Open Race Strategy to brief the round and plan the stops.',
+              style: TextStyle(color: Colors.grey.shade400, fontSize: 16),
+            )
+          : ListView(
+              children: [
+                Text(
+                  strategy.pitStops.isEmpty
+                      ? 'NO STOP'
+                      : '${strategy.pitStops.length}-STOP',
+                  style: TextStyle(color: Colors.amber.shade300, fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+                ),
+                const SizedBox(height: 8),
+                Text('Start on ${short(strategy.startingTireCompound)}', style: big),
+                for (final stop in strategy.pitStops)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('Lap ${stop.lap}: Box for ${short(stop.tireCompound)}', style: big),
+                  ),
+                const SizedBox(height: 10),
+                if (strategy.summary.isNotEmpty)
+                  Text(
+                    strategy.summary,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.grey.shade300, fontSize: 15),
+                  ),
+                const SizedBox(height: 8),
+                Text(
+                  'Fuel ${strategy.assumedPercentPerLap.toStringAsFixed(1)}%/lap · '
+                  '${strategy.totalEstimatedTimeLossSeconds.toStringAsFixed(0)} s in the pits',
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+                ),
+              ],
+            ),
+    );
+  }
 
   /// A home-page button for the round's setup and records.
   Widget _homeButton(IconData icon, String label, VoidCallback onPressed) => Expanded(
@@ -915,6 +1044,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     VoidCallback? onPageTitleTap,
     bool large = false,
     VoidCallback? onTap,
+    List<Widget> statusDots = const [],
   }) {
     final round = _activeRoundName == null ? null : LeagueCalendar.byName(_activeRoundName!);
     return TrackHeader(
@@ -927,6 +1057,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       onPageTitleTap: onPageTitleTap,
       large: large,
       onTap: onTap,
+      statusDots: statusDots,
     );
   }
 
@@ -945,6 +1076,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Navigator.of(context).pop();
           },
           onDeleteLap: (recordedAt) => _raceStateManager.removePracticeLap(recordedAt),
+          onDeleteStint: (recordedAts) => _raceStateManager.removePracticeLaps(recordedAts),
         ),
       ),
     );
@@ -968,13 +1100,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // -- refresh the dashboard's badge so it reflects whichever round
     // practice laps now count toward.
     _loadActiveRoundName();
-  }
-
-  /// Opens the weekly league championship standings entry + rival
-  /// selection screen (Phase A of the "nearest rival" feature -- see
-  /// ChampionshipScreen's own docstring for what Phase B adds on top).
-  Future<void> _openChampionship() async {
-    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ChampionshipScreen()));
   }
 
   /// Dashboard-owned per-session state, reset automatically when GT7
@@ -1057,54 +1182,115 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_choosingMode) return _modeChooser();
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              _trackHeader(
-                accent: _modeColour(_mode),
-                pageTitle: _mode.label,
-                pageIcon: _modeIcon(_mode),
-                onPageTitleTap: _goHome,
-              ),
-              const SizedBox(height: 10),
-              Align(alignment: Alignment.centerLeft, child: _statusBar()),
-              const SizedBox(height: 10),
-              Expanded(
-                child: switch (_mode) {
-                  AppMode.race => _raceBody(),
-                  AppMode.practice => _practiceBody(),
-                  AppMode.timeTrial => _timeTrialBody(),
-                },
-              ),
-              const SizedBox(height: 12),
-              // Bottom bar: connection (and, racing, Boxington) status on the
-              // left, as on the home page; HOME on the right.
-              Row(
-                children: [
-                  Expanded(child: _connectionBadges(boxington: _mode == AppMode.race)),
-                  OutlinedButton.icon(
-                    onPressed: _goHome,
-                    icon: const Icon(Icons.home, color: Colors.white),
-                    label: const Text(
-                      'HOME',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1.5),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.white38),
-                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+          child: switch (_tab) {
+            _Tab.home => _homePage(),
+            _Tab.aprl => const AprlStandingsView(),
+            _ => _modePage(),
+          },
+        ),
+      ),
+      bottomNavigationBar: _bottomBar(),
+    );
+  }
+
+  /// Home, the three modes, and the league.
+  Widget _bottomBar() {
+    final accent = switch (_tab) {
+      _Tab.home => Colors.blueGrey.shade600,
+      _Tab.race => _modeColour(AppMode.race),
+      _Tab.practice => _modeColour(AppMode.practice),
+      _Tab.timeTrial => _modeColour(AppMode.timeTrial),
+      _Tab.aprl => Colors.amber.shade800,
+    };
+    // Lighter than the black pages, with a top edge in the tab's colour,
+    // so the bar stands apart from the page above it.
+    final bar = NavigationBarTheme(
+      data: NavigationBarThemeData(
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) => TextStyle(
+            color: states.contains(WidgetState.selected) ? Colors.white : Colors.grey.shade400,
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1,
+          ),
+        ),
+        iconTheme: WidgetStateProperty.resolveWith(
+          (states) => IconThemeData(
+            color: states.contains(WidgetState.selected) ? Colors.white : Colors.grey.shade400,
+            size: 28,
           ),
         ),
       ),
+      child: NavigationBar(
+        backgroundColor: const Color(0xFF2E2E3A),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        height: 84,
+        indicatorColor: accent,
+        selectedIndex: _tab.index,
+        onDestinationSelected: (i) {
+          final tab = _Tab.values[i];
+          switch (tab) {
+            case _Tab.race:
+              _setMode(AppMode.race);
+            case _Tab.practice:
+              _setMode(AppMode.practice);
+            case _Tab.timeTrial:
+              _setMode(AppMode.timeTrial);
+            case _Tab.home || _Tab.aprl:
+              setState(() => _tab = tab);
+          }
+        },
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home), label: 'HOME'),
+          NavigationDestination(icon: Icon(Icons.sports_score), label: 'RACE MODE'),
+          NavigationDestination(icon: Icon(Icons.directions_car), label: 'PRACTICE'),
+          NavigationDestination(icon: Icon(Icons.timer), label: 'TIME TRIAL'),
+          NavigationDestination(icon: Icon(Icons.emoji_events), label: 'APRL'),
+        ],
+      ),
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(height: 4, color: accent),
+        bar,
+      ],
+    );
+  }
+
+  /// The current mode's page: header (with the connection dots), status
+  /// chips and the mode's own body.
+  Widget _modePage() {
+    return Column(
+      children: [
+        _trackHeader(
+          accent: _modeColour(_mode),
+          pageTitle: _mode.label,
+          pageIcon: _modeIcon(_mode),
+          statusDots: [
+            StatusBadge(label: 'TELEMETRY', status: _telemetryStatus, dotOnly: true),
+            StatusBadge(label: 'HUD OCR', status: _hudStatus, dotOnly: true),
+            // Boxington only talks back in a race (listening, thinking, errors).
+            if (_mode == AppMode.race) VoiceStatusBadge(status: _voiceStatus, dotOnly: true),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Align(alignment: Alignment.centerLeft, child: _statusBar()),
+        const SizedBox(height: 10),
+        Expanded(
+          child: switch (_mode) {
+            AppMode.race => _raceBody(),
+            AppMode.practice => _practiceBody(),
+            AppMode.timeTrial => _timeTrialBody(),
+          },
+        ),
+      ],
     );
   }
 
@@ -1735,7 +1921,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (plan == null || progress == null) {
       return _panel(Colors.grey.shade900, Colors.grey.shade700, [
-        Text('NO TEST PLAN', style: big),
+        Text('NO STINT TESTS', style: big),
         const SizedBox(height: 4),
         Text('Save a round on the strategy screen (flag button) to get one.', style: small),
         const SizedBox(height: 10),
@@ -1748,7 +1934,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (running != null) {
       return _panel(Colors.indigo.shade800, Colors.indigo.shade300, [
-        Text('TEST ${running.number}/$count RUNNING', style: big),
+        Text('STINT TEST ${running.number}/$count RUNNING', style: big),
         const SizedBox(height: 4),
         Text(progress.targetFor(running), style: small),
         Text(
@@ -1759,8 +1945,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         Row(
           children: [
             _panelButton('END EARLY', () => _confirmEndTest(running)),
-            const SizedBox(width: 8),
-            _panelButton('CHOOSE TEST', () => _pickTest(plan)),
           ],
         ),
       ]);
@@ -1770,7 +1954,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final doneLine = justDone == null
         ? null
         : Text(
-            'TEST ${justDone.number} COMPLETE \u2713',
+            'STINT TEST ${justDone.number} COMPLETE \u2713',
             style: const TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold),
           );
 
@@ -1778,15 +1962,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (next == null) {
       return _panel(Colors.green.shade900, Colors.green.shade400, [
         ?doneLine,
-        Text('TEST PLAN COMPLETE', style: big),
+        Text('STINT TESTS COMPLETE', style: big),
         const SizedBox(height: 4),
-        Text('All $count tests done -- see the practice log for the results.', style: small),
+        Text('All $count stint tests done -- see the practice log for the results.', style: small),
         const SizedBox(height: 10),
         Row(
           children: [
-            _panelButton('RUN A TEST AGAIN', () => _pickTest(plan)),
+            _panelButton('RUN ONE AGAIN', () => _pickTest(plan)),
             const SizedBox(width: 8),
-            _panelButton('HIDE PLAN', () => _setPlanHidden(true)),
+            _panelButton('HIDE', () => _setPlanHidden(true)),
           ],
         ),
       ]);
@@ -1794,18 +1978,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return _panel(Colors.grey.shade900, justDone == null ? Colors.grey.shade600 : Colors.greenAccent, [
       ?doneLine,
-      Text('NEXT: TEST ${next.number}/$count', style: big),
+      Text('NEXT: STINT TEST ${next.number}/$count', style: big),
       const SizedBox(height: 4),
       Text(progress.targetFor(next), style: small),
       Text(next.purpose, style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
       const SizedBox(height: 10),
       Row(
         children: [
-          _panelButton('START TEST', () => _confirmStartTest(next)),
+          _panelButton('START', () => _confirmStartTest(next)),
           const SizedBox(width: 8),
-          _panelButton('CHOOSE TEST', () => _pickTest(plan)),
+          _panelButton('CHOOSE STINT TEST', () => _pickTest(plan)),
           const SizedBox(width: 8),
-          _panelButton('HIDE PLAN', () => _setPlanHidden(true)),
+          _panelButton('HIDE', () => _setPlanHidden(true)),
         ],
       ),
     ]);
@@ -1815,10 +1999,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _hiddenPlanBar(TestPlanProgress? progress) {
     final next = progress?.next;
     final status = progress == null
-        ? 'no test plan'
+        ? 'no stint tests'
         : next == null
-        ? 'test plan complete'
-        : 'next test ${next.number}/${progress.plan.stints.length}: ${progress.targetFor(next)}';
+        ? 'stint tests complete'
+        : 'next: stint test ${next.number}/${progress.plan.stints.length}: ${progress.targetFor(next)}';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1834,7 +2018,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Expanded(
             child: Text(status, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.grey.shade500, fontSize: 14)),
           ),
-          TextButton(onPressed: () => _setPlanHidden(false), child: const Text('SHOW PLAN')),
+          TextButton(onPressed: () => _setPlanHidden(false), child: const Text('SHOW STINT TESTS')),
         ],
       ),
     );
@@ -1865,3 +2049,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ),
   );
 }
+
+/// The bottom bar's tabs, in order.
+enum _Tab { home, race, practice, timeTrial, aprl }

@@ -112,8 +112,8 @@ class PracticeLapLogger {
     _laps
       ..clear()
       ..addAll(persistedLaps);
-    // Carry on in the weather last tested (shown on the dashboard).
-    _currentWeather = persistedLaps.isEmpty ? null : persistedLaps.last.weather;
+    // Each session starts dry; the driver sets rain on the dashboard.
+    _currentWeather = null;
     _lastSeenLap = null;
     _fuelPercentAtLapStart = null;
   }
@@ -368,8 +368,12 @@ class PracticeLapLogger {
   /// deletion so lapNumber always reflects "the Nth lap in this log"
   /// with no gaps, and so a newly-logged lap afterward can't collide
   /// with a stale number from a deleted one.
-  void removeLap(DateTime recordedAt) {
-    _laps.removeWhere((lap) => lap.recordedAt == recordedAt);
+  void removeLap(DateTime recordedAt) => removeLaps({recordedAt});
+
+  /// Deletes several laps at once (a whole stint), renumbering the rest
+  /// as removeLap does.
+  void removeLaps(Set<DateTime> recordedAts) {
+    _laps.removeWhere((lap) => recordedAts.contains(lap.recordedAt));
     for (var i = 0; i < _laps.length; i++) {
       if (_laps[i].lapNumber != i + 1) {
         _laps[i] = _laps[i].withLapNumber(i + 1);

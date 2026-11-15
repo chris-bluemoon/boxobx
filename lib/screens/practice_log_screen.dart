@@ -29,6 +29,9 @@ class PracticeLogScreen extends StatefulWidget {
   /// one bad lap be deleted without clearing the whole practice log.
   final ValueChanged<DateTime> onDeleteLap;
 
+  /// Deletes every lap of one stint (their recordedAt timestamps).
+  final ValueChanged<Set<DateTime>>? onDeleteStint;
+
   /// The saved round's name (e.g. "Round 5"), used in stint labels.
   final String? roundName;
 
@@ -55,6 +58,7 @@ class PracticeLogScreen extends StatefulWidget {
     this.pitStopTimeSeconds,
     required this.onClear,
     required this.onDeleteLap,
+    this.onDeleteStint,
   });
 
   @override
@@ -109,6 +113,34 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
     widget.onDeleteLap(lap.recordedAt);
   }
 
+  Future<void> _confirmDeleteStint(StintSummary stint) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey.shade900,
+        title: Text('Delete stint ${stint.stintNumber}?', style: const TextStyle(color: Colors.white)),
+        content: Text(
+          'Removes all ${stint.laps.length} laps of this stint from the log. This cannot be undone.',
+          style: TextStyle(color: Colors.grey.shade400),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete stint', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final gone = {for (final lap in stint.laps) lap.recordedAt};
+    setState(() => _laps.removeWhere((l) => gone.contains(l.recordedAt)));
+    for (var i = 0; i < _laps.length; i++) {
+      if (_laps[i].lapNumber != i + 1) _laps[i] = _laps[i].withLapNumber(i + 1);
+    }
+    widget.onDeleteStint?.call(gone);
+  }
+
   @override
   Widget build(BuildContext context) {
     final laps = _laps;
@@ -124,9 +156,10 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
         backgroundColor: Colors.black,
         title: Text('PRACTICE LOG (${laps.length} LAPS)'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Clear practice log',
+          TextButton.icon(
+            icon: const Icon(Icons.delete_sweep_outlined),
+            label: const Text('CLEAR ALL STINTS'),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
             onPressed: laps.isEmpty
                 ? null
                 : () async {
@@ -134,16 +167,16 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                       context: context,
                       builder: (context) => AlertDialog(
                         backgroundColor: Colors.grey.shade900,
-                        title: const Text('Clear practice log?', style: TextStyle(color: Colors.white)),
+                        title: const Text('Clear all stints?', style: TextStyle(color: Colors.white)),
                         content: Text(
-                          'This deletes all ${laps.length} logged laps for the current round. This cannot be undone.',
+                          'This deletes every stint (${laps.length} laps, practice and race) for the current round. This cannot be undone.',
                           style: TextStyle(color: Colors.grey.shade400),
                         ),
                         actions: [
                           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
                           TextButton(
                             onPressed: () => Navigator.pop(context, true),
-                            child: const Text('Clear', style: TextStyle(color: Colors.redAccent)),
+                            child: const Text('Clear all', style: TextStyle(color: Colors.redAccent)),
                           ),
                         ],
                       ),
@@ -172,7 +205,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                     const SizedBox(height: 20),
                   ],
                   if (widget.testPlan != null && widget.testPlan!.stints.isNotEmpty) ...[
-                    _sectionLabel('TEST PLAN'),
+                    _sectionLabel('STINT TESTS'),
                     const SizedBox(height: 8),
                     _testPlanCard(widget.testPlan!, laps),
                     const SizedBox(height: 20),
@@ -349,7 +382,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Test ${planned.number}: ${progress.targetFor(planned)}',
+                          'Stint Test ${planned.number}: ${progress.targetFor(planned)}',
                           style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
                         ),
                         Text(
@@ -365,8 +398,8 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
               ),
             ),
           Text(
-            'Start a test from the dashboard\'s TEST chip (long-press to pick any test). Only stints '
-            'started as a test count. Long stints also end if fuel drops to 5% or the tyres drop off '
+            'Start a stint test from the panel on the dashboard (CHOOSE STINT TEST for any of them). Only '
+            'stints started as a stint test count. Long stints also end if fuel drops to 5% or the tyres drop off '
             '(lap times lastingly off peak pace; off-pace laps such as spins are left out).',
             style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
           ),
@@ -421,9 +454,23 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            stint.label(widget.roundName),
-            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  stint.label(widget.roundName),
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+              ),
+              if (widget.onDeleteStint != null)
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 22),
+                  color: Colors.grey.shade400,
+                  tooltip: 'Delete this stint',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _confirmDeleteStint(stint),
+                ),
+            ],
           ),
           const SizedBox(height: 8),
           Wrap(

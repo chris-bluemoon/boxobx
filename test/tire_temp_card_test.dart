@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:boxbox/widgets/tire_temp_card.dart';
 
 void main() {
+  _readableWhenTight();
   testWidgets('shows -- for wear when tireWearPercents is omitted (defaults to all-null)', (tester) async {
     await tester.pumpWidget(const MaterialApp(
       home: Scaffold(
@@ -68,5 +69,34 @@ void main() {
 
     expect(find.text('100%'), findsNWidgets(2));
     expect(find.text('--'), findsNWidgets(2));
+  });
+}
+
+void _readableWhenTight() {
+  testWidgets('corner labels and wear stay readable when the card is short (real iPad)', (tester) async {
+    // About the card's size on a smaller iPad in portrait: half the width,
+    // a short row height.
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(
+            width: 380,
+            height: 240,
+            child: TireTempCard(tireTemps: [80, 82, 79, 81], tireWearPercents: [64, 58, 41, 18]),
+          ),
+        ),
+      ),
+    ));
+    expect(tester.takeException(), isNull);
+    // Rendered height on screen, after any scaling down to fit.
+    double shown(String text) {
+      final box = tester.renderObject<RenderBox>(find.text(text).first);
+      final top = box.localToGlobal(Offset.zero).dy;
+      final bottom = box.localToGlobal(Offset(0, box.size.height)).dy;
+      return bottom - top;
+    }
+    expect(shown('RL'), greaterThanOrEqualTo(16), reason: 'corner label');
+    expect(shown('41%'), greaterThanOrEqualTo(26), reason: 'wear figure');
+    expect(shown('WEAR '), greaterThanOrEqualTo(14), reason: 'wear caption');
   });
 }

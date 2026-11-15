@@ -47,8 +47,24 @@ void main() {
       final stint = StintSummary.fromLaps(logger.laps).first;
       expect(stint.weatherLevel, 'R05');
       expect(stint.label('Round 5'), endsWith(', Weather R05'));
-      // After a restart it carries on in the weather last tested.
-      expect((PracticeLapLogger()..seedWithPersistedLaps(logger.laps)).currentWeather, 'R05');
+      // After a restart it's back to dry, not the weather last tested.
+      expect((PracticeLapLogger()..seedWithPersistedLaps(logger.laps)).currentWeather, isNull);
+    });
+
+    test('deleting a stint removes all its laps and renumbers the rest', () {
+      final logger = PracticeLapLogger();
+      void lap(int n) => logger.update(_frameAt(n));
+      lap(1);
+      lap(2);
+      lap(3);
+      logger.setWeather('R05');
+      lap(4);
+      lap(5);
+      final stintOne = {for (final l in logger.laps.where((l) => l.stintNumber == 1)) l.recordedAt};
+      expect(stintOne, hasLength(2));
+      logger.removeLaps(stintOne);
+      expect(logger.laps.map((l) => l.stintNumber), [2, 2]);
+      expect(logger.laps.map((l) => l.lapNumber), [1, 2]);
     });
 
     test('the grid: pace per tyre per weather, latest stint, quickest slick', () {

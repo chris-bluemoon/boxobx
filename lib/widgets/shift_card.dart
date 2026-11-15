@@ -75,8 +75,12 @@ class ShiftCard extends StatelessWidget {
         height: 12,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: hasShift ? _colorFor(recentShifts[shiftIndex].timing) : Colors.transparent,
-          border: hasShift ? null : Border.all(color: Colors.grey.shade700, width: 1.5),
+          color: hasShift
+              ? _colorFor(recentShifts[shiftIndex].timing)
+              : Colors.transparent,
+          border: hasShift
+              ? null
+              : Border.all(color: Colors.grey.shade700, width: 1.5),
         ),
       ),
     );
@@ -125,25 +129,35 @@ class ShiftCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 16),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Row(children: List.generate(_dotSlots, _buildDot)),
-                      const SizedBox(height: 6),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          _verdictLabel,
-                          style: TextStyle(
-                            color: _verdictColor,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.8,
+                  // Scales down rather than overflowing when the card is short
+                  // (Race Mode in landscape, above the bottom bar).
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: List.generate(_dotSlots, _buildDot),
+                        ),
+                        const SizedBox(height: 6),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            _verdictLabel,
+                            style: TextStyle(
+                              color: _verdictColor,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.8,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],

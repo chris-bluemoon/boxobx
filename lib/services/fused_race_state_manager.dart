@@ -568,6 +568,15 @@ class FusedRaceStateManager {
     _controller.add(_state);
   }
 
+  /// Deletes every lap of one stint (identified by their recordedAt
+  /// timestamps) and persists the rest.
+  Future<void> removePracticeLaps(Set<DateTime> recordedAts) async {
+    practiceLapLogger.removeLaps(recordedAts);
+    await _persistLaps((laps, round) => PracticeLogStore.save(laps, round: round));
+    _state = _state.copyWith(practiceLaps: practiceLapLogger.laps);
+    _controller.add(_state);
+  }
+
   void dispose() {
     stop();
     _controller.close();

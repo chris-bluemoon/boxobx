@@ -20,6 +20,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'package:boxbox/widgets/push_to_talk_button.dart';
+import 'package:boxbox/models/voice_engine_status.dart';
 import 'package:boxbox/widgets/voice_status_badge.dart';
 import 'package:boxbox/screens/dashboard_screen.dart';
 
@@ -50,7 +51,7 @@ void main() {
     // Button should flip back once released.
     expect(find.text('HOLD TO TALK'), findsOneWidget);
 
-    // Poll the on-screen VoiceStatusBadge text for up to ~30s, since the
+    // Poll the on-screen VoiceStatusBadge status for up to ~30s, since the
     // real pipeline (Whisper transcription + streamed Boxington response +
     // streamed TTS) takes a few seconds over a live network call.
     const pollInterval = Duration(milliseconds: 500);
@@ -65,16 +66,11 @@ void main() {
       final badgeFinder = find.byType(VoiceStatusBadge);
       if (badgeFinder.evaluate().isEmpty) continue;
 
-      final textWidgets = find.descendant(
-        of: badgeFinder,
-        matching: find.byType(Text),
-      );
-      if (textWidgets.evaluate().isEmpty) continue;
-
-      lastStatusText = tester.widget<Text>(textWidgets.first).data;
+      // A dot in the Race Mode heading now: read its status, not text.
+      lastStatusText = tester.widget<VoiceStatusBadge>(badgeFinder.first).status.label;
 
       // Pipeline completed a full round trip back to idle/ready.
-      if (lastStatusText != null && lastStatusText.contains('READY') && elapsed > const Duration(seconds: 5)) {
+      if (lastStatusText.contains('READY') && elapsed > const Duration(seconds: 5)) {
         break;
       }
     }

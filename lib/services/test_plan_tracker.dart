@@ -172,8 +172,8 @@ class TestPlanCaller {
 
     final following = progress.statuses.indexWhere((s) => s == TestStatus.toDo, index + 1);
     final nextTest = following < 0 ? null : plan.stints[following];
-    return 'Test ${planned.number} complete: $reason. The data is logged. '
-        '${nextTest == null ? 'Tell the driver that completes the test plan -- come in.' : 'Tell the driver to come in and move on to the next test: ${progress.targetFor(nextTest)}.'}'
+    return 'Stint Test ${planned.number} complete: $reason. The data is logged. '
+        '${nextTest == null ? 'Tell the driver that completes the stint tests -- come in.' : 'Tell the driver to come in and move on to the next stint test: ${progress.targetFor(nextTest)}.'}'
         ' One short transmission.';
   }
 }

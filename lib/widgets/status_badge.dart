@@ -9,7 +9,10 @@ class StatusBadge extends StatelessWidget {
   final String label;
   final ConnectionStatus status;
 
-  const StatusBadge({super.key, required this.label, required this.status});
+  /// Just the dot (with the label as a tooltip): the page headings.
+  final bool dotOnly;
+
+  const StatusBadge({super.key, required this.label, required this.status, this.dotOnly = false});
 
   Color get _dotColor {
     switch (status) {
@@ -26,6 +29,28 @@ class StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (dotOnly) {
+      return Tooltip(
+        message: '$label · ${status.label}',
+        triggerMode: TooltipTriggerMode.tap,
+        child: Semantics(
+          label: '$label · ${status.label}',
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: _dotColor,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.black54),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(

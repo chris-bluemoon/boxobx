@@ -55,41 +55,46 @@ class TireTempCard extends StatelessWidget {
 
   Widget _corner(String label, double tempC, double? wearPercent) {
     final color = _colorFor(tempC);
-    // The WHOLE stack (label + temp + wear) is wrapped in a single
-    // FittedBox, rather than just the temperature number -- adding the
-    // wear-percent line introduced a 3rd fixed-height Text to what was
-    // previously a label+temp pair that just barely fit, and on a real
-    // device's actual constrained card height (vs. the simulator this
-    // was built/eyeballed against) the combined fixed height overflowed
-    // by ~37px. Scaling everything uniformly as one unit guarantees no
-    // overflow regardless of how tight the available space gets, at the
-    // cost of all 3 lines shrinking together rather than the number
-    // alone staying large while the labels clip.
+    // Two lines -- "FL 80°" over "WEAR 64%" -- rather than three
+    // (label / temp / wear): on a real iPad the card is shorter than in
+    // the simulator, and the FittedBox below scales each corner down to
+    // fit, so every line saved keeps the label and wear readable. The
+    // FittedBox still guarantees no overflow however tight it gets.
     return Expanded(
       child: FittedBox(
         fit: BoxFit.scaleDown,
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              label,
-              style: TextStyle(
-                color: Colors.grey.shade500,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 1.0,
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                SizedBox(
+                  width: 34,
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: Colors.grey.shade400,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                Text(
+                  tempC <= 0 ? '--' : '${tempC.toStringAsFixed(0)}°',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 44,
+                    fontWeight: FontWeight.bold,
+                    height: 1.05,
+                  ),
+                ),
+              ],
             ),
-            Text(
-              tempC <= 0 ? '--' : '${tempC.toStringAsFixed(0)}°',
-              style: TextStyle(
-                color: color,
-                fontSize: 40,
-                fontWeight: FontWeight.bold,
-                height: 1.1,
-              ),
-            ),
-            const SizedBox(height: 4),
             Row(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.baseline,
@@ -97,14 +102,15 @@ class TireTempCard extends StatelessWidget {
               children: [
                 Text(
                   'WEAR ',
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 1.0),
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 16, fontWeight: FontWeight.w700, letterSpacing: 0.5),
                 ),
                 Text(
                   wearPercent == null ? '--' : '${wearPercent.toStringAsFixed(0)}%',
                   style: TextStyle(
                     color: _wearColorFor(wearPercent),
-                    fontSize: 26,
+                    fontSize: 30,
                     fontWeight: FontWeight.bold,
+                    height: 1.1,
                   ),
                 ),
               ],
@@ -137,12 +143,12 @@ class TireTempCard extends StatelessWidget {
           width: 2,
         ),
       ),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'TYRE TEMP',
+            'TYRES',
             style: TextStyle(
               color: Colors.grey.shade400,
               fontSize: 14,
@@ -150,7 +156,7 @@ class TireTempCard extends StatelessWidget {
               letterSpacing: 1.2,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           Expanded(
             child: Column(
               children: [

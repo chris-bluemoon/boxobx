@@ -40,7 +40,7 @@ enum AppMode {
   String get label => switch (this) {
     race => 'RACE MODE',
     practice => 'PRACTICE',
-    timeTrial => 'TIME TRIALING',
+    timeTrial => 'TIME TRIAL',
   };
 
   static AppMode fromName(String? name) => switch (name) {

@@ -6,7 +6,10 @@ import '../models/voice_engine_status.dart';
 class VoiceStatusBadge extends StatelessWidget {
   final VoiceEngineStatus status;
 
-  const VoiceStatusBadge({super.key, required this.status});
+  /// Just the dot (with the label as a tooltip): the Race Mode heading.
+  final bool dotOnly;
+
+  const VoiceStatusBadge({super.key, required this.status, this.dotOnly = false});
 
   Color get _dotColor {
     switch (status) {
@@ -25,6 +28,28 @@ class VoiceStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (dotOnly) {
+      return Tooltip(
+        message: 'BOXINGTON · ${status.label}',
+        triggerMode: TooltipTriggerMode.tap,
+        child: Semantics(
+          label: 'BOXINGTON · ${status.label}',
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: _dotColor,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.black54),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(

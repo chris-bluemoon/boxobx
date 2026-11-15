@@ -13,10 +13,13 @@ import 'package:integration_test/integration_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:boxbox/models/hud_overlay_data.dart';
+import 'package:boxbox/models/championship_standing.dart';
 import 'package:boxbox/models/practice_lap_record.dart';
+import 'package:boxbox/models/race_strategy.dart';
 import 'package:boxbox/models/race_briefing.dart';
 import 'package:boxbox/models/telemetry_frame.dart';
 import 'package:boxbox/screens/dashboard_screen.dart';
+import 'package:boxbox/services/championship_standings_store.dart';
 import 'package:boxbox/services/fuel_predictor.dart';
 import 'package:boxbox/services/fused_race_state_manager.dart';
 import 'package:boxbox/services/hud_ocr_service.dart';
@@ -81,7 +84,28 @@ void main() {
         wetOrChangeableWeather: true,
         weatherSlots: 'R06/R05/C03/S14/S04/R03/R04/R05',
       ),
+      strategy: const RaceStrategy(
+        startingTireCompound: 'Intermediate',
+        pitStops: [
+          PlannedPitStop(lap: 6, tireCompound: 'Racing Medium', reasoning: 'track dry by the C03 slot'),
+          PlannedPitStop(lap: 17, tireCompound: 'Intermediate', reasoning: 'rain back for R03'),
+        ],
+        summary: 'Start on Inters in the R06 rain, slicks once it dries, Inters again when the rain returns late on.',
+        assumedPercentPerLap: 3.1,
+        totalEstimatedTimeLossSeconds: 58,
+        pitStopTimeIsMeasured: true,
+      ),
     );
+    await ChampionshipStandingsStore.save([
+      for (final (driver, points) in [
+        ('Salty-067', [25, 18, 25, 18, 25]),
+        ('Chuck_E82', [18, 25, 12, 15, 18]),
+        ('Willy-SwerveX', [15, 15, 18, 25, 15]),
+        ('sideshow-308', [12, 12, 15, 12, 12]),
+        ('ryan_tr17', [10, 10, 10, 10, 10]),
+      ])
+        ChampionshipStanding(driverName: driver, roundPoints: [...points, null, null, null, null]),
+    ]);
 
     // An earlier stint on Mediums: 16 laps, cliff from lap 12, spin on lap 7.
     final earlier = _stintTimes(16, cliffLap: 12, spinLap: 7);
@@ -137,7 +161,6 @@ void main() {
     await tester.pumpAndSettle();
     await manager.loadPersistedData();
     await tester.pumpAndSettle();
-    await binding.takeScreenshot('01_home');
     await tester.tap(find.text('CHANGE ROUND'));
     await tester.pumpAndSettle();
     await binding.takeScreenshot('01b_round_picker');
@@ -176,7 +199,8 @@ void main() {
         tireWearRearRightPercent: 18,
       ),
     );
-    await tester.tap(find.text('PRACTICE'));
+    await binding.takeScreenshot('01_home');
+    await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('PRACTICE')));
     await tester.pumpAndSettle();
     await binding.takeScreenshot('02_stint_dashboard_dropped_off');
     await tester.tap(find.textContaining('WEATHER:'));
@@ -184,10 +208,10 @@ void main() {
     await binding.takeScreenshot('02b_weather_picker');
     await tester.tap(find.text('Dry (cloudy or sunny)'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('HIDE PLAN'));
+    await tester.tap(find.text('HIDE'));
     await tester.pumpAndSettle();
     await binding.takeScreenshot('02c_free_practice');
-    await tester.tap(find.text('SHOW PLAN'));
+    await tester.tap(find.text('SHOW STINT TESTS'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.textContaining('TOTAL)').first);
@@ -208,9 +232,7 @@ void main() {
     await tester.pageBack();
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('HOME'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('RACE MODE'));
+    await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('RACE MODE')));
     await tester.pumpAndSettle();
     await binding.takeScreenshot('06_race_dashboard');
     await tester.tap(find.text('PICK RIVAL'));
@@ -220,9 +242,12 @@ void main() {
     await tester.pumpAndSettle();
     await binding.takeScreenshot('08_rival_chosen');
 
-    await tester.tap(find.text('HOME'));
+    await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('APRL')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('RACE STRATEGY'));
+    await binding.takeScreenshot('08b_aprl_standings');
+    await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('HOME')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('RACE STRATEGY').last);
     await tester.pumpAndSettle();
     final timeline = find.textContaining('Assumes the slots');
     await tester.scrollUntilVisible(timeline, 300, scrollable: find.byType(Scrollable).first);

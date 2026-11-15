@@ -25,6 +25,9 @@ class TrackHeader extends StatelessWidget {
   /// Tapping the page heading (e.g. back to the home page).
   final VoidCallback? onPageTitleTap;
 
+  /// Small status dots (telemetry, HUD OCR) shown beside the page heading.
+  final List<Widget> statusDots;
+
   /// Hero size for the home page; compact on the mode screens.
   final bool large;
 
@@ -43,6 +46,7 @@ class TrackHeader extends StatelessWidget {
     this.onPageTitleTap,
     this.large = false,
     this.onTap,
+    this.statusDots = const [],
   });
 
   @override
@@ -87,18 +91,7 @@ class TrackHeader extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  circuit.toUpperCase(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: large ? 34 : 26,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 1.0,
-                    height: 1.05,
-                  ),
-                ),
+                _CircuitName(circuit.toUpperCase(), fontSize: large ? 34 : 26),
                 if (round != null) ...[
                   const SizedBox(height: 8),
                   Wrap(
@@ -146,6 +139,10 @@ class TrackHeader extends StatelessWidget {
                 ],
               ),
             ),
+          ],
+          if (statusDots.isNotEmpty) ...[
+            const SizedBox(width: 12),
+            Row(mainAxisSize: MainAxisSize.min, children: statusDots),
           ],
           if (pageTitle != null) ...[
             const SizedBox(width: 12),
@@ -197,6 +194,57 @@ class TrackHeader extends StatelessWidget {
     if (r.startsWith('Round ')) return 'R${r.substring(6)}';
     return 'FIN';
   }
+}
+
+/// The circuit's name at full size if it fits; otherwise over two lines
+/// (broken between words); and only if it still doesn't fit, smaller --
+/// never cut off with "...".
+class _CircuitName extends StatelessWidget {
+  final String name;
+  final double fontSize;
+
+  const _CircuitName(this.name, {required this.fontSize});
+
+  static const double _minFontSize = 16;
+
+  TextStyle _style(double size) => TextStyle(
+    color: Colors.white,
+    fontSize: size,
+    fontWeight: FontWeight.w900,
+    letterSpacing: 1.0,
+    height: 1.05,
+  );
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final scaler = MediaQuery.textScalerOf(context);
+      bool fits(double size) {
+        final painter = TextPainter(
+          text: TextSpan(text: name, style: _style(size)),
+          maxLines: 2,
+          textDirection: Directionality.of(context),
+          textScaler: scaler,
+        )..layout(maxWidth: constraints.maxWidth);
+        // Two lines at most, and no single word wider than the space.
+        final widest = name.split(' ').map((word) {
+          final w = TextPainter(
+            text: TextSpan(text: word, style: _style(size)),
+            textDirection: Directionality.of(context),
+            textScaler: scaler,
+          )..layout();
+          return w.width;
+        }).fold<double>(0, (a, b) => b > a ? b : a);
+        return !painter.didExceedMaxLines && widest <= constraints.maxWidth;
+      }
+
+      var size = fontSize;
+      while (size > _minFontSize && !fits(size)) {
+        size -= 2;
+      }
+      return Text(name, maxLines: 2, overflow: TextOverflow.ellipsis, style: _style(size));
+    },
+  );
 }
 
 class _Tag extends StatelessWidget {

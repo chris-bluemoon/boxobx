@@ -15,7 +15,7 @@ import 'package:boxbox/services/time_trial_store.dart';
 
 void main() {
   for (final (orientation, size) in [('portrait', const Size(1640, 2360)), ('landscape', const Size(2360, 1640))]) {
-    for (final mode in ['RACE MODE', 'PRACTICE', 'TIME TRIALING']) {
+    for (final mode in ['RACE MODE', 'PRACTICE', 'TIME TRIAL', 'APRL']) {
       testWidgets('$mode fits an iPad in $orientation', (tester) async {
         dotenv.testLoad(fileInput: '');
         final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -52,7 +52,8 @@ void main() {
           await tester.pump(const Duration(milliseconds: 50));
         }
         expect(tester.takeException(), isNull, reason: 'home page');
-        await tester.tap(find.text(mode));
+        await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text(mode)));
+        await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
         expect(tester.takeException(), isNull, reason: mode);
       });
