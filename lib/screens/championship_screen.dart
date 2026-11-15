@@ -141,7 +141,7 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
               Text(
                 'Enter each round\'s points for every driver, from the league\'s Discord '
                 'standings report. Drop points and total are calculated automatically.',
-                style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
               ),
               const SizedBox(height: 16),
               // The 9 round columns + drop + total + name + position
@@ -196,7 +196,7 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
       width: width,
       child: Text(
         text,
-        style: TextStyle(color: Colors.grey.shade500, fontSize: 11, fontWeight: FontWeight.bold),
+        style: TextStyle(color: Colors.grey.shade500, fontSize: 13, fontWeight: FontWeight.bold),
         textAlign: TextAlign.center,
       ),
     );
@@ -210,7 +210,7 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
           width: _nameColumnWidth,
           child: Text(
             'DRIVER',
-            style: TextStyle(color: Colors.grey.shade500, fontSize: 11, fontWeight: FontWeight.bold),
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 13, fontWeight: FontWeight.bold),
           ),
         ),
         for (var i = 1; i <= _roundCount; i++) _headerLabel('R$i', _roundColumnWidth),
@@ -229,7 +229,7 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
           controller: _roundControllers[driver]![roundIndex],
           keyboardType: TextInputType.number,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.white, fontSize: 12),
+          style: const TextStyle(color: Colors.white, fontSize: 14),
           decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 8)),
           onChanged: (_) => setState(() {}),
         ),
@@ -258,7 +258,7 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
             width: _positionColumnWidth,
             child: Text(
               position != null ? 'P$position' : '--',
-              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
           ),
@@ -279,7 +279,7 @@ class _ChampionshipScreenState extends State<ChampionshipScreen> {
                 controller: _dropPointsControllers[driver],
                 keyboardType: TextInputType.number,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                style: const TextStyle(color: Colors.orangeAccent, fontSize: 14),
                 decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 8)),
                 onChanged: (_) => setState(() {}),
               ),

@@ -148,7 +148,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     final minutes = int.tryParse(_raceLengthMinutesController.text.trim());
     if (minutes == null || minutes <= 0) return const SizedBox.shrink();
     final pace = _racePace();
-    final style = TextStyle(color: Colors.grey.shade400, fontSize: 12);
+    final style = TextStyle(color: Colors.grey.shade400, fontSize: 14);
     if (pace == null) {
       return Padding(
         padding: const EdgeInsets.only(top: 6),
@@ -396,7 +396,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 const SizedBox(height: 4),
                 Text(
                   'Loaded saved briefing from last session.',
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
                 ),
               ],
               const SizedBox(height: 8),
@@ -564,7 +564,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
               Text(
                 'Read GT7\'s "Pit Stop Time" after a stop and enter it here -- the whole stop, '
                 'including the tyre change and refuelling.',
-                style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
               ),
               const SizedBox(height: 8),
               _textField(
@@ -681,12 +681,12 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                     alignment: Alignment.center,
                     child: Column(
                       children: [
-                        Text(slot.code, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                        Text(slot.code, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
                         Text(
                           slot.name,
                           maxLines: 2,
                           textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white70, fontSize: 9),
+                          style: const TextStyle(color: Colors.white70, fontSize: 11),
                         ),
                       ],
                     ),
@@ -698,13 +698,13 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
           for (final phase in forecast.phases)
             Text(
               '${phase.tyre.label}: about laps ${forecast.lapsOfPhase(phase, _totalLaps).$1}-${forecast.lapsOfPhase(phase, _totalLaps).$2}',
-              style: TextStyle(color: tyreColour(phase.tyre), fontSize: 12),
+              style: TextStyle(color: tyreColour(phase.tyre), fontSize: 14),
             ),
           const SizedBox(height: 4),
           Text(
             'Tyres by community testing: R01-R02 slicks, R03-R05 inters, R06-R08 wets. Assumes the slots are spread evenly '
             'over $_totalLaps laps; light rain can miss the circuit, and the track stays wet for a while after rain stops.',
-            style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
           ),
         ],
       ),
@@ -761,7 +761,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
         ),
         if (selected != null) ...[
           const SizedBox(height: 4),
-          Text(selected.details, style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
+          Text(selected.details, style: TextStyle(color: Colors.grey.shade500, fontSize: 14)),
         ],
       ],
     );
@@ -819,7 +819,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
               Text(
                 '${_usedMeasuredFuelData ? 'Measured' : 'Assumed'} fuel use: '
                 '${strategy.assumedPercentPerLap.toStringAsFixed(2)}%/lap',
-                style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
               ),
               if (_usedMeasuredFuelData) ...[
                 const SizedBox(width: 6),
@@ -828,7 +828,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                   decoration: BoxDecoration(color: Colors.green.shade900, borderRadius: BorderRadius.circular(4)),
                   child: Text(
                     _usedPracticeLapFuelData ? 'FROM PRACTICE LAPS' : 'FROM LIVE FUEL AVERAGE',
-                    style: const TextStyle(color: Colors.greenAccent, fontSize: 9, fontWeight: FontWeight.bold),
+                    style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
@@ -842,7 +842,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                   '${strategy.pitStopTimeIsMeasured ? 'Entered' : 'Assumed'} pit loss: '
                   '${strategy.totalEstimatedTimeLossSeconds.toStringAsFixed(1)}s total '
                   '(${strategy.pitStops.length} stop${strategy.pitStops.length == 1 ? '' : 's'})',
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
                 ),
                 if (strategy.pitStopTimeIsMeasured) ...[
                   const SizedBox(width: 6),
@@ -851,7 +851,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                     decoration: BoxDecoration(color: Colors.green.shade900, borderRadius: BorderRadius.circular(4)),
                     child: const Text(
                       'FROM GT7 PIT STOP TIME',
-                      style: TextStyle(color: Colors.greenAccent, fontSize: 9, fontWeight: FontWeight.bold),
+                      style: TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold),
                     ),
                   ),
                 ],
@@ -868,7 +868,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(color: Colors.purple.shade900, borderRadius: BorderRadius.circular(6)),
-                    child: Text('LAP ${stop.lap}', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                    child: Text('LAP ${stop.lap}', style: const TextStyle(color: Colors.white, fontSize: 14)),
                   ),
                   const SizedBox(width: 8),
                   Expanded(

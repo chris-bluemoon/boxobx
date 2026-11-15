@@ -204,7 +204,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
     final pitLoss = widget.pitStopTimeSeconds ?? FusedRaceState.assumedPitStopSeconds;
     final toTest = widget.weather == null ? const <(String, WeatherTyre)>[] : table.toTest(widget.weather!);
     String lapTime(double ms) => '${ms ~/ 60000}:${((ms % 60000) / 1000).toStringAsFixed(3).padLeft(6, '0')}';
-    TextStyle head = TextStyle(color: Colors.grey.shade500, fontSize: 11, fontWeight: FontWeight.bold);
+    TextStyle head = TextStyle(color: Colors.grey.shade500, fontSize: 13, fontWeight: FontWeight.bold);
 
     Widget cell(String level, WeatherTyre tyre) {
       final pace = table.pace(level, tyre);
@@ -239,11 +239,11 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
             'A switch pays when the faster tyre wins back the ${pitLoss.round()}s stop'
             '${widget.pitStopTimeSeconds == null ? ' (assumed -- enter the pit stop time on the strategy screen)' : ''} '
             'over the laps it is used.',
-            style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+            style: TextStyle(color: Colors.grey.shade400, fontSize: 13),
           ),
           const SizedBox(height: 10),
           Table(
-            columnWidths: const {0: FixedColumnWidth(150), 1: FlexColumnWidth(), 2: FlexColumnWidth(), 3: FlexColumnWidth(), 4: FlexColumnWidth(2.4)},
+            columnWidths: const {0: FixedColumnWidth(200), 1: FlexColumnWidth(), 2: FlexColumnWidth(), 3: FlexColumnWidth(), 4: FlexColumnWidth(2.4)},
             defaultVerticalAlignment: TableCellVerticalAlignment.middle,
             children: [
               TableRow(
@@ -262,7 +262,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       child: Text(
                         level == 'DRY' ? 'Dry' : '$level ${WeatherSlot(level).name}',
-                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
                       ),
                     ),
                     for (final tyre in WeatherTyre.values) cell(level, tyre),
@@ -273,7 +273,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                               'pays back in ${c.lapsToPayBack(pitLoss).ceil()} laps',
                         null => '',
                       },
-                      style: TextStyle(color: Colors.grey.shade300, fontSize: 11),
+                      style: TextStyle(color: Colors.grey.shade300, fontSize: 13),
                     ),
                   ],
                 ),
@@ -287,15 +287,15 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
               Text(
                 '${WeatherTyre.values[drier.index + 1].label} from ${w.round()}% water'
                 '${measured ? ' (measured)' : " (GT7's gauge line -- not measured yet)"}',
-                style: TextStyle(color: measured ? Colors.greenAccent : Colors.grey.shade400, fontSize: 12, fontWeight: measured ? FontWeight.bold : FontWeight.normal),
+                style: TextStyle(color: measured ? Colors.greenAccent : Colors.grey.shade400, fontSize: 14, fontWeight: measured ? FontWeight.bold : FontWeight.normal),
               ),
-          for (final fit in water.fits.values) Text(fit.describe(), style: TextStyle(color: Colors.grey.shade300, fontSize: 11)),
+          for (final fit in water.fits.values) Text(fit.describe(), style: TextStyle(color: Colors.grey.shade300, fontSize: 13)),
           if (_hasDryWindow(widget.weather) && !water.crossover(WeatherTyre.slicks).$2) ...[
             const SizedBox(height: 8),
             const Text(
               'Optional: the brief has a dry spell between rain. A drying run on Inters then slicks would measure '
               'whether switching for it pays.',
-              style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+              style: TextStyle(color: Colors.orangeAccent, fontSize: 14),
             ),
           ],
         ],
@@ -356,7 +356,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                           progress.matchedStints[i] == null
                               ? planned.purpose
                               : '${planned.purpose} -- stint ${progress.matchedStints[i]!.stintNumber}',
-                          style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+                          style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
                         ),
                       ],
                     ),
@@ -368,7 +368,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
             'Start a test from the dashboard\'s TEST chip (long-press to pick any test). Only stints '
             'started as a test count. Long stints also end if fuel drops to 5% or the tyres drop off '
             '(lap times lastingly off peak pace; off-pace laps such as spins are left out).',
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 10),
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
           ),
         ],
       ),
@@ -434,7 +434,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(name, style: TextStyle(color: Colors.grey.shade500, fontSize: 10)),
+                    Text(name, style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
                     Text(value, style: const TextStyle(color: Colors.white, fontSize: 13)),
                   ],
                 ),
@@ -467,19 +467,19 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
           Expanded(
             child: Text(
               'avg $avgMinutes:${avgSeconds.toStringAsFixed(3).padLeft(6, '0')}',
-              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+              style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             ),
           ),
           Expanded(
             child: Text(
               'avg ${avgFuel.toStringAsFixed(2)}%/lap',
-              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+              style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             ),
           ),
           Expanded(
             child: Text(
               '${compoundLaps.length} laps',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+              style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
               textAlign: TextAlign.right,
             ),
           ),
@@ -527,7 +527,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                 ),
                 child: Text(
                   lap.isPitLap ? 'L${lap.lapNumber} PIT' : (counted ? 'L${lap.lapNumber}' : 'L${lap.lapNumber} OFF-PACE'),
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
               ),
               const SizedBox(width: 10),
@@ -545,20 +545,20 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
               ),
               Expanded(
                 flex: 2,
-                child: Text(lap.tireCompound, style: TextStyle(color: Colors.grey.shade300, fontSize: 12)),
+                child: Text(lap.tireCompound, style: TextStyle(color: Colors.grey.shade300, fontSize: 14)),
               ),
               Expanded(
                 flex: 2,
                 child: Text(
                   '${lap.fuelPercentAtLapStart.toStringAsFixed(1)}% → ${lap.fuelPercentAtLapEnd.toStringAsFixed(1)}%',
-                  style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 13),
                 ),
               ),
               Expanded(
                 child: lap.tireWearPercent != null
                     ? Text(
                         'wear ${lap.tireWearPercent!.toStringAsFixed(0)}%',
-                        style: const TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                        style: const TextStyle(color: Colors.orangeAccent, fontSize: 13, fontWeight: FontWeight.bold),
                         textAlign: TextAlign.right,
                       )
                     : Text(
@@ -571,7 +571,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                         // confident reading yet when this particular
                         // lap completed.
                         'wear --',
-                        style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
                         textAlign: TextAlign.right,
                       ),
               ),

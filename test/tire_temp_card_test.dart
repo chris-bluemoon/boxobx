@@ -11,7 +11,9 @@ void main() {
       ),
     ));
 
-    expect(find.text('WEAR --'), findsNWidgets(4));
+    expect(find.text('--'), findsNWidgets(4));
+    expect(find.text('WEAR '), findsNWidgets(4));
+    expect(find.text('80°'), findsOneWidget);
   });
 
   testWidgets('shows each wheel\'s wear percent when provided by OCR', (tester) async {
@@ -24,10 +26,10 @@ void main() {
       ),
     ));
 
-    expect(find.text('WEAR 54%'), findsOneWidget);
-    expect(find.text('WEAR 59%'), findsOneWidget);
-    expect(find.text('WEAR 61%'), findsOneWidget);
-    expect(find.text('WEAR 67%'), findsOneWidget);
+    expect(find.text('54%'), findsOneWidget);
+    expect(find.text('59%'), findsOneWidget);
+    expect(find.text('61%'), findsOneWidget);
+    expect(find.text('67%'), findsOneWidget);
   });
 
   testWidgets('does not overflow when the card is given a tight height (regression)', (tester) async {
@@ -64,7 +66,7 @@ void main() {
       ),
     ));
 
-    expect(find.text('WEAR 100%'), findsNWidgets(2));
-    expect(find.text('WEAR --'), findsNWidgets(2));
+    expect(find.text('100%'), findsNWidgets(2));
+    expect(find.text('--'), findsNWidgets(2));
   });
 }

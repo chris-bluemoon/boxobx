@@ -48,7 +48,7 @@ class TireTempCard extends StatelessWidget {
     if (wearPercent == null) return Colors.grey.shade600;
     if (wearPercent <= _wearCriticalThreshold) return Colors.redAccent;
     if (wearPercent <= _wearWarningThreshold) return Colors.amberAccent;
-    return Colors.grey.shade500;
+    return Colors.grey.shade200;
   }
 
   bool get _anyOverheating => tireTemps.any((t) => t > _hotThreshold);
@@ -75,28 +75,39 @@ class TireTempCard extends StatelessWidget {
               label,
               style: TextStyle(
                 color: Colors.grey.shade500,
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 1.0,
               ),
             ),
-            const SizedBox(height: 2),
             Text(
-              tempC <= 0 ? '--' : tempC.toStringAsFixed(0),
+              tempC <= 0 ? '--' : '${tempC.toStringAsFixed(0)}°',
               style: TextStyle(
                 color: color,
-                fontSize: 26,
+                fontSize: 40,
                 fontWeight: FontWeight.bold,
+                height: 1.1,
               ),
             ),
-            const SizedBox(height: 2),
-            Text(
-              wearPercent == null ? 'WEAR --' : 'WEAR ${wearPercent.toStringAsFixed(0)}%',
-              style: TextStyle(
-                color: _wearColorFor(wearPercent),
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-              ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
+                  'WEAR ',
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 1.0),
+                ),
+                Text(
+                  wearPercent == null ? '--' : '${wearPercent.toStringAsFixed(0)}%',
+                  style: TextStyle(
+                    color: _wearColorFor(wearPercent),
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

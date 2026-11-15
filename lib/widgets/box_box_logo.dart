@@ -98,6 +98,113 @@ class BoxBoxLogo extends StatelessWidget {
   }
 }
 
+/// The Box Box tyre on its own: [diameter] across, turned [turns] (1 = a
+/// full turn, clockwise), with [stripe] (0-1) of the compound stripe drawn.
+class BoxBoxTyre extends StatelessWidget {
+  final double diameter;
+  final double turns;
+  final double stripe;
+
+  const BoxBoxTyre({super.key, required this.diameter, this.turns = 0, this.stripe = 1});
+
+  @override
+  Widget build(BuildContext context) => Transform.rotate(
+    angle: turns * 2 * math.pi,
+    child: SizedBox.square(
+      dimension: diameter,
+      child: CustomPaint(painter: _TyrePainter(stripe: stripe.clamp(0.0, 1.0))),
+    ),
+  );
+}
+
+/// The splash's wordmark: "BOX BOX" with tyres for the O's. Each tyre is
+/// placed by [tyreOffsets] (px from its O's slot -- negative is to the
+/// left) and turned by [tyreTurns]; [letters] (0-1) fades the B's and
+/// X's in, and [taglineOpacity] the tagline. The defaults are the
+/// finished mark.
+class BoxBoxWheelWordmark extends StatelessWidget {
+  final double size;
+  final List<double> tyreOffsets;
+  final List<double> tyreTurns;
+  final double letters;
+  final double taglineOpacity;
+  final String tagline;
+
+  const BoxBoxWheelWordmark({
+    super.key,
+    this.size = 110,
+    this.tyreOffsets = const [0, 0],
+    this.tyreTurns = const [0, 0],
+    this.letters = 1,
+    this.taglineOpacity = 1,
+    this.tagline = 'RACE ENGINEER',
+  });
+
+  /// The tyre's diameter as a share of the font size: Barlow Condensed's
+  /// cap height, so a tyre stands exactly as tall as the B and X.
+  static const double tyreScale = 0.7;
+
+  @override
+  Widget build(BuildContext context) {
+    final word = TextStyle(
+      fontFamily: BoxBoxLogo._family,
+      fontSize: size,
+      fontWeight: FontWeight.w800,
+      fontStyle: FontStyle.italic,
+      height: 1.0,
+      letterSpacing: size * 0.01,
+    );
+    final fade = letters.clamp(0.0, 1.0);
+    TextSpan letter(String text, Color colour) =>
+        TextSpan(text: text, style: word.copyWith(color: colour.withValues(alpha: colour.a * fade)));
+    InlineSpan tyre(int i) => WidgetSpan(
+      // Bottom on the baseline: the tyre sits on the line with the letters.
+      alignment: PlaceholderAlignment.aboveBaseline,
+      baseline: TextBaseline.alphabetic,
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: size * 0.035),
+        child: Transform.translate(
+          offset: Offset(tyreOffsets[i], 0),
+          child: BoxBoxTyre(diameter: size * tyreScale, turns: tyreTurns[i]),
+        ),
+      ),
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text.rich(
+          TextSpan(
+            children: [
+              letter('B', Colors.white),
+              tyre(0),
+              letter('X ', Colors.white),
+              letter('B', boxBoxRed),
+              tyre(1),
+              letter('X', boxBoxRed),
+            ],
+          ),
+        ),
+        SizedBox(height: size * 0.12),
+        Opacity(
+          opacity: taglineOpacity.clamp(0.0, 1.0),
+          child: Text(
+            tagline,
+            style: TextStyle(
+              fontFamily: BoxBoxLogo._family,
+              color: Colors.white70,
+              fontSize: math.max(size * 0.21, 11),
+              fontWeight: FontWeight.w600,
+              height: 1.0,
+              letterSpacing: math.max(size * 0.21, 11) * 0.28,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// A tyre seen side-on, drawn flat: a white tread ring and, inside it,
 /// the red compound stripe in two arcs (broken where the sidewall
 /// lettering would be, so the spin reads). [stripe] (0-1) is how much

@@ -34,24 +34,24 @@ class OpponentOverlay extends StatelessWidget {
   Widget _driverColumn(String label, String? name, double? gapSeconds, GapTrend trend) {
     return Column(
       children: [
-        Text(label, style: TextStyle(color: Colors.grey.shade500, fontSize: 12, letterSpacing: 1.2)),
+        Text(label, style: TextStyle(color: Colors.grey.shade500, fontSize: 14, letterSpacing: 1.2)),
         const SizedBox(height: 4),
         Text(
           name ?? '—',
-          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600),
+          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w600),
         ),
         Text(
           gapSeconds != null ? '+${_formatGap(gapSeconds)}' : '--',
-          style: TextStyle(color: _trendColor(trend), fontSize: 16, fontWeight: FontWeight.bold),
+          style: TextStyle(color: _trendColor(trend), fontSize: 26, fontWeight: FontWeight.bold),
         ),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_trendIcon(trend), color: _trendColor(trend), size: 14),
+            Icon(_trendIcon(trend), color: _trendColor(trend), size: 18),
             const SizedBox(width: 4),
             Text(
               _trendLabel(trend),
-              style: TextStyle(color: _trendColor(trend), fontSize: 11, fontWeight: FontWeight.w600),
+              style: TextStyle(color: _trendColor(trend), fontSize: 15, fontWeight: FontWeight.w600),
             ),
           ],
         ),

@@ -167,7 +167,15 @@ void main() {
     }
     await tester.pumpAndSettle();
     // The relay reading the water gauge.
-    manager.handleHudData(const HudOverlayData(waterPercent: 47));
+    manager.handleHudData(
+      const HudOverlayData(
+        waterPercent: 47,
+        tireWearFrontLeftPercent: 64,
+        tireWearFrontRightPercent: 58,
+        tireWearRearLeftPercent: 41,
+        tireWearRearRightPercent: 18,
+      ),
+    );
     await tester.tap(find.text('PRACTICE'));
     await tester.pumpAndSettle();
     await binding.takeScreenshot('02_stint_dashboard_dropped_off');

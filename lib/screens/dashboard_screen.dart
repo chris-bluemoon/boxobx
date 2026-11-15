@@ -551,7 +551,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                           ),
                           if (mode == _mode)
-                            const Text('LAST USED', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            const Text('LAST USED', style: TextStyle(color: Colors.white70, fontSize: 14)),
                         ],
                       ),
                     ),
@@ -644,7 +644,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       decoration: BoxDecoration(color: colour, borderRadius: BorderRadius.circular(16)),
       child: Text(
         label,
-        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+        style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -894,11 +894,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   round?.round ?? name,
                   style: TextStyle(fontWeight: current ? FontWeight.bold : FontWeight.w600, fontSize: 16),
                 ),
-                Text(details, style: TextStyle(color: Colors.grey.shade400, fontSize: 12)),
+                Text(details, style: TextStyle(color: Colors.grey.shade400, fontSize: 14)),
               ],
             ),
           ),
-          if (briefed) Text('BRIEFED', style: TextStyle(color: Colors.green.shade300, fontSize: 11, letterSpacing: 1)),
+          if (briefed) Text('BRIEFED', style: TextStyle(color: Colors.green.shade300, fontSize: 13, letterSpacing: 1)),
         ],
       ),
     );
@@ -1120,7 +1120,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       child: Text(
         label,
-        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
       ),
     );
     return onTap == null ? box : InkWell(onTap: onTap, borderRadius: BorderRadius.circular(16), child: box);
@@ -1205,7 +1205,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       children: [
         const Text(
           'TIRE:',
-          style: TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.bold),
+          style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold),
         ),
         const SizedBox(width: 8),
         Expanded(
@@ -1266,11 +1266,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(name, style: const TextStyle(fontSize: 14)),
-                Text(tyre, style: TextStyle(color: Colors.grey.shade400, fontSize: 12)),
+                Text(tyre, style: TextStyle(color: Colors.grey.shade400, fontSize: 14)),
               ],
             ),
           ),
-          if (code != null && inBrief.contains(code)) Text('IN BRIEF', style: TextStyle(color: Colors.lightBlue.shade200, fontSize: 11, letterSpacing: 1)),
+          if (code != null && inBrief.contains(code)) Text('IN BRIEF', style: TextStyle(color: Colors.lightBlue.shade200, fontSize: 13, letterSpacing: 1)),
         ],
       ),
     );
@@ -1283,7 +1283,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
             child: Text(
               'Set the same weather in the practice lobby. Changing it starts a new stint.',
-              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+              style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             ),
           ),
           option(null, 'Dry (cloudy or sunny)', 'Slicks'),
@@ -1463,7 +1463,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: Text(
                 'LAPS  ·  swipe left to delete one',
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: Colors.grey.shade400, fontSize: 12, fontWeight: FontWeight.w600),
+                style: TextStyle(color: Colors.grey.shade400, fontSize: 14, fontWeight: FontWeight.w600),
               ),
             ),
             TextButton.icon(
@@ -1573,7 +1573,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 : best == null
                 ? ''
                 : 'best ${SectorState.format(best)}',
-            style: TextStyle(color: delta != null ? Colors.amberAccent : Colors.grey.shade500, fontSize: 12),
+            style: TextStyle(color: delta != null ? Colors.amberAccent : Colors.grey.shade500, fontSize: 16),
           ),
         ],
       ),
@@ -1753,7 +1753,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         Text(progress.targetFor(running), style: small),
         Text(
           'Boxington calls it complete when the target is reached -- nothing to tap.',
-          style: TextStyle(color: Colors.indigo.shade100, fontSize: 11),
+          style: TextStyle(color: Colors.indigo.shade100, fontSize: 13),
         ),
         const SizedBox(height: 10),
         Row(
@@ -1797,7 +1797,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       Text('NEXT: TEST ${next.number}/$count', style: big),
       const SizedBox(height: 4),
       Text(progress.targetFor(next), style: small),
-      Text(next.purpose, style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
+      Text(next.purpose, style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
       const SizedBox(height: 10),
       Row(
         children: [
@@ -1832,7 +1832,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const Text('FREE PRACTICE', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1)),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(status, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
+            child: Text(status, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.grey.shade500, fontSize: 14)),
           ),
           TextButton(onPressed: () => _setPlanHidden(false), child: const Text('SHOW PLAN')),
         ],

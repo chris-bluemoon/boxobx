@@ -96,7 +96,7 @@ class _CornerReportScreenState extends State<CornerReportScreen> {
                               _selected == null
                                   ? 'Tap a corner below to zoom in'
                                   : 'C${_selected!.corner.number}  ·  ● brake point: white = last lap, purple = reference  ·  tap to zoom out',
-                              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                              style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
                             ),
                           ),
                         ),
@@ -146,7 +146,7 @@ class _CornerReportScreenState extends State<CornerReportScreen> {
   }
 
   Widget _headerRow() {
-    final style = TextStyle(color: Colors.grey.shade500, fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 1);
+    final style = TextStyle(color: Colors.grey.shade500, fontSize: 13, fontWeight: FontWeight.w600, letterSpacing: 1);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
@@ -183,7 +183,7 @@ class _CornerRow extends StatelessWidget {
           value,
           style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
         ),
-        Text(under ?? '', style: TextStyle(color: underColour ?? Colors.grey.shade500, fontSize: 12)),
+        Text(under ?? '', style: TextStyle(color: underColour ?? Colors.grey.shade500, fontSize: 14)),
       ],
     ),
   );
@@ -335,7 +335,7 @@ class CornerMapPainter extends CustomPainter {
       for (final r in report.corners) {
         final p = toScreen(r.corner.x, r.corner.z);
         canvas.drawCircle(p, 11, Paint()..color = Colors.black.withValues(alpha: 0.75));
-        label('${r.corner.number}', p, colour: r.timeDeltaMs > 20 ? Colors.redAccent : Colors.white, fontSize: 11);
+        label('${r.corner.number}', p, colour: r.timeDeltaMs > 20 ? Colors.redAccent : Colors.white, fontSize: 13);
       }
       return;
     }
@@ -358,7 +358,7 @@ class CornerMapPainter extends CustomPainter {
     brakeMark(pick.lap.braking, _lapColour);
     final apex = toScreen(pick.corner.x, pick.corner.z);
     canvas.drawCircle(apex, 14, Paint()..color = Colors.black.withValues(alpha: 0.75));
-    label('C${pick.corner.number}', apex, fontSize: 12);
+    label('C${pick.corner.number}', apex, fontSize: 14);
   }
 
   @override

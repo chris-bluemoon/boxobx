@@ -46,4 +46,5 @@ flutter:
     - assets/config/all_tracks.json
     - assets/config/track_outlines.json
     - assets/audio/click_pshh.mp3
+    - assets/audio/splash_engine.m4a
     - .env

@@ -105,7 +105,7 @@ class RaceReportScreen extends StatelessWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(name, style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
+            Text(name, style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
             Text(
               value,
               style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
@@ -251,7 +251,7 @@ class RaceReportScreen extends StatelessWidget {
                     ),
                     Text(
                       lap.isPitLap ? 'PIT' : StintSummary.compoundCode(lap.tireCompound),
-                      style: TextStyle(color: lap.isPitLap ? Colors.amberAccent : Colors.grey.shade500, fontSize: 12),
+                      style: TextStyle(color: lap.isPitLap ? Colors.amberAccent : Colors.grey.shade500, fontSize: 14),
                     ),
                   ],
                 ),

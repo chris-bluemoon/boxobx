@@ -212,7 +212,7 @@ class _Tag extends StatelessWidget {
     decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(4)),
     child: Text(
       text,
-      style: TextStyle(color: foreground, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
+      style: TextStyle(color: foreground, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1),
     ),
   );
 }

@@ -44,7 +44,7 @@ class VoiceStatusBadge extends StatelessWidget {
           const SizedBox(width: 6),
           Text(
             'BOXINGTON · ${status.label}',
-            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
           ),
         ],
       ),
