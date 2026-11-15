@@ -40,7 +40,7 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test('the three modes and what each turns on', () {
-    expect(AppMode.values.map((m) => m.label), ['RACE MODE', 'STINT TESTING', 'TIME TRIALING']);
+    expect(AppMode.values.map((m) => m.label), ['RACE MODE', 'PRACTICE', 'TIME TRIALING']);
     expect(AppMode.fromName('timeTrial'), AppMode.timeTrial);
     expect(AppMode.fromName(null), AppMode.practice);
     const tt = AppMode.timeTrial;
@@ -72,7 +72,7 @@ void main() {
     expect(manager.current.practiceLaps, isEmpty);
     expect(await TimeTrialStore.load(), hasLength(2));
 
-    // Back in Stint Testing, laps go to the stints again.
+    // Back in Practice, laps go to the stints again.
     manager.setMode(AppMode.practice);
     manager.handleTelemetryFrame(_frame(4, lastLapTimeMs: 91000));
     manager.handleTelemetryFrame(_frame(5, lastLapTimeMs: 91000));
@@ -97,7 +97,7 @@ void main() {
     expect(await TimeTrialStore.load(), isEmpty);
   });
 
-  test('saving a new round clears the time-trial laps', () async {
+  test("saving a new round starts an empty time-trial log, keeping the old round's", () async {
     final briefing = RaceBriefing(
       trackName: 'Test',
       totalLaps: 20,
@@ -110,6 +110,35 @@ void main() {
     expect(await TimeTrialStore.load(), hasLength(1), reason: 'same round keeps them');
     await SavedBriefingStore.save(name: 'Round 6', briefing: briefing);
     expect(await TimeTrialStore.load(), isEmpty);
+    await SavedBriefingStore.save(name: 'Round 5', briefing: briefing);
+    expect(await TimeTrialStore.load(), hasLength(1));
+  });
+
+  test("changing round swaps the laps in memory for the new round's", () async {
+    final briefing = RaceBriefing(
+      trackName: 'Test',
+      totalLaps: 20,
+      startingFuelPercent: 100,
+      availableTireCompounds: const ['Racing Soft'],
+    );
+    await SavedBriefingStore.save(name: 'Round 5', briefing: briefing);
+    final manager = _manager()
+      ..setRound('Round 5')
+      ..setMode(AppMode.timeTrial);
+    manager.handleTelemetryFrame(_frame(1));
+    manager.handleTelemetryFrame(_frame(2, lastLapTimeMs: 89950));
+    expect(manager.current.timeTrialLaps, hasLength(1));
+
+    await SavedBriefingStore.save(name: 'Round 6', briefing: briefing);
+    manager.setRound('Round 6');
+    await manager.reloadRoundLaps();
+    expect(manager.current.timeTrialLaps, isEmpty);
+
+    // Round 6's first lap doesn't drag Round 5's along with it.
+    manager.handleTelemetryFrame(_frame(2));
+    manager.handleTelemetryFrame(_frame(3, lastLapTimeMs: 90400));
+    await manager.reloadRoundLaps();
+    expect(manager.current.timeTrialLaps.map((l) => l.lapTimeMs), [90400]);
   });
 
   test('Boxington gets the time-trial best and how the last lap compares', () {

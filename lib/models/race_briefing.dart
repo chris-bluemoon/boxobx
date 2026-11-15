@@ -1,3 +1,5 @@
+import 'weather_forecast.dart';
+
 /// Tire compound names as used in GT7's own garage/race-settings UI --
 /// kept as free-form strings rather than an enum since APRL's weekly
 /// briefing can restrict compounds to whatever subset is allowed that
@@ -104,12 +106,15 @@ class RaceBriefing {
   /// How many mandatory pit stops the regulations require (0 if none).
   final int mandatoryPitStopCount;
 
-  /// Whether this race involves wet/changeable conditions at all --
-  /// deliberately simplified to a toggle for now rather than a full
-  /// lap-by-lap weather sequence (e.g. APRL's "R06/R05/C03/S14/..."
-  /// codes), since that level of detail isn't yet consumed by the
-  /// strategist model.
+  /// Whether this race involves wet/changeable conditions at all.
   final bool wetOrChangeableWeather;
+
+  /// The briefing's GT7 weather slots, as entered (e.g.
+  /// "R06/R05/C03/S14/S04/R03/R04/R05"); '' if none. See [weather].
+  final String weatherSlots;
+
+  /// [weatherSlots] parsed, or null if none / not valid.
+  WeatherForecast? get weather => WeatherForecast.tryParse(weatherSlots);
 
   /// Any other free-text notes from the briefing the strategist should
   /// consider (grid penalties, race-specific quirks, etc.) --
@@ -136,6 +141,7 @@ class RaceBriefing {
     this.mandatoryTyreCompound = 'N/A',
     this.mandatoryPitStopCount = 0,
     this.wetOrChangeableWeather = false,
+    this.weatherSlots = '',
     this.additionalNotes = '',
   });
 
@@ -158,6 +164,7 @@ class RaceBriefing {
         mandatoryTyreCompound: map['mandatoryTyreCompound'] as String? ?? 'N/A',
         mandatoryPitStopCount: map['mandatoryPitStopCount'] as int? ?? 0,
         wetOrChangeableWeather: map['wetOrChangeableWeather'] as bool? ?? false,
+        weatherSlots: map['weatherSlots'] as String? ?? '',
         additionalNotes: map['additionalNotes'] as String? ?? '',
       );
 
@@ -180,6 +187,7 @@ class RaceBriefing {
         'mandatoryTyreCompound': mandatoryTyreCompound,
         'mandatoryPitStopCount': mandatoryPitStopCount,
         'wetOrChangeableWeather': wetOrChangeableWeather,
+        'weatherSlots': weatherSlots,
         'additionalNotes': additionalNotes,
       };
 }

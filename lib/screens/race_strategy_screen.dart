@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../models/race_briefing.dart';
+import '../models/weather_forecast.dart';
 import '../models/league_calendar.dart';
 import '../models/race_strategy.dart';
 import '../models/fuel_prediction.dart';
@@ -79,6 +80,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   final _raceLengthMinutesController = TextEditingController();
   final _fuelController = TextEditingController(text: '100');
   final _notesController = TextEditingController();
+  final _weatherController = TextEditingController();
   bool _savedBriefingLoaded = false;
 
   String? _trackName;
@@ -127,7 +129,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   TimeTrialLap? _timeTrialBest;
 
   /// Race pace for a timed race's lap count: the typical (median) clean
-  /// lap from stint testing and test races, or else the time-trial best
+  /// lap from practice and test races, or else the time-trial best
   /// plus 2% (race fuel and wear); null if neither exists yet.
   (int, String)? _racePace() {
     final clean = [
@@ -151,7 +153,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       return Padding(
         padding: const EdgeInsets.only(top: 6),
         child: Text(
-          'Timed race: set total laps to your estimate. Log some laps (Stint Testing or Time Trialing) '
+          'Timed race: set total laps to your estimate. Log some laps (Practice or Time Trialing) '
           'and the app suggests it. During the race the lap count is re-estimated from your pace.',
           style: style,
         ),
@@ -190,6 +192,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     _fuelController.dispose();
     _finishReserveController.dispose();
     _notesController.dispose();
+    _weatherController.dispose();
     _pitStopTimeController.dispose();
     super.dispose();
   }
@@ -201,30 +204,62 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   /// the same weekly briefing.
   Future<void> _loadSavedBriefing() async {
     final (name, briefing, strategy, _, _) = await SavedBriefingStore.load();
-    if (briefing == null) return;
+    if (!mounted) return;
+    if (briefing == null) {
+      // A round picked on the home page but not yet briefed: start from
+      // what the calendar says about it.
+      if (name != null) setState(() => _applyCalendarRound(name));
+      return;
+    }
+    setState(() => _applyBriefing(name, briefing, strategy));
+  }
 
-    setState(() {
-      if (name != null) _roundNameController.text = name;
-      _trackName = briefing.trackName;
-      _totalLaps = briefing.totalLaps;
-      _raceLengthMinutesController.text = briefing.raceLengthMinutes?.toString() ?? '';
-      _tyreWearMultiplier = briefing.tyreWearMultiplier;
-      _fuelConsumptionMultiplier = briefing.fuelConsumptionMultiplier;
-      _refuelingSpeed = briefing.refuelingSpeedLitersPerSec;
-      _pitStopTimeController.text = briefing.pitStopTimeSeconds?.toString() ?? '';
-      _fuelController.text = briefing.startingFuelPercent.toString();
-      _finishReserveController.text = briefing.finishFuelReservePercent.toString();
-      _maxTyreStintLaps = briefing.maxTyreStintLaps;
-      _selectedTireCompounds
-        ..clear()
-        ..addAll(briefing.availableTireCompounds);
-      _mandatoryTyreCompound = briefing.mandatoryTyreCompound;
-      _mandatoryPitStopCount = briefing.mandatoryPitStopCount;
-      _wetOrChangeableWeather = briefing.wetOrChangeableWeather;
-      _notesController.text = briefing.additionalNotes;
-      _strategy = strategy;
-      _savedBriefingLoaded = true;
-    });
+  /// Fills the form from a saved briefing.
+  void _applyBriefing(String? name, RaceBriefing briefing, RaceStrategy? strategy) {
+    if (name != null) _roundNameController.text = name;
+    _trackName = briefing.trackName;
+    _totalLaps = briefing.totalLaps;
+    _raceLengthMinutesController.text = briefing.raceLengthMinutes?.toString() ?? '';
+    _tyreWearMultiplier = briefing.tyreWearMultiplier;
+    _fuelConsumptionMultiplier = briefing.fuelConsumptionMultiplier;
+    _refuelingSpeed = briefing.refuelingSpeedLitersPerSec;
+    _pitStopTimeController.text = briefing.pitStopTimeSeconds?.toString() ?? '';
+    _fuelController.text = briefing.startingFuelPercent.toString();
+    _finishReserveController.text = briefing.finishFuelReservePercent.toString();
+    _maxTyreStintLaps = briefing.maxTyreStintLaps;
+    _selectedTireCompounds
+      ..clear()
+      ..addAll(briefing.availableTireCompounds);
+    _mandatoryTyreCompound = briefing.mandatoryTyreCompound;
+    _mandatoryPitStopCount = briefing.mandatoryPitStopCount;
+    _wetOrChangeableWeather = briefing.wetOrChangeableWeather;
+    _notesController.text = briefing.additionalNotes;
+    _weatherController.text = briefing.weatherSlots;
+    _strategy = strategy;
+    _savedBriefingLoaded = true;
+  }
+
+  /// Names the briefing after round [name] and fills in what the league
+  /// calendar says about it: the track, wet/changeable weather, and a
+  /// timed race length for enduros.
+  void _applyCalendarRound(String name) {
+    _roundNameController.text = name;
+    final round = LeagueCalendar.byName(name);
+    if (round == null) return;
+    _trackName = round.gt7Track;
+    _wetOrChangeableWeather = round.variableWeather;
+    if (round.raceLengthMinutes != null) {
+      _raceLengthMinutesController.text = round.raceLengthMinutes.toString();
+    }
+  }
+
+  /// The round picker changed: that round's own saved briefing if it has
+  /// one, otherwise the calendar's details for it.
+  Future<void> _switchRound(String name) async {
+    setState(() => _applyCalendarRound(name));
+    final saved = await SavedBriefingStore.briefingFor(name);
+    if (saved == null || !mounted || _roundNameController.text != name) return;
+    setState(() => _applyBriefing(name, saved.$1, saved.$2));
   }
 
   /// Builds a RaceBriefing from whatever is CURRENTLY in the form
@@ -244,6 +279,12 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       setState(() => _error = 'Pick a track, starting fuel %, and at least one tire compound.');
       return null;
     }
+    final weatherText = _wetOrChangeableWeather ? _weatherController.text.trim() : '';
+    final weather = WeatherForecast.tryParse(weatherText);
+    if (weatherText.isNotEmpty && weather == null) {
+      setState(() => _error = 'Weather slots should look like R06/R05/C03/S14 (R rain, C cloudy, S sunny).');
+      return null;
+    }
 
     return RaceBriefing(
       trackName: _trackName!,
@@ -260,6 +301,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       mandatoryTyreCompound: _mandatoryTyreCompound,
       mandatoryPitStopCount: _mandatoryPitStopCount,
       wetOrChangeableWeather: _wetOrChangeableWeather,
+      weatherSlots: weather?.code ?? '',
       additionalNotes: _notesController.text.trim(),
     );
   }
@@ -538,6 +580,29 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 activeColor: Colors.greenAccent,
                 tileColor: Colors.grey.shade900,
               ),
+              if (_wetOrChangeableWeather) ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _weatherController,
+                  onChanged: (_) => setState(() {}),
+                  textCapitalization: TextCapitalization.characters,
+                  style: const TextStyle(color: Colors.white, letterSpacing: 1),
+                  decoration: InputDecoration(
+                    labelText: 'Weather slots from the briefing (e.g. R06/R05/C03/S14)',
+                    labelStyle: TextStyle(color: Colors.grey.shade500),
+                    errorText: _weatherController.text.trim().isEmpty || WeatherForecast.tryParse(_weatherController.text) != null
+                        ? null
+                        : 'R = rain, C = cloudy, S = sunny, each with its number, separated by /',
+                    filled: true,
+                    fillColor: Colors.grey.shade900,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                  ),
+                ),
+                if (WeatherForecast.tryParse(_weatherController.text) case final forecast?) ...[
+                  const SizedBox(height: 8),
+                  _weatherTimeline(forecast),
+                ],
+              ],
               const SizedBox(height: 8),
               _textField(_notesController, 'Additional notes (grid penalties, etc.)', maxLines: 3),
               const SizedBox(height: 16),
@@ -581,6 +646,67 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// The slots in race order, coloured rain / dry, with the laps each
+  /// rain or dry spell roughly covers at the briefing's lap count.
+  Widget _weatherTimeline(WeatherForecast forecast) {
+    // Darker blue the heavier the rain.
+    Color colour(WeatherSlot s) => switch (s.letter) {
+      'R' => Color.lerp(const Color(0xFF64B5F6), const Color(0xFF0D2C8C), (s.number - 1).clamp(0, 7) / 7)!,
+      'C' => Colors.blueGrey.shade600,
+      _ => Colors.amber.shade700,
+    };
+    Color tyreColour(WeatherTyre t) => switch (t) {
+      WeatherTyre.wets => Colors.lightBlue.shade300,
+      WeatherTyre.inters => Colors.lightGreen.shade300,
+      WeatherTyre.slicks => Colors.amber.shade200,
+    };
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: Colors.grey.shade900, borderRadius: BorderRadius.circular(8)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              for (final slot in forecast.slots)
+                Expanded(
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    color: colour(slot),
+                    alignment: Alignment.center,
+                    child: Column(
+                      children: [
+                        Text(slot.code, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                        Text(
+                          slot.name,
+                          maxLines: 2,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white70, fontSize: 9),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final phase in forecast.phases)
+            Text(
+              '${phase.tyre.label}: about laps ${forecast.lapsOfPhase(phase, _totalLaps).$1}-${forecast.lapsOfPhase(phase, _totalLaps).$2}',
+              style: TextStyle(color: tyreColour(phase.tyre), fontSize: 12),
+            ),
+          const SizedBox(height: 4),
+          Text(
+            'Tyres by community testing: R01-R02 slicks, R03-R05 inters, R06-R08 wets. Assumes the slots are spread evenly '
+            'over $_totalLaps laps; light rain can miss the circuit, and the track stays wet for a while after rain stops.',
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+          ),
+        ],
       ),
     );
   }
@@ -630,17 +756,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
           items: names,
           labelOf: (name) => name,
           onChanged: (name) {
-            if (name == null) return;
-            final round = LeagueCalendar.byName(name);
-            setState(() {
-              _roundNameController.text = name;
-              if (round == null) return;
-              _trackName = round.gt7Track;
-              _wetOrChangeableWeather = round.variableWeather;
-              if (round.raceLengthMinutes != null) {
-                _raceLengthMinutesController.text = round.raceLengthMinutes.toString();
-              }
-            });
+            if (name != null) _switchRound(name);
           },
         ),
         if (selected != null) ...[

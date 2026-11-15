@@ -45,6 +45,8 @@ Respond with ONLY a single JSON object (no markdown, no prose outside the JSON),
 The pitStopReasoning array must have exactly as many entries as there are pit stops listed below, in the same order.
 
 Computed plan: {PLAN}
+If the briefing has weatherSlots (GT7 weather in race order: R = rain, C = cloudy, S = sunny), say in the summary that the computed plan assumes dry running and that tyre changes for the rain spells will be called live.
+
 Race briefing: {BRIEFING}
 ''';
 

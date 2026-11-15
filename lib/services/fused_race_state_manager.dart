@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../models/weather_forecast.dart';
 import '../models/fused_race_state.dart';
 import '../models/telemetry_frame.dart';
 import '../models/hud_overlay_data.dart';
@@ -147,12 +148,20 @@ class FusedRaceStateManager {
   /// Time-trial writes, queued the same way.
   Future<void> _timeTrialWrites = Future.value();
 
-  Future<void> _persistTimeTrial(Future<void> Function() write) =>
-      _timeTrialWrites = _timeTrialWrites.then((_) => write()).catchError((Object _) {});
+  /// Queues a time-trial save for the round current now (null until
+  /// the dashboard has said which round it is: the store then uses the
+  /// saved one).
+  Future<void> _persistTimeTrial(Future<void> Function(String? round) write) {
+    final round = _roundKnown ? (_round ?? '') : null;
+    return _timeTrialWrites = _timeTrialWrites.then((_) => write(round)).catchError((Object _) {});
+  }
 
-  Future<void> _persistLaps(Future<void> Function(List<PracticeLapRecord> laps) write) {
+  /// Queues a save of the practice laps as they are now, for the round
+  /// current now -- see [_persistTimeTrial].
+  Future<void> _persistLaps(Future<void> Function(List<PracticeLapRecord> laps, String? round) write) {
     final snapshot = practiceLapLogger.laps;
-    return _lapWrites = _lapWrites.then((_) => write(snapshot)).catchError((Object _) {});
+    final round = _roundKnown ? (_round ?? '') : null;
+    return _lapWrites = _lapWrites.then((_) => write(snapshot, round)).catchError((Object _) {});
   }
 
   /// Restores the practice laps saved for the current round (see
@@ -239,7 +248,7 @@ class FusedRaceStateManager {
         timeTrialLogger.update(frame, tireCompound: practiceLapLogger.currentTireCompound, sectorsMs: lapSectors)) {
       _state = _state.copyWith(timeTrialLaps: timeTrialLogger.laps);
       final snapshot = timeTrialLogger.laps;
-      _persistTimeTrial(() => TimeTrialStore.save(snapshot));
+      _persistTimeTrial((round) => TimeTrialStore.save(snapshot, round: round));
     }
     shiftHistoryTracker.update(frame);
     final crash = crashDetector.update(frame);
@@ -261,7 +270,7 @@ class FusedRaceStateManager {
     // timer) so a crash/forced-quit mid-session loses at most the
     // CURRENT in-progress lap, never a previously completed one.
     if (practiceLapLogger.laps.length > lapCountBefore) {
-      _persistLaps((laps) => PracticeLogStore.save(laps));
+      _persistLaps((laps, round) => PracticeLogStore.save(laps, round: round));
     }
   }
 
@@ -286,6 +295,7 @@ class FusedRaceStateManager {
     }
 
     if (hud.gridPosition > 0) practiceLapLogger.currentPosition = hud.gridPosition;
+    if (hud.waterPercent case final water?) practiceLapLogger.reportWater(water);
 
     if (hud.playerInPit) {
       if (!_playerWasInPit) _applyPitStopUpdate(pitStopTracker.reportPlayerInPit());
@@ -413,19 +423,28 @@ class FusedRaceStateManager {
     _state = _state.copyWith(timeTrialLaps: timeTrialLogger.laps);
     _controller.add(_state);
     final snapshot = timeTrialLogger.laps;
-    await _persistTimeTrial(() => TimeTrialStore.save(snapshot));
+    await _persistTimeTrial((round) => TimeTrialStore.save(snapshot, round: round));
   }
 
   Future<void> clearTimeTrialLaps() async {
     timeTrialLogger.clear();
     _state = _state.copyWith(timeTrialLaps: const []);
     _controller.add(_state);
-    await _persistTimeTrial(TimeTrialStore.clear);
+    await _persistTimeTrial((round) => TimeTrialStore.clear(round: round));
   }
 
   /// The current round's pit stop time as entered on the strategy screen
   /// (null = not entered) -- used for the rejoin forecast and pit calls.
-  void setPitStopTime(double? seconds) => _pitStopTimeSeconds = seconds;
+  void setPitStopTime(double? seconds) {
+    _pitStopTimeSeconds = seconds;
+    _state = _state.copyWith(pitStopTimeSeconds: seconds, clearPitStopTime: seconds == null);
+  }
+
+  /// The current round's weather slots (null = none in its briefing).
+  void setWeather(WeatherForecast? weather) {
+    _state = _state.copyWith(weather: weather, clearWeather: weather == null);
+    _controller.add(_state);
+  }
 
   /// Compares the lap just completed with the reference it was driven
   /// against, corner by corner (see CornerReport).
@@ -446,7 +465,33 @@ class FusedRaceStateManager {
 
   /// The round now saved on the strategy screen -- the live delta's
   /// reference lap belongs to a round (see SectorCalculator.round).
-  void setRound(String? name) => sectorCalculator.round = name;
+  ///
+  /// The lap logs are kept per round (see PracticeLogStore), so when the
+  /// round changes after the app has loaded, the new round's laps are
+  /// loaded in place of the old one's.
+  void setRound(String? name) {
+    sectorCalculator.round = name;
+    final changed = _roundKnown && name != _round;
+    _round = name;
+    _roundKnown = true;
+    if (changed) reloadRoundLaps();
+  }
+
+  String? _round;
+  bool _roundKnown = false;
+
+  /// Replaces the laps in memory with the current round's saved ones,
+  /// once any saves still in flight have landed.
+  Future<void> reloadRoundLaps() async {
+    await _lapWrites;
+    await _timeTrialWrites;
+    final practice = await PracticeLogStore.load();
+    final timeTrial = await TimeTrialStore.load();
+    practiceLapLogger.seedWithPersistedLaps(practice);
+    timeTrialLogger.seed(timeTrial);
+    _state = _state.copyWith(practiceLaps: practiceLapLogger.laps, timeTrialLaps: timeTrialLogger.laps);
+    _controller.add(_state);
+  }
 
   /// Practice or race -- see AppMode. Recording is the same in both.
   void setMode(AppMode mode) {
@@ -470,7 +515,7 @@ class FusedRaceStateManager {
     if (!practiceLapLogger.completeActiveTest()) return;
     _state = _state.copyWith(practiceLaps: practiceLapLogger.laps);
     _controller.add(_state);
-    await _persistLaps((laps) => PracticeLogStore.save(laps));
+    await _persistLaps((laps, round) => PracticeLogStore.save(laps, round: round));
   }
 
   /// The driver is starting planned test [testNumber] (see TestPlan):
@@ -495,13 +540,11 @@ class FusedRaceStateManager {
     practiceLapLogger.currentTireCompound = compound;
   }
 
-  /// Clears the practice lap log entirely (both in-memory and
-  /// persisted) -- an explicit driver action, separate from the
-  /// automatic clearing that happens when SavedBriefingStore.save() is
-  /// called under a genuinely new round name.
+  /// Clears the current round's practice lap log (both in memory and
+  /// saved) -- an explicit driver action. Other rounds' laps are kept.
   Future<void> clearPracticeLaps() async {
     practiceLapLogger.reset();
-    await _persistLaps((_) => PracticeLogStore.clear());
+    await _persistLaps((_, round) => PracticeLogStore.clear(round: round));
     _state = _state.copyWith(practiceLaps: const []);
     _controller.add(_state);
   }
@@ -512,7 +555,7 @@ class FusedRaceStateManager {
   /// up by traffic) without wiping the whole practice log.
   Future<void> removePracticeLap(DateTime recordedAt) async {
     practiceLapLogger.removeLap(recordedAt);
-    await _persistLaps((laps) => PracticeLogStore.save(laps));
+    await _persistLaps((laps, round) => PracticeLogStore.save(laps, round: round));
     _state = _state.copyWith(practiceLaps: practiceLapLogger.laps);
     _controller.add(_state);
   }

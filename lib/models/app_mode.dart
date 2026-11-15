@@ -4,8 +4,9 @@
 ///
 /// * [race]: race calls and widgets; laps logged as stints too, so race
 ///   data feeds the strategy calculator.
-/// * [practice] ("Stint Testing"): the test plan -- full-tank stints per
-///   compound, logged as stints.
+/// * [practice] ("Practice"): free practice -- every lap logged as
+///   stints -- with the round's test plan (full-tank stints per compound)
+///   there to run when wanted; the gauge tyre calls as information.
 /// * [timeTrial] ("Time Trialing"): pure qualifying pace -- lap times
 ///   only, kept separate from the stint data (a low-fuel qualifying lap
 ///   would skew fuel and wear figures), as the pace baseline.
@@ -38,7 +39,7 @@ enum AppMode {
 
   String get label => switch (this) {
     race => 'RACE MODE',
-    practice => 'STINT TESTING',
+    practice => 'PRACTICE',
     timeTrial => 'TIME TRIALING',
   };
 

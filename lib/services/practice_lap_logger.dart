@@ -1,6 +1,7 @@
 import '../models/telemetry_frame.dart';
 import '../models/practice_lap_record.dart';
 import '../models/power_band_config.dart';
+import 'grip_tracker.dart';
 
 /// Builds a PracticeLapRecord every time a lap completes, from raw
 /// telemetry plus whatever tire compound is currently selected on the
@@ -57,9 +58,48 @@ class PracticeLapLogger {
   /// source of real (not proxied) wear data available.
   double? currentTireWearPercent;
 
+  /// Latest reading of GT7's surface water gauge (percent), kept current
+  /// by FusedRaceStateManager from the relay; see [reportWater].
+  double? get currentWaterPercent => _currentWaterPercent;
+  double? _currentWaterPercent;
+  double _lapWaterSum = 0;
+  int _lapWaterCount = 0;
+
+  /// A water gauge reading from the relay. Each lap records the mean of
+  /// the readings taken during it.
+  void reportWater(double percent) {
+    _currentWaterPercent = percent;
+    _lapWaterSum += percent;
+    _lapWaterCount++;
+  }
+
+  double? _finishLapWater() {
+    final mean = _lapWaterCount == 0 ? null : double.parse((_lapWaterSum / _lapWaterCount).toStringAsFixed(1));
+    _lapWaterSum = 0;
+    _lapWaterCount = 0;
+    return mean;
+  }
+
   /// Sector times of the lap completing on the current frame (set by
   /// FusedRaceStateManager from SectorCalculator just before [update]).
   List<int>? completedLapSectorsMs;
+
+  /// The GT7 weather being tested ("R01"-"R08"; null = dry), set on the
+  /// dashboard -- attached to each lap like the tyre. Changing it starts
+  /// a new stint (see setWeather), so each stint is one condition.
+  String? get currentWeather => _currentWeather;
+  String? _currentWeather;
+
+  /// Sets the weather being tested; a change starts a new stint with the
+  /// next lap.
+  void setWeather(String? weather) {
+    if (weather == _currentWeather) return;
+    startNewStint();
+    _currentWeather = weather;
+  }
+
+  /// Wheelspin / lock-ups over the lap in progress.
+  final GripTracker _grip = GripTracker();
 
   List<PracticeLapRecord> get laps => List.unmodifiable(_laps);
 
@@ -72,6 +112,8 @@ class PracticeLapLogger {
     _laps
       ..clear()
       ..addAll(persistedLaps);
+    // Carry on in the weather last tested (shown on the dashboard).
+    _currentWeather = persistedLaps.isEmpty ? null : persistedLaps.last.weather;
     _lastSeenLap = null;
     _fuelPercentAtLapStart = null;
   }
@@ -84,12 +126,16 @@ class PracticeLapLogger {
     _trackShift(frame);
 
     if (_lastSeenLap == null) {
+      _grip.reset();
+      _finishLapWater();
       _lastSeenLap = frame.currentLap;
       _fuelPercentAtLapStart = frame.fuelPercent;
       return;
     }
 
     if (frame.currentLap != _lastSeenLap) {
+      final grip = _grip.finishLap();
+      final water = _finishLapWater();
       if (frame.currentLap == _lastSeenLap! + 1 && frame.lastLapTimeMs > 0 && _fuelPercentAtLapStart != null) {
         _laps.add(
           PracticeLapRecord(
@@ -115,6 +161,11 @@ class PracticeLapLogger {
             raceNumber: isRaceMode ? _raceForNextLap() : null,
             position: currentPosition,
             sectorsMs: completedLapSectorsMs,
+            wheelspinPercent: grip?.wheelspinPercent,
+            tcsPercent: grip?.tcsPercent,
+            lockupPercent: grip?.lockupPercent,
+            weather: _currentWeather,
+            waterPercent: water,
           ),
         );
       }
@@ -136,6 +187,8 @@ class PracticeLapLogger {
       _currentLapShortShifts = 0;
       _currentLapGoodShifts = 0;
       _currentLapOverRevShifts = 0;
+    } else {
+      _grip.update(frame);
     }
   }
 
@@ -280,9 +333,14 @@ class PracticeLapLogger {
     _currentLapGoodShifts = 0;
     _currentLapOverRevShifts = 0;
     _pitLapNumbers.clear();
+    _grip.reset();
+    _finishLapWater();
   }
 
   void reset() {
+    _grip.reset();
+    _finishLapWater();
+    _currentWaterPercent = null;
     _currentRace = 0;
     _newRaceRequested = true;
     _currentStint = 0;

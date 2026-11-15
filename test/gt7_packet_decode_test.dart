@@ -58,6 +58,18 @@ void main() {
     expect(frame.carCode, 3218);
   });
 
+  test('wheel road speeds come from rotation x tyre radius', () {
+    final packet = _encryptedPacket((p) {
+      for (var i = 0; i < 4; i++) {
+        p.setFloat32(0xA4 + i * 4, i < 2 ? -100 : -110, Endian.little); // rad/s, negative forwards
+        p.setFloat32(0xB4 + i * 4, 0.35, Endian.little); // m
+      }
+    });
+    final frame = TelemetryFrame.fromMap(decodeGt7Packet(packet)!.toMap());
+    expect(frame.wheelSpeedsKmh[0], closeTo(126, 0.01)); // 100 * 0.35 * 3.6
+    expect(frame.wheelSpeedsKmh[3], closeTo(138.6, 0.01));
+  });
+
   test('the packet counter survives the trip from the UDP isolate', () {
     final packet = _encryptedPacket((p) => p.setInt32(0x70, 4242, Endian.little));
     expect(TelemetryFrame.fromMap(decodeGt7Packet(packet)!.toMap()).packetId, 4242);

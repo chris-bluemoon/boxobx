@@ -67,12 +67,19 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
               opacity: logoIn,
               child: Transform.translate(
                 offset: Offset((1 - logoIn) * -60, 0),
-                child: BoxBoxLogo(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  // Shrinks to fit a narrow screen.
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: BoxBoxLogo(
                   size: 110,
                   // Tyres spin up and settle as the wordmark slides in.
                   tyreTurns: (1 - _phase(t, 0.0, 0.7, Curves.easeOutQuart)) * -1.5,
                   stripe: _phase(t, 0.35, 0.8),
                   taglineOpacity: _phase(t, 0.65, 1.0),
+                    ),
+                  ),
                 ),
               ),
             );

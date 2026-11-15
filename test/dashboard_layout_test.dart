@@ -15,7 +15,7 @@ import 'package:boxbox/services/time_trial_store.dart';
 
 void main() {
   for (final (orientation, size) in [('portrait', const Size(1640, 2360)), ('landscape', const Size(2360, 1640))]) {
-    for (final mode in ['RACE MODE', 'STINT TESTING', 'TIME TRIALING']) {
+    for (final mode in ['RACE MODE', 'PRACTICE', 'TIME TRIALING']) {
       testWidgets('$mode fits an iPad in $orientation', (tester) async {
         dotenv.testLoad(fileInput: '');
         final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;

@@ -204,6 +204,14 @@ void main() {
     expect(race.tracker.state!.name, 'Chuck_E82');
   });
 
+  test('we can never be our own rival', () {
+    final race = _Race(rival: 120);
+    race.tracker.setRival('Willy-SwerveX');
+    expect(race.tracker.rival, isNull);
+    race.run(1, board: () => _rivalAhead());
+    expect(race.tracker.state, isNull);
+  });
+
   test("the prompt context includes the rival's pit stops", () {
     final race = _Race(rival: 120);
     race.run(0.4, board: () => _rivalAhead());

@@ -37,7 +37,7 @@ void main() {
   /// Opens the app and picks [label] on the launch page.
   Future<void> pumpDashboard(WidgetTester tester, {required String mode}) async {
     await pumpApp(tester);
-    const labels = {'race': 'RACE MODE', 'practice': 'STINT TESTING', 'timeTrial': 'TIME TRIALING'};
+    const labels = {'race': 'RACE MODE', 'practice': 'PRACTICE', 'timeTrial': 'TIME TRIALING'};
     await tester.tap(find.text(labels[mode]!));
     await tester.pump(const Duration(milliseconds: 100));
   }
@@ -45,7 +45,7 @@ void main() {
   testWidgets('the app opens on the three modes', (tester) async {
     await pumpApp(tester, lastMode: 'race');
     expect(find.text('RACE MODE'), findsOneWidget);
-    expect(find.text('STINT TESTING'), findsOneWidget);
+    expect(find.text('PRACTICE'), findsOneWidget);
     expect(find.text('TIME TRIALING'), findsOneWidget);
     expect(find.text('LAST USED'), findsOneWidget);
     expect(find.textContaining('RACE REPORTS'), findsOneWidget);
@@ -53,6 +53,35 @@ void main() {
     expect(find.text('STANDINGS'), findsOneWidget);
     expect(find.text('PIT LAP'), findsNothing, reason: 'no dashboard until a mode is chosen');
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tapping the home header picks the round, and every mode follows it', (tester) async {
+    await pumpApp(tester);
+    expect(find.text('TAP TO PICK A ROUND'), findsOneWidget);
+    await tester.tap(find.text('CHANGE ROUND'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('Round 6'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('SAINTE-CROIX C'), findsOneWidget);
+    expect((await SharedPreferences.getInstance()).getString('saved_briefing_name'), 'Round 6 - Sainte-Croix C');
+
+    for (final mode in ['RACE MODE', 'PRACTICE', 'TIME TRIALING']) {
+      await tester.tap(find.text(mode));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('SAINTE-CROIX C'), findsOneWidget, reason: mode);
+      await tester.tap(find.text(mode)); // back home
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the rival picker lists the other drivers, not us', (tester) async {
+    await pumpDashboard(tester, mode: 'race');
+    await tester.tap(find.text('PICK RIVAL'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Chuck_E82'), findsOneWidget);
+    expect(find.text('Willy-SwerveX'), findsNothing);
   });
 
   testWidgets('tapping the mode chip goes back to the three modes', (tester) async {
@@ -66,7 +95,7 @@ void main() {
 
   testWidgets('practice mode shows the test screen, without race cards or push-to-talk', (tester) async {
     await pumpDashboard(tester, mode: 'practice');
-    expect(find.text('STINT TESTING'), findsOneWidget);
+    expect(find.text('PRACTICE'), findsOneWidget);
     expect(find.text('NO TEST PLAN'), findsOneWidget); // no round saved in this test
     expect(find.text('TYRES LEFT'), findsOneWidget);
     expect(find.text('FUEL / LAP'), findsOneWidget);
@@ -133,7 +162,7 @@ void main() {
 
     await pumpApp(tester);
     await expectBottomLeft('home');
-    for (final label in ['RACE MODE', 'STINT TESTING', 'TIME TRIALING']) {
+    for (final label in ['RACE MODE', 'PRACTICE', 'TIME TRIALING']) {
       await tester.tap(find.text(label));
       await tester.pump(const Duration(milliseconds: 100));
       await expectBottomLeft(label);

@@ -15,4 +15,13 @@ class AppModeStore {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key, mode.name);
   }
+
+  static const _planHiddenKey = 'practice_plan_hidden';
+
+  /// Whether Practice's test plan panel is folded away (free practice).
+  static Future<bool> loadPlanHidden() async =>
+      (await SharedPreferences.getInstance()).getBool(_planHiddenKey) ?? false;
+
+  static Future<void> savePlanHidden(bool hidden) async =>
+      (await SharedPreferences.getInstance()).setBool(_planHiddenKey, hidden);
 }

@@ -12,6 +12,9 @@ import 'power_band_config.dart';
 import 'opponent_pit_stop.dart';
 import 'app_mode.dart';
 import 'time_trial_lap.dart';
+import 'weather_forecast.dart';
+import '../services/water_pace_model.dart';
+import '../services/wet_pace_table.dart';
 import '../services/corner_report.dart';
 import '../services/race_lap_estimator.dart';
 import '../services/rejoin_forecaster.dart';
@@ -83,6 +86,15 @@ class FusedRaceState {
   /// no rival chosen or nothing seen yet.
   final RaceRivalState? raceRival;
 
+  /// The current round's weather slots from its briefing, if any.
+  final WeatherForecast? weather;
+
+  /// The round's pit stop time from its briefing (seconds), if entered.
+  final double? pitStopTimeSeconds;
+
+  /// What a stop is taken to cost when none is entered.
+  static const double assumedPitStopSeconds = 30;
+
   const FusedRaceState({
     required this.telemetry,
     required this.hud,
@@ -102,6 +114,8 @@ class FusedRaceState {
     this.cornerReport,
     this.raceLaps,
     this.raceRival,
+    this.weather,
+    this.pitStopTimeSeconds,
   });
 
   factory FusedRaceState.initial() => FusedRaceState(
@@ -136,6 +150,10 @@ class FusedRaceState {
     bool clearRaceLaps = false,
     RaceRivalState? raceRival,
     bool clearRaceRival = false,
+    WeatherForecast? weather,
+    bool clearWeather = false,
+    double? pitStopTimeSeconds,
+    bool clearPitStopTime = false,
   }) {
     return FusedRaceState(
       telemetry: telemetry ?? this.telemetry,
@@ -159,6 +177,8 @@ class FusedRaceState {
       cornerReport: cornerReport ?? this.cornerReport,
       raceLaps: clearRaceLaps ? null : raceLaps ?? this.raceLaps,
       raceRival: clearRaceRival ? null : raceRival ?? this.raceRival,
+      weather: clearWeather ? null : weather ?? this.weather,
+      pitStopTimeSeconds: clearPitStopTime ? null : pitStopTimeSeconds ?? this.pitStopTimeSeconds,
     );
   }
 
@@ -197,6 +217,12 @@ class FusedRaceState {
     'currentLap': telemetry.currentLap,
     if (mode == AppMode.race && raceLaps != null) 'totalLaps': raceLaps!.total,
     if (mode == AppMode.race && (raceLaps?.estimated ?? false)) 'totalLapsEstimatedFromTimeLimit': true,
+    if (weather != null)
+      'weatherForecast': weather!.toPromptContext(
+        totalLaps: raceLaps?.total,
+        currentLap: mode == AppMode.race ? telemetry.currentLap : null,
+      ),
+    ..._wetPaceContext(),
     'predictedEmptyLap': fuelPrediction.predictedEmptyLap,
     'tireDegradationPercent': tireWearEstimate.percentSlowerThanStintBest,
     'consecutiveDegradingLaps': tireWearEstimate.consecutiveDegradingLaps,
@@ -212,6 +238,21 @@ class FusedRaceState {
     if (mode == AppMode.race && raceRival != null) 'raceRival': raceRival!.toPromptContext(opponentPitStops),
     'recentShiftTimings': recentShifts.map((s) => s.timing.name).toList(),
   };
+
+  /// Wet testing results (see WetPaceTable), when there are any.
+  Map<String, dynamic> _wetPaceContext() {
+    final table = WetPaceTable.fromLaps(practiceLaps);
+    final water = hud.waterPercent;
+    final model = WaterPaceModel.fromLaps(practiceLaps);
+    if (table.isEmpty && weather == null && water == null && model.isEmpty) return const {};
+    return {
+      if (water != null) 'surfaceWaterPercentNow': water.round(),
+      'waterTesting': model.toPromptContext(),
+      'wetTyrePace': table.toPromptContext(pitLossSeconds: pitStopTimeSeconds ?? assumedPitStopSeconds),
+      'pitStopSeconds': pitStopTimeSeconds ?? '${assumedPitStopSeconds.round()} (assumed, not entered)',
+      if (weather != null) 'wetTestsStillToRun': [for (final (l, t) in table.toTest(weather!)) '${t.label} at $l'],
+    };
+  }
 
   /// Time-trial best (qualifying pace) and how the last lap compares --
   /// lets Boxington judge race pace against it.

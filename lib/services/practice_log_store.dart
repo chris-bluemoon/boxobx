@@ -1,37 +1,32 @@
-import 'dart:convert';
-
-import 'package:shared_preferences/shared_preferences.dart';
-
 import '../models/practice_lap_record.dart';
+import 'app_database.dart';
+import 'saved_briefing_store.dart';
 
-/// Persists the practice-lap log (see PracticeLapLogger) to on-device
-/// storage, so laps survive an app restart -- answers "is the data
-/// stored indefinitely": yes, until the driver explicitly clears it or
-/// saves a NEW briefing (a new round), at which point the old round's
-/// practice laps are no longer relevant and are cleared automatically
-/// (mirroring SavedBriefingStore's validation-snapshot behavior).
-///
-/// Deliberately a single list (not one per round) for the same reason
-/// SavedBriefingStore is a single slot: there's only ever one "current"
-/// round being practiced for at a time.
+/// Persists the practice-lap log (see PracticeLapLogger) in the app
+/// database, so laps survive an app restart. The laps belong to the
+/// round saved on the strategy screen (see SavedBriefingStore): load()
+/// returns the current round's, and saving a new round starts an empty
+/// log while the earlier rounds' laps stay in the database as history.
+/// Laps logged before any round is saved go with the first one saved.
 class PracticeLogStore {
-  static const _lapsKey = 'practice_log_laps';
-
-  static Future<void> save(List<PracticeLapRecord> laps) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lapsKey, jsonEncode(laps.map((l) => l.toMap()).toList()));
+  /// Saves [laps] as the current round's whole log.
+  ///
+  /// [round] is the round the laps belong to, if the caller knows it
+  /// (pass it when the save is queued, so a round saved meanwhile
+  /// doesn't get them); otherwise the round saved now.
+  static Future<void> save(List<PracticeLapRecord> laps, {String? round}) async {
+    round ??= await SavedBriefingStore.currentRound();
+    await AppDatabase.replaceRound(AppDatabase.practiceLaps, round, [
+      for (final (i, lap) in laps.indexed) AppDatabase.practiceRow(round, i, lap.toMap()),
+    ]);
   }
 
   static Future<List<PracticeLapRecord>> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_lapsKey);
-    if (raw == null) return const [];
-    final list = jsonDecode(raw) as List;
-    return list.map((e) => PracticeLapRecord.fromMap(e as Map<String, dynamic>)).toList();
+    final round = await SavedBriefingStore.currentRound();
+    final maps = await AppDatabase.loadRound(AppDatabase.practiceLaps, round);
+    return maps.map(PracticeLapRecord.fromMap).toList();
   }
 
-  static Future<void> clear() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_lapsKey);
-  }
+  /// Clears the current round's log.
+  static Future<void> clear({String? round}) => save(const [], round: round);
 }

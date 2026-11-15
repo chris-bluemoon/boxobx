@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../models/fused_race_state.dart';
+import '../models/weather_forecast.dart';
+import '../services/water_pace_model.dart';
+import '../services/wet_pace_table.dart';
+
 import '../models/practice_lap_record.dart';
 import '../services/stint_summary.dart';
 import '../services/test_plan_tracker.dart';
@@ -33,12 +38,21 @@ class PracticeLogScreen extends StatefulWidget {
   /// The test being run right now, if any (shown as in progress).
   final int? activeTestNumber;
 
+  /// The round's weather brief, if any: the wet testing grid shows its
+  /// weathers and the runs still to do.
+  final WeatherForecast? weather;
+
+  /// The round's pit stop time (seconds), for what a tyre switch costs.
+  final double? pitStopTimeSeconds;
+
   const PracticeLogScreen({
     super.key,
     required this.laps,
     this.roundName,
     this.testPlan,
     this.activeTestNumber,
+    this.weather,
+    this.pitStopTimeSeconds,
     required this.onClear,
     required this.onDeleteLap,
   });
@@ -163,6 +177,12 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                     _testPlanCard(widget.testPlan!, laps),
                     const SizedBox(height: 20),
                   ],
+                  if (WetPaceTable.fromLaps(laps) case final table when widget.weather != null || !table.isEmpty || !WaterPaceModel.fromLaps(laps).isEmpty) ...[
+                    _sectionLabel('WET TESTING'),
+                    const SizedBox(height: 8),
+                    _wetTestingCard(table, WaterPaceModel.fromLaps(laps)),
+                    const SizedBox(height: 20),
+                  ],
                   _sectionLabel('STINTS (swipe a lap left or long-press to delete it)'),
                   const SizedBox(height: 8),
                   for (final stint in StintSummary.fromLaps(laps)) ...[
@@ -175,6 +195,122 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
               ),
       ),
     );
+  }
+
+  /// Wet testing: each tyre's pace in each weather (the brief's, plus
+  /// any tested), what still needs running, and what a switch is worth
+  /// against a pit stop.
+  Widget _wetTestingCard(WetPaceTable table, WaterPaceModel water) {
+    final pitLoss = widget.pitStopTimeSeconds ?? FusedRaceState.assumedPitStopSeconds;
+    final toTest = widget.weather == null ? const <(String, WeatherTyre)>[] : table.toTest(widget.weather!);
+    String lapTime(double ms) => '${ms ~/ 60000}:${((ms % 60000) / 1000).toStringAsFixed(3).padLeft(6, '0')}';
+    TextStyle head = TextStyle(color: Colors.grey.shade500, fontSize: 11, fontWeight: FontWeight.bold);
+
+    Widget cell(String level, WeatherTyre tyre) {
+      final pace = table.pace(level, tyre);
+      final wanted = toTest.contains((level, tyre));
+      final (a, b) = WetPaceTable.candidates(level);
+      final faster = table.compare(level)?.faster;
+      return Text(
+        pace != null ? lapTime(pace.lapMs) : (wanted ? 'TO TEST' : (tyre == a || tyre == b ? '--' : '')),
+        style: TextStyle(
+          color: pace == null ? (wanted ? Colors.orangeAccent : Colors.grey.shade600) : (faster == tyre ? Colors.greenAccent : Colors.white),
+          fontSize: 13,
+          fontWeight: pace != null || wanted ? FontWeight.bold : FontWeight.normal,
+        ),
+      );
+    }
+
+    final levels = table.levelsFor(widget.weather);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D2C8C).withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.lightBlue.shade700),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'No dedicated wet tests: any wet laps count. Set the weather on the WEATHER chip to file laps by GT7 preset; '
+            'with the relay running, every lap (practice or race) also logs the water gauge, which sets the crossovers below. '
+            'A switch pays when the faster tyre wins back the ${pitLoss.round()}s stop'
+            '${widget.pitStopTimeSeconds == null ? ' (assumed -- enter the pit stop time on the strategy screen)' : ''} '
+            'over the laps it is used.',
+            style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+          ),
+          const SizedBox(height: 10),
+          Table(
+            columnWidths: const {0: FixedColumnWidth(150), 1: FlexColumnWidth(), 2: FlexColumnWidth(), 3: FlexColumnWidth(), 4: FlexColumnWidth(2.4)},
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            children: [
+              TableRow(
+                children: [
+                  Text('WEATHER', style: head),
+                  Text('SLICKS', style: head),
+                  Text('INTERS', style: head),
+                  Text('WETS', style: head),
+                  Text('SWITCH', style: head),
+                ],
+              ),
+              for (final level in levels)
+                TableRow(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Text(
+                        level == 'DRY' ? 'Dry' : '$level ${WeatherSlot(level).name}',
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                    for (final tyre in WeatherTyre.values) cell(level, tyre),
+                    Text(
+                      switch (table.compare(level)) {
+                        final c? =>
+                          '${c.faster.label} +${(c.deltaMs / 1000).toStringAsFixed(1)}s/lap, '
+                              'pays back in ${c.lapsToPayBack(pitLoss).ceil()} laps',
+                        null => '',
+                      },
+                      style: TextStyle(color: Colors.grey.shade300, fontSize: 11),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text('BY THE WATER GAUGE', style: head),
+          const SizedBox(height: 4),
+          for (final drier in [WeatherTyre.slicks, WeatherTyre.inters])
+            if (water.crossover(drier) case (final w, final measured))
+              Text(
+                '${WeatherTyre.values[drier.index + 1].label} from ${w.round()}% water'
+                '${measured ? ' (measured)' : " (GT7's gauge line -- not measured yet)"}',
+                style: TextStyle(color: measured ? Colors.greenAccent : Colors.grey.shade400, fontSize: 12, fontWeight: measured ? FontWeight.bold : FontWeight.normal),
+              ),
+          for (final fit in water.fits.values) Text(fit.describe(), style: TextStyle(color: Colors.grey.shade300, fontSize: 11)),
+          if (_hasDryWindow(widget.weather) && !water.crossover(WeatherTyre.slicks).$2) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Optional: the brief has a dry spell between rain. A drying run on Inters then slicks would measure '
+              'whether switching for it pays.',
+              style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// True if [weather] calls for slicks between two wetter spells -- the
+  /// close call (does a short dry window pay for two stops?).
+  static bool _hasDryWindow(WeatherForecast? weather) {
+    final phases = weather?.phases ?? const [];
+    for (var i = 1; i < phases.length - 1; i++) {
+      if (phases[i].tyre == WeatherTyre.slicks) return true;
+    }
+    return false;
   }
 
   /// The test plan: each planned stint, what it's for, and whether it's
@@ -269,6 +405,9 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
             ? (stint.lapCount >= StintSummary.dropOffMinLaps ? 'not yet' : '--')
             : 'L${wentOff.fromLapNumber}${wentOff.wearPercentAtDropOff == null ? '' : ' (${wentOff.wearPercentAtDropOff!.round()}% left)'}',
       ),
+      // Grip, from the wheel speeds -- only on stints that recorded it.
+      if (stint.wheelspinPercent case final spin?) ('Wheelspin', '${spin.toStringAsFixed(1)}%'),
+      if (stint.lockupPercent case final lock?) ('Lock-ups', '${lock.toStringAsFixed(1)}%'),
     ];
 
     return Container(

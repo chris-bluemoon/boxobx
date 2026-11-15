@@ -1,6 +1,7 @@
 import '../models/hud_overlay_data.dart';
 import '../models/opponent_pit_stop.dart';
 import '../models/traffic_map.dart';
+import 'league_roster.dart';
 
 /// What we know about the race rival right now (see RaceRivalTracker).
 class RaceRivalState {
@@ -107,7 +108,9 @@ class RaceRivalTracker {
   String? get rival => _rival;
 
   /// Chooses the rival (null = none). Starts tracking afresh.
+  /// [name] null (or our own name, see playerName) means no rival.
   void setRival(String? name) {
+    if (name == playerName) name = null;
     if (name == _rival) return;
     _rival = name;
     reset();

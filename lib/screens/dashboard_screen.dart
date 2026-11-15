@@ -27,6 +27,7 @@ import '../services/rejoin_forecaster.dart';
 import '../services/pit_call_advisor.dart';
 import '../services/test_plan_tracker.dart';
 import '../services/stint_summary.dart';
+import '../services/wet_tyre_caller.dart';
 import '../services/race_report.dart';
 import '../services/corner_report.dart';
 import '../models/test_plan.dart';
@@ -35,6 +36,7 @@ import '../models/app_mode.dart';
 import '../models/sector_state.dart';
 import '../models/time_trial_lap.dart';
 import '../models/race_strategy.dart';
+import '../models/weather_forecast.dart';
 import 'race_strategy_screen.dart';
 import 'practice_log_screen.dart';
 import 'championship_screen.dart';
@@ -59,7 +61,12 @@ class DashboardScreen extends StatefulWidget {
   /// real network sockets.
   final bool connectOnStart;
 
-  const DashboardScreen({super.key, this.connectOnStart = true});
+  /// Integration tests only: a state manager to use (and feed frames to)
+  /// in place of the dashboard's own.
+  @visibleForTesting
+  final FusedRaceStateManager? raceStateManager;
+
+  const DashboardScreen({super.key, this.connectOnStart = true, this.raceStateManager});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -72,6 +79,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final _pitCallAdvisor = PitCallAdvisor();
   final _testPlanCaller = TestPlanCaller();
   final _dropOffCaller = TyreDropOffCaller();
+  final _wetTyreCaller = WetTyreCaller();
+  int _wetTyreCheckedLap = -1;
   int _dropOffCheckedLaps = -1;
 
   /// The practice test plan for the saved round (see TestPlan), built
@@ -90,16 +99,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// calls and widgets. Remembered between launches.
   AppMode _mode = AppMode.practice;
 
-  /// True while the launch page (Race Mode / Stint Testing / Time
+  /// True while the launch page (Race Mode / Practice / Time
   /// Trialing) is showing -- at every launch, and again when the mode
   /// chip is tapped. The connection stays up meanwhile; unprompted calls
   /// are held.
   bool _choosingMode = true;
 
+  /// Practice with the test plan folded to one line: free practice. A
+  /// running test always shows in full.
+  bool _planHidden = false;
+
+  void _setPlanHidden(bool hidden) {
+    setState(() => _planHidden = hidden);
+    AppModeStore.savePlanHidden(hidden);
+  }
+
   Future<void> _loadMode() async {
     final mode = await AppModeStore.load();
+    final planHidden = await AppModeStore.loadPlanHidden();
     if (!mounted) return;
-    setState(() => _mode = mode);
+    setState(() {
+      _mode = mode;
+      _planHidden = planHidden;
+    });
     _raceStateManager.setMode(mode);
   }
 
@@ -220,6 +242,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _dropOffCheckedLaps = state.practiceLaps.length;
     if (_raceStateManager.practiceLapLogger.activeTestNumber != null) return;
     final prompt = _dropOffCaller.check(_currentStintSummary());
+    if (prompt != null) _voiceEngine.speakProactively(prompt, state);
+  }
+
+  /// Race Mode, wet race: once a lap, whether to change tyres for the
+  /// weather (see WetTyreCaller) -- needs the round's weather brief.
+  void _maybeMakeWetTyreCall(FusedRaceState state) {
+    final forecast = state.weather;
+    final totalLaps = state.raceLaps?.total;
+    final water = state.hud.waterPercent;
+    if (_choosingMode || state.sessionPhase != SessionPhase.driving) return;
+    final lap = state.telemetry.currentLap;
+    if (lap == _wetTyreCheckedLap) return;
+
+    // Practice: what the gauge says, as information.
+    if (_mode == AppMode.practice) {
+      if (water == null) return;
+      _wetTyreCheckedLap = lap;
+      final prompt = _wetTyreCaller.practiceCheck(
+        water: water,
+        currentCompound: _raceStateManager.practiceLapLogger.currentTireCompound,
+        laps: state.practiceLaps,
+      );
+      if (prompt != null) _voiceEngine.speakProactively(prompt, state);
+      return;
+    }
+
+    if ((forecast == null && water == null) || totalLaps == null || !_mode.pitCalls) return;
+    _wetTyreCheckedLap = lap;
+    final prompt = _wetTyreCaller.check(
+      forecast: forecast,
+      currentLap: lap,
+      totalLaps: totalLaps,
+      currentCompound: _raceStateManager.practiceLapLogger.currentTireCompound,
+      laps: state.practiceLaps,
+      pitLossSeconds: state.pitStopTimeSeconds ?? FusedRaceState.assumedPitStopSeconds,
+      pitLossAssumed: state.pitStopTimeSeconds == null,
+      plannedStopLaps: [for (final s in _plannedStops) s.lap],
+      opponentStops: state.opponentPitStops,
+      waterPercent: water,
+    );
     if (prompt != null) _voiceEngine.speakProactively(prompt, state);
   }
 
@@ -405,13 +467,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   static String _modeDescription(AppMode mode) => switch (mode) {
     AppMode.race => 'Race calls, pit strategy, traffic and Boxington',
-    AppMode.practice => 'Run the test plan: full-tank stints per compound',
+    AppMode.practice => 'Free practice and the test plan: every lap logged as stints',
     AppMode.timeTrial => 'Qualifying pace: lap times only, as your baseline',
   };
 
   static IconData _modeIcon(AppMode mode) => switch (mode) {
     AppMode.race => Icons.sports_score,
-    AppMode.practice => Icons.science,
+    AppMode.practice => Icons.directions_car,
     AppMode.timeTrial => Icons.timer,
   };
 
@@ -444,7 +506,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: BoxBoxLogo(size: 40, tagline: 'YOUR GT7 ENGINEER'),
               ),
               const SizedBox(height: 16),
-              _trackHeader(accent: Colors.blueGrey.shade600, large: true),
+              _trackHeader(accent: Colors.blueGrey.shade600, large: true, onTap: _pickRound),
               const SizedBox(height: 16),
               for (final mode in AppMode.values) ...[
                 Expanded(
@@ -622,7 +684,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
 
-    _raceStateManager = FusedRaceStateManager(
+    _raceStateManager = widget.raceStateManager ?? FusedRaceStateManager(
       telemetryService: TelemetryUdpService(),
       hudService: HudOcrService(),
       sectorCalculator: SectorCalculator(),
@@ -660,6 +722,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _maybeMakePitCall(state);
       _maybeMakeTestPlanCall(state);
       _maybeMakeDropOffCall(state);
+      _maybeMakeWetTyreCall(state);
       _maybeMakeCornerCall(state);
       _maybeMakeRejoinCall(state);
       // Temporarily disabled -- proactive shift-habit voice callouts
@@ -768,17 +831,73 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ? null
         : TestPlan.fromBriefing(briefing, startCompound: strategy?.startingTireCompound);
     _raceStateManager.setPitStopTime(briefing?.pitStopTimeSeconds);
+    _raceStateManager.setWeather(briefing?.weather);
     _raceStateManager.setRound(name);
     _raceStateManager.setRaceLength(minutes: briefing?.raceLengthMinutes, plannedLaps: briefing?.totalLaps);
-    if (briefing == null) return;
     setState(() {
       _activeRoundName = name;
-      _activeTrackName = briefing.trackName;
+      // The round's track: as briefed, else as the calendar has it -- so
+      // every mode follows the round picked on the home page.
+      _activeTrackName = briefing?.trackName ?? (name == null ? null : LeagueCalendar.byName(name)?.gt7Track);
     });
   }
 
-  /// The GT7 track of the saved round, for the header's circuit emblem.
+  /// The GT7 track of the current round (all three modes), from its
+  /// briefing or the league calendar.
   String? _activeTrackName;
+
+  /// The home page header's round picker: every round in the league
+  /// calendar, plus any other round a briefing was saved under. Picking
+  /// one makes it the current round for every mode -- its track, its
+  /// briefing and strategy (if saved), its test plan and its laps.
+  Future<void> _pickRound() async {
+    final saved = await SavedBriefingStore.savedRounds();
+    if (!mounted) return;
+    final calendarNames = {for (final r in LeagueCalendar.rounds) r.name};
+    final custom = [for (final name in saved) if (name.isNotEmpty && !calendarNames.contains(name)) name];
+    final briefed = saved.toSet();
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('Round · ${LeagueCalendar.season}'),
+        children: [
+          for (final round in LeagueCalendar.rounds)
+            _roundOption(context, round.name, '${round.circuit} · ${round.details}', briefed.contains(round.name)),
+          for (final name in custom) _roundOption(context, name, 'Custom round', true),
+        ],
+      ),
+    );
+    if (picked == null || !mounted || picked == _activeRoundName) return;
+    await SavedBriefingStore.selectRound(picked);
+    await _loadActiveRoundName();
+  }
+
+  Widget _roundOption(BuildContext context, String name, String details, bool briefed) {
+    final current = name == _activeRoundName;
+    final round = LeagueCalendar.byName(name);
+    return SimpleDialogOption(
+      onPressed: () => Navigator.pop(context, name),
+      child: Row(
+        children: [
+          Icon(current ? Icons.radio_button_checked : Icons.radio_button_off, color: current ? Colors.white : Colors.grey, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  round?.round ?? name,
+                  style: TextStyle(fontWeight: current ? FontWeight.bold : FontWeight.w600, fontSize: 16),
+                ),
+                Text(details, style: TextStyle(color: Colors.grey.shade400, fontSize: 12)),
+              ],
+            ),
+          ),
+          if (briefed) Text('BRIEFED', style: TextStyle(color: Colors.green.shade300, fontSize: 11, letterSpacing: 1)),
+        ],
+      ),
+    );
+  }
 
   /// Circuit outlines for the header emblems (loaded once at start).
   TrackOutlines? _trackOutlines;
@@ -790,6 +909,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     IconData? pageIcon,
     VoidCallback? onPageTitleTap,
     bool large = false,
+    VoidCallback? onTap,
   }) {
     final round = _activeRoundName == null ? null : LeagueCalendar.byName(_activeRoundName!);
     return TrackHeader(
@@ -801,6 +921,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       pageIcon: pageIcon,
       onPageTitleTap: onPageTitleTap,
       large: large,
+      onTap: onTap,
     );
   }
 
@@ -812,6 +933,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           roundName: _activeRoundName,
           testPlan: _testPlan,
           activeTestNumber: _raceStateManager.practiceLapLogger.activeTestNumber,
+          weather: _state.weather,
+          pitStopTimeSeconds: _state.pitStopTimeSeconds,
           onClear: () {
             _raceStateManager.clearPracticeLaps();
             Navigator.of(context).pop();
@@ -861,6 +984,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _pitCallAdvisor.reset();
     _testPlanCaller.reset();
     _dropOffCaller.reset();
+    _wetTyreCaller.reset();
     _rejoinCoach.reset();
     _voiceEngine.clearQueuedCallouts();
     _lastGridPosition = null;
@@ -1044,6 +1168,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: const Text('Race rival'),
         children: [
           for (final name in leagueRoster)
+            if (name != playerName)
             SimpleDialogOption(
               onPressed: () => Navigator.pop(context, name),
               child: Text(name, style: TextStyle(fontWeight: name == current ? FontWeight.bold : FontWeight.normal)),
@@ -1063,11 +1188,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _loadRaceRival() async {
     final rival = await RaceRivalStore.load();
-    if (!mounted || rival == null) return;
+    if (!mounted || rival == null || rival == playerName) return;
     setState(() => _raceStateManager.setRaceRival(rival));
   }
 
-  /// Stint Testing's tyre row: the tyre laps are being logged on,
+  /// Practice's tyre row: the tyre laps are being logged on,
   /// read-only (the relay reads it off the HUD, and starting a test sets
   /// it), plus the laps chip and NEW STINT.
   Widget _tyreRow() {
@@ -1085,6 +1210,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
         const SizedBox(width: 8),
+        _weatherChip(),
+        const SizedBox(width: 8),
         _chip(
           _lapsChipLabel(),
           color: Colors.blue.shade900.withValues(alpha: 0.4),
@@ -1095,6 +1222,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _chip('NEW STINT', color: Colors.grey.shade800, border: Colors.grey.shade600, onTap: _startNewStint),
       ],
     );
+  }
+
+  /// Practice's weather chip: the GT7 weather the laps are being
+  /// tested in (set the same in the practice lobby), for wet testing.
+  Widget _weatherChip() {
+    final weather = _raceStateManager.practiceLapLogger.currentWeather;
+    return _chip(
+      'WEATHER: ${weather ?? 'DRY'}${_state.hud.waterPercent == null ? '' : ' · WATER ${_state.hud.waterPercent!.round()}%'} ▾',
+      color: weather == null ? Colors.amber.shade900.withValues(alpha: 0.35) : const Color(0xFF0D47A1),
+      border: weather == null ? Colors.amber.shade700 : Colors.lightBlue.shade400,
+      onTap: _pickWeather,
+    );
+  }
+
+  /// Picks the weather being tested: dry or a rain preset, with the
+  /// presets in the round's weather brief marked. A change starts a new
+  /// stint, so each stint is one weather.
+  Future<void> _pickWeather() async {
+    final inBrief = {...?_state.weather?.slots.where((s) => s.isRain).map((s) => s.code)};
+    final current = _raceStateManager.practiceLapLogger.currentWeather;
+    Widget option(String? code, String name, String tyre) => SimpleDialogOption(
+      onPressed: () => Navigator.pop(context, code ?? 'DRY'),
+      child: Row(
+        children: [
+          Icon(code == current ? Icons.radio_button_checked : Icons.radio_button_off, size: 20, color: code == current ? Colors.white : Colors.grey),
+          const SizedBox(width: 12),
+          SizedBox(width: 44, child: Text(code ?? 'DRY', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: const TextStyle(fontSize: 14)),
+                Text(tyre, style: TextStyle(color: Colors.grey.shade400, fontSize: 12)),
+              ],
+            ),
+          ),
+          if (code != null && inBrief.contains(code)) Text('IN BRIEF', style: TextStyle(color: Colors.lightBlue.shade200, fontSize: 11, letterSpacing: 1)),
+        ],
+      ),
+    );
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Weather being tested'),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            child: Text(
+              'Set the same weather in the practice lobby. Changing it starts a new stint.',
+              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+            ),
+          ),
+          option(null, 'Dry (cloudy or sunny)', 'Slicks'),
+          for (var n = 1; n <= 8; n++)
+            if (WeatherSlot('R0$n') case final slot) option(slot.code, slot.name, slot.tyre.label),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _raceStateManager.practiceLapLogger.setWeather(picked == 'DRY' ? null : picked));
   }
 
   // --- race ---------------------------------------------------------------
@@ -1468,7 +1655,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return Column(
       children: [
-        _practiceTestPanel(plan, progress, stint),
+        if (_planHidden && progress?.running == null) _hiddenPlanBar(progress) else _practiceTestPanel(plan, progress, stint),
         const SizedBox(height: 12),
         Expanded(
           child: Column(
@@ -1485,7 +1672,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           wear <= running!.stopAtWearRemainingPercent! + TestPlanTracker.wearTolerancePercent,
                     ),
                     const SizedBox(width: 12),
-                    tile('LAPS', '${stint?.lapCount ?? 0}${expected == null ? '' : ' / ~$expected'}'),
+                    tile(
+                      (stint?.excludedLaps.length ?? 0) == 0 ? 'LAPS' : 'LAPS (+${stint!.excludedLaps.length} OFF-PACE)',
+                      '${stint?.lapCount ?? 0}${expected == null ? '' : ' / ~$expected'}',
+                    ),
                   ],
                 ),
               ),
@@ -1536,6 +1726,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         Text('NO TEST PLAN', style: big),
         const SizedBox(height: 4),
         Text('Save a round on the strategy screen (flag button) to get one.', style: small),
+        const SizedBox(height: 10),
+        Row(children: [_panelButton('HIDE', () => _setPlanHidden(true))]),
       ]);
     }
 
@@ -1578,7 +1770,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         const SizedBox(height: 4),
         Text('All $count tests done -- see the practice log for the results.', style: small),
         const SizedBox(height: 10),
-        Row(children: [_panelButton('RUN A TEST AGAIN', () => _pickTest(plan))]),
+        Row(
+          children: [
+            _panelButton('RUN A TEST AGAIN', () => _pickTest(plan)),
+            const SizedBox(width: 8),
+            _panelButton('HIDE PLAN', () => _setPlanHidden(true)),
+          ],
+        ),
       ]);
     }
 
@@ -1594,9 +1792,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _panelButton('START TEST', () => _confirmStartTest(next)),
           const SizedBox(width: 8),
           _panelButton('CHOOSE TEST', () => _pickTest(plan)),
+          const SizedBox(width: 8),
+          _panelButton('HIDE PLAN', () => _setPlanHidden(true)),
         ],
       ),
     ]);
+  }
+
+  /// The test plan folded away: one line, to bring it back.
+  Widget _hiddenPlanBar(TestPlanProgress? progress) {
+    final next = progress?.next;
+    final status = progress == null
+        ? 'no test plan'
+        : next == null
+        ? 'test plan complete'
+        : 'next test ${next.number}/${progress.plan.stints.length}: ${progress.targetFor(next)}';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade900,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade800),
+      ),
+      child: Row(
+        children: [
+          const Text('FREE PRACTICE', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(status, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
+          ),
+          TextButton(onPressed: () => _setPlanHidden(false), child: const Text('SHOW PLAN')),
+        ],
+      ),
+    );
   }
 
   Widget _panel(Color colour, Color border, List<Widget> children) => Container(

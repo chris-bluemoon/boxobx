@@ -1,16 +1,17 @@
-// Validates SavedBriefingStore's single-slot save/load/clear round trip
-// against real SharedPreferences plugin bindings (mocked storage via
-// setMockInitialValues, same approach the shared_preferences package
-// itself recommends for testing). Uses flutter_test (not a standalone
-// dart script) because SharedPreferences needs Flutter plugin bindings
-// to initialize.
+// Validates SavedBriefingStore: the current round (in mocked
+// SharedPreferences) and each round's briefing and strategy (in the app
+// database, in memory in tests) -- save/load/clear, switching rounds,
+// renames, and importing the single briefing earlier versions saved.
 //
 // Run with: flutter test test/saved_briefing_store_test.dart
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:boxbox/models/race_briefing.dart';
 import 'package:boxbox/models/race_strategy.dart';
+import 'package:boxbox/services/app_database.dart';
 import 'package:boxbox/services/saved_briefing_store.dart';
 
 void main() {
@@ -71,7 +72,7 @@ void main() {
     expect(loadedStrategy, isNull);
   });
 
-  test('saving again overwrites the single slot (only one round is ever kept)', () async {
+  test('each round keeps its own briefing; saving another round makes it current', () async {
     await SavedBriefingStore.save(name: 'Round 5', briefing: briefing, strategy: strategy);
     final laterBriefing = RaceBriefing(
       trackName: 'Fuji Speedway',
@@ -86,6 +87,47 @@ void main() {
     expect(name, 'Round 6');
     expect(loadedBriefing!.trackName, 'Fuji Speedway');
     expect(loadedStrategy, isNull);
+
+    final round5 = await SavedBriefingStore.briefingFor('Round 5');
+    expect(round5!.$1.trackName, 'Suzuka Circuit');
+    expect(round5.$2!.summary, 'One-stop strategy.');
+    expect(await SavedBriefingStore.savedRounds(), ['Round 6', 'Round 5']);
+  });
+
+  test('selecting a round switches to it, with its own briefing or none', () async {
+    await SavedBriefingStore.save(name: 'Round 5', briefing: briefing, strategy: strategy);
+
+    await SavedBriefingStore.selectRound('Round 6 - Sainte-Croix C');
+    var (name, loadedBriefing, _, _, _) = await SavedBriefingStore.load();
+    expect(name, 'Round 6 - Sainte-Croix C');
+    expect(loadedBriefing, isNull);
+    expect(await SavedBriefingStore.currentRound(), 'Round 6 - Sainte-Croix C');
+
+    await SavedBriefingStore.selectRound('Round 5');
+    (name, loadedBriefing, _, _, _) = await SavedBriefingStore.load();
+    expect(loadedBriefing!.trackName, 'Suzuka Circuit');
+  });
+
+  test("renaming the same round takes its briefing with it", () async {
+    await SavedBriefingStore.save(name: 'Round 5', briefing: briefing, strategy: strategy);
+    await SavedBriefingStore.save(name: 'Round 5 - Nürburgring Sprint', briefing: briefing);
+    expect(await SavedBriefingStore.savedRounds(), ['Round 5 - Nürburgring Sprint']);
+  });
+
+  test('the single briefing earlier versions saved is imported under its round', () async {
+    SharedPreferences.setMockInitialValues({
+      'saved_briefing_name': 'Round 4',
+      'saved_briefing_data': jsonEncode(briefing.toMap()),
+      'saved_briefing_strategy': jsonEncode(strategy.toMap()),
+    });
+    await AppDatabase.importFromSharedPreferencesForTests();
+
+    final (name, loadedBriefing, loadedStrategy, _, _) = await SavedBriefingStore.load();
+    expect(name, 'Round 4');
+    expect(loadedBriefing!.trackName, 'Suzuka Circuit');
+    expect(loadedStrategy!.pitStops.single.lap, 16);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('saved_briefing_data'), isNull);
   });
 
   test('clear() removes the saved briefing entirely', () async {

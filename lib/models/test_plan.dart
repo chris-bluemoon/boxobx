@@ -68,6 +68,7 @@ class TestPlan {
   static const double lowFuelStartPercent = 20;
   static const int lowFuelLaps = 4;
 
+
   /// Dry compounds, softest first.
   static const List<String> _drySoftestFirst = ['Racing Soft', 'Racing Medium', 'Racing Hard'];
 
@@ -112,4 +113,5 @@ class TestPlan {
     ];
     return TestPlan(stints);
   }
+
 }

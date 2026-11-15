@@ -92,6 +92,10 @@ class HudOverlayData {
   /// requiring manual entry on the dashboard's tire picker.
   final String? tireCompound;
 
+  /// Surface water on the track, percent, from GT7's water gauge (see
+  /// laptop_ocr/water_gauge_reader.py); null when it isn't on screen.
+  final double? waterPercent;
+
   /// Every leaderboard row visible this frame, top to bottom (the top
   /// few cars plus a window around ours) -- where the race rival's
   /// position, gap and pit flag are read from (see RaceRivalTracker).
@@ -126,6 +130,7 @@ class HudOverlayData {
     this.tireWearRearLeftPercent,
     this.tireWearRearRightPercent,
     this.tireCompound,
+    this.waterPercent,
     this.standings = const [],
     this.driversInPit = const {},
     this.traffic = TrafficMap.empty,
@@ -150,6 +155,7 @@ class HudOverlayData {
         tireWearRearLeftPercent: (map['tireWearRearLeftPercent'] as num?)?.toDouble(),
         tireWearRearRightPercent: (map['tireWearRearRightPercent'] as num?)?.toDouble(),
         tireCompound: map['tireCompound'] as String?,
+        waterPercent: (map['waterPercent'] as num?)?.toDouble(),
         standings: [
           for (final row in (map['standings'] as List? ?? const []))
             StandingsRow.fromJson(row as Map<String, dynamic>),

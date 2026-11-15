@@ -14,6 +14,9 @@
 /// laptop_ocr/driver_roster.py's LEAGUE_ROSTER to match, or OCR
 /// correction and in-app driver selection (standings entry, rival
 /// picking) will silently drift out of sync with each other.
+/// Our own gamertag (the driver using the app) -- never a rival.
+const String playerName = 'Willy-SwerveX';
+
 const List<String> leagueRoster = [
   'Salty-067',
   'Chuck_E82',

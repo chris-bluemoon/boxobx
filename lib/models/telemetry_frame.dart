@@ -63,6 +63,12 @@ class TelemetryFrame {
   /// some packets are lost on Wi-Fi (see SectorCalculator). 0 if unknown.
   final int packetId;
 
+  /// Each wheel's road speed [FL, FR, RL, RR], km/h: its rotation speed
+  /// (offsets 0xA4-0xB0, rad/s) times its tyre radius (0xB4-0xC0, m).
+  /// Against [speedKmh] it shows a wheel spinning or locking (see
+  /// GripTracker). Empty when unknown.
+  final List<double> wheelSpeedsKmh;
+
   const TelemetryFrame({
     required this.rpm,
     required this.speedKmh,
@@ -85,6 +91,7 @@ class TelemetryFrame {
     this.minAlertRpm = 0,
     this.maxAlertRpm = 0,
     this.packetId = 0,
+    this.wheelSpeedsKmh = const [],
   });
 
   bool get isCarOnTrack => flags & TelemetryFlags.carOnTrack != 0;
@@ -137,6 +144,7 @@ class TelemetryFrame {
     'minAlertRpm': minAlertRpm,
     'maxAlertRpm': maxAlertRpm,
     'packetId': packetId,
+    'wheelSpeedsKmh': wheelSpeedsKmh,
   };
 
   factory TelemetryFrame.fromMap(Map<String, dynamic> map) => TelemetryFrame(
@@ -161,6 +169,7 @@ class TelemetryFrame {
     minAlertRpm: (map['minAlertRpm'] as num?)?.toInt() ?? 0,
     maxAlertRpm: (map['maxAlertRpm'] as num?)?.toInt() ?? 0,
     packetId: (map['packetId'] as num?)?.toInt() ?? 0,
+    wheelSpeedsKmh: [for (final w in (map['wheelSpeedsKmh'] as List?) ?? const []) (w as num).toDouble()],
   );
 }
 

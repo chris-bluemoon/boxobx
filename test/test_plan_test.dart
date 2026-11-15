@@ -143,7 +143,7 @@ void main() {
 
     test('the stint label names the test', () {
       final s = StintSummary.fromLaps(_stint(3, test: 2, tyre: 'Racing Soft')).single;
-      expect(s.label('Round 5'), 'Round 5 Testing - Stint 3 (Test 2) - Fuel 100%, Tyre RS');
+      expect(s.label('Round 5'), 'Round 5 Practice - Stint 3 (Test 2) - Fuel 100%, Tyre RS');
     });
   });
 

@@ -28,6 +28,10 @@ class TrackHeader extends StatelessWidget {
   /// Hero size for the home page; compact on the mode screens.
   final bool large;
 
+  /// Tapping the header itself (the home page: pick another round). Shows
+  /// a "change round" button where a page heading would go.
+  final VoidCallback? onTap;
+
   const TrackHeader({
     super.key,
     required this.roundName,
@@ -38,6 +42,7 @@ class TrackHeader extends StatelessWidget {
     this.pageIcon,
     this.onPageTitleTap,
     this.large = false,
+    this.onTap,
   });
 
   @override
@@ -45,10 +50,12 @@ class TrackHeader extends StatelessWidget {
     final emblemSize = large ? 132.0 : 96.0;
     final circuit = round?.circuit ?? (roundName ?? 'NO ROUND SELECTED');
     final overline = round == null
-        ? (roundName == null ? 'SAVE A ROUND ON THE STRATEGY SCREEN' : 'CUSTOM ROUND')
+        ? (roundName == null
+              ? (onTap == null ? 'PICK A ROUND ON THE HOME PAGE' : 'TAP TO PICK A ROUND')
+              : 'CUSTOM ROUND')
         : '${LeagueCalendar.season.toUpperCase()}  ·  ${round!.round.toUpperCase()}';
 
-    return Container(
+    final header = Container(
       padding: EdgeInsets.all(large ? 20 : 14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
@@ -113,6 +120,33 @@ class TrackHeader extends StatelessWidget {
               ],
             ),
           ),
+          if (onTap != null && pageTitle == null) ...[
+            const SizedBox(width: 12),
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: large ? 16 : 12, vertical: large ? 12 : 8),
+              decoration: BoxDecoration(
+                color: Colors.white10,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'CHANGE ROUND',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: large ? 15 : 13,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(Icons.expand_more, color: Colors.white, size: large ? 24 : 20),
+                ],
+              ),
+            ),
+          ],
           if (pageTitle != null) ...[
             const SizedBox(width: 12),
             InkWell(
@@ -148,6 +182,11 @@ class TrackHeader extends StatelessWidget {
           ],
         ],
       ),
+    );
+    if (onTap == null) return header;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(20), child: header),
     );
   }
 

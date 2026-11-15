@@ -98,7 +98,7 @@ void main() {
 
     test('the label reads like the round, mode, stint, start fuel and tyre', () {
       final s = StintSummary.fromLaps(stint1).single;
-      expect(s.label('Round 5'), 'Round 5 Testing - Stint 1 - Fuel 100%, Tyre RS');
+      expect(s.label('Round 5'), 'Round 5 Practice - Stint 1 - Fuel 100%, Tyre RS');
       final race = StintSummary.fromLaps([_lap(stint: 2, fuelStart: 64, tyre: 'Racing Medium', race: true)]).single;
       expect(race.label('Round 5'), 'Round 5 Race - Stint 2 - Fuel 64%, Tyre RM');
     });
@@ -194,6 +194,26 @@ void main() {
       expect(dropOff.fromLapNumber, inInclusiveRange(6, 10));
     });
 
+    test('the latest lap of a fading stint still counts', () {
+      // Fading by 0.25 s a lap from lap 9: the last lap is on the trend,
+      // though well off the median of the laps before it.
+      final times = [for (var i = 0; i < 14; i++) 90000 + noise[i] + (i >= 8 ? 1100 + (i - 8) * 250 : 0)];
+      for (var n = 10; n <= 14; n++) {
+        final s = StintSummary.fromLaps(laps(times.sublist(0, n))).single;
+        expect(s.excludedLaps, isEmpty, reason: 'after $n laps');
+      }
+    });
+
+    test('a cliff on the latest lap is held back until the next lap confirms it', () {
+      final times = [for (var i = 0; i < 12; i++) 90000 + noise[i] + (i >= 8 ? 1300 : 0)];
+      // On its own it can't be told from one slow lap...
+      expect(StintSummary.fromLaps(laps(times.sublist(0, 9))).single.excludedLaps.map((l) => l.lapNumber), [9]);
+      // ...but once another lap at the new pace is in, both count.
+      for (var n = 10; n <= 12; n++) {
+        expect(StintSummary.fromLaps(laps(times.sublist(0, n))).single.excludedLaps, isEmpty, reason: 'after $n laps');
+      }
+    });
+
     test('a single slow lap near the end is not called as a drop-off', () {
       final times = [for (var i = 0; i < 10; i++) 90000 + noise[i]];
       times[8] = 91000;
@@ -233,8 +253,8 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Round 5 Testing - Stint 1 - Fuel 100%, Tyre RS'), findsOneWidget);
-    expect(find.text('Round 5 Testing - Stint 2 - Fuel 60%, Tyre RM'), findsOneWidget);
+    expect(find.text('Round 5 Practice - Stint 1 - Fuel 100%, Tyre RS'), findsOneWidget);
+    expect(find.text('Round 5 Practice - Stint 2 - Fuel 60%, Tyre RM'), findsOneWidget);
     expect(find.text('3.00%'), findsWidgets); // fuel per lap
   });
 }

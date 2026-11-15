@@ -213,6 +213,9 @@ TelemetryFrame? decodeGt7Packet(Uint8List data) {
   // Packet counter, +1 every 1/60 s of game time.
   final packetId = buffer.getInt32(0x70, Endian.little);
 
+  // Wheel rotation (rad/s, negative going forwards) x tyre radius (m).
+  final wheelSpeedsKmh = [for (var i = 0; i < 4; i++) (f32(0xA4 + i * 4) * f32(0xB4 + i * 4)).abs() * 3.6];
+
   return TelemetryFrame(
     rpm: rpm,
     speedKmh: speedMs * 3.6, // convert meters/second to km/h
@@ -236,6 +239,7 @@ TelemetryFrame? decodeGt7Packet(Uint8List data) {
     minAlertRpm: minAlertRpm,
     maxAlertRpm: maxAlertRpm,
     packetId: packetId,
+    wheelSpeedsKmh: wheelSpeedsKmh,
   );
 }
 

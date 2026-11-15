@@ -82,6 +82,26 @@ class PracticeLapRecord {
   /// SectorCalculator), adding up to [lapTimeMs]; null if not split.
   final List<int>? sectorsMs;
 
+  /// Grip over the lap, from the wheel speeds (see GripTracker): share
+  /// of full-throttle time spinning a wheel or with TCS working, and of
+  /// braking time locking one, percent. Null for laps logged before
+  /// these were recorded, or without wheel speeds.
+  final double? wheelspinPercent;
+  final double? tcsPercent;
+  final double? lockupPercent;
+
+  /// The GT7 weather the driver said they were testing in (a rain
+  /// preset, "R01"-"R08", set on the dashboard); null = dry.
+  final String? weather;
+
+  /// "DRY" or the rain preset.
+  String get weatherLevel => weather ?? 'DRY';
+
+  /// Surface water on the track over the lap, percent: the mean of the
+  /// relay's readings of GT7's water gauge. Null if never read (relay
+  /// off, or laps from before it was read).
+  final double? waterPercent;
+
   const PracticeLapRecord({
     required this.lapNumber,
     required this.lapTimeMs,
@@ -101,6 +121,11 @@ class PracticeLapRecord {
     this.raceNumber,
     this.position,
     this.sectorsMs,
+    this.wheelspinPercent,
+    this.tcsPercent,
+    this.lockupPercent,
+    this.weather,
+    this.waterPercent,
   });
 
   /// Fuel percent actually consumed over this lap -- negative values
@@ -135,6 +160,11 @@ class PracticeLapRecord {
     raceNumber: (map['raceNumber'] as num?)?.toInt(),
     position: (map['position'] as num?)?.toInt(),
     sectorsMs: (map['sectorsMs'] as List?)?.map((s) => (s as num).toInt()).toList(),
+    wheelspinPercent: (map['wheelspinPercent'] as num?)?.toDouble(),
+    tcsPercent: (map['tcsPercent'] as num?)?.toDouble(),
+    lockupPercent: (map['lockupPercent'] as num?)?.toDouble(),
+    weather: map['weather'] as String?,
+    waterPercent: (map['waterPercent'] as num?)?.toDouble(),
   );
 
   Map<String, dynamic> toMap() => {
@@ -156,6 +186,11 @@ class PracticeLapRecord {
     'raceNumber': raceNumber,
     'position': position,
     'sectorsMs': sectorsMs,
+    'wheelspinPercent': wheelspinPercent,
+    'tcsPercent': tcsPercent,
+    'lockupPercent': lockupPercent,
+    'weather': weather,
+    'waterPercent': waterPercent,
   };
 
   /// Returns a copy with tireWearPercent set -- used by the Practice
@@ -181,6 +216,11 @@ class PracticeLapRecord {
     raceNumber: raceNumber,
     position: position,
     sectorsMs: sectorsMs,
+    wheelspinPercent: wheelspinPercent,
+    tcsPercent: tcsPercent,
+    lockupPercent: lockupPercent,
+    weather: weather,
+    waterPercent: waterPercent,
   );
 
   /// Returns a copy marked as the lap on which its test was called
@@ -204,6 +244,11 @@ class PracticeLapRecord {
     raceNumber: raceNumber,
     position: position,
     sectorsMs: sectorsMs,
+    wheelspinPercent: wheelspinPercent,
+    tcsPercent: tcsPercent,
+    lockupPercent: lockupPercent,
+    weather: weather,
+    waterPercent: waterPercent,
   );
 
   /// Returns a copy with a different lapNumber -- used by
@@ -229,5 +274,10 @@ class PracticeLapRecord {
     raceNumber: raceNumber,
     position: position,
     sectorsMs: sectorsMs,
+    wheelspinPercent: wheelspinPercent,
+    tcsPercent: tcsPercent,
+    lockupPercent: lockupPercent,
+    weather: weather,
+    waterPercent: waterPercent,
   );
 }

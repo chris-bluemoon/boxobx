@@ -15,6 +15,7 @@ def check(label, condition):
 check("parses '+ 1:51' as 111s", _parse_gap_seconds("+ 1:51") == 111)
 check("parses '+2:00' as 120s", _parse_gap_seconds("+2:00") == 120)
 check("parses decimal fallback '+0.452'", abs(_parse_gap_seconds("+0.452") - 0.452) < 1e-9)
+check("parses '+ 0.299' (OCR space after the sign) as 0.299s", abs(_parse_gap_seconds("+ 0.299") - 0.299) < 1e-9)
 check("driver name 'S: Baumann' is not a gap", _parse_gap_seconds("S: Baumann") is None)
 check("driver name 'G. Howe' is not a gap", _parse_gap_seconds("G. Howe") is None)
 

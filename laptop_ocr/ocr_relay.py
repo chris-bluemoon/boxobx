@@ -21,6 +21,7 @@ import easyocr
 
 from ocr_preprocessing import preprocess_cell, POSITION_DIGIT_ALLOWLIST
 from tire_wear_reader import read_tire_wear
+from water_gauge_reader import read_water_percent
 from minimap_tracker import TrafficTracker
 from driver_roster import correct_driver_name, is_close_to_roster_entry, is_same_driver
 
@@ -66,7 +67,8 @@ def _parse_gap_seconds(text: str):
 
     decimal_match = GAP_DECIMAL_PATTERN.search(text)
     if decimal_match:
-        return abs(float(decimal_match.group(0)))
+        # OCR can split the sign from the number ("+ 0.299").
+        return abs(float(re.sub(r"\s+", "", decimal_match.group(0))))
 
     return None
 
@@ -1371,6 +1373,10 @@ def main() -> None:
             parsed["tireWearRearLeftPercent"] = tire_wear.rear_left_percent
             parsed["tireWearRearRightPercent"] = tire_wear.rear_right_percent
             parsed["tireCompound"] = last_tire_compound
+
+            # Surface water gauge (water_gauge_reader.py): 0-100, None
+            # when the gauge isn't on screen.
+            parsed["waterPercent"] = read_water_percent(frame)
 
             parsed["traffic"] = traffic_tracker.update(frame, now).to_payload()
 
