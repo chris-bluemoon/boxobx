@@ -153,4 +153,16 @@ void main() {
       expect(PitCallAdvisor().check(clear, plannedStops: const [], pitLapsThisSession: const {}), isNull);
     });
   });
+
+  test('a lap race GT7 sends no lap count for uses the brief\'s laps', () {
+    final estimator = RaceLapEstimator()..plannedLaps = 32;
+    final laps = estimator.update(
+      const TelemetryFrame(
+        rpm: 0, speedKmh: 0, gear: 1, posX: 0, posY: 0, posZ: 0, lapDistance: 0, trackLength: 0,
+        fuelPercent: 100, tireTemps: [0, 0, 0, 0], currentLap: 1,
+      ),
+    );
+    expect(laps?.total, 32);
+    expect(laps?.estimated, isFalse);
+  });
 }

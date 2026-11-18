@@ -145,6 +145,35 @@ void main() {
           ),
     ]);
 
+    // An earlier round's practice, kept in the database as history.
+    await PracticeLogStore.save([
+      for (var i = 0; i < 12; i++)
+        PracticeLapRecord(
+          lapNumber: i + 1,
+          lapTimeMs: 78400 + (i % 4) * 160,
+          tireCompound: i < 6 ? 'Racing Medium' : 'Racing Soft',
+          fuelPercentAtLapStart: 100 - i * 3.0,
+          fuelPercentAtLapEnd: 97 - i * 3.0,
+          recordedAt: DateTime(2026, 11, 7, 19, i * 2),
+          stintNumber: i < 6 ? 1 : 2,
+        ),
+      // ...and its race: 10 laps, one stop, finished P3.
+      for (var i = 0; i < 10; i++)
+        PracticeLapRecord(
+          lapNumber: 13 + i,
+          lapTimeMs: (i == 5 ? 104200 : 78900 + (i % 3) * 120),
+          tireCompound: i < 5 ? 'Racing Medium' : 'Racing Soft',
+          fuelPercentAtLapStart: 100 - i * 3.0,
+          fuelPercentAtLapEnd: 97 - i * 3.0,
+          recordedAt: DateTime(2026, 11, 12, 20, i * 2),
+          stintNumber: i < 5 ? 3 : 4,
+          isRaceLap: true,
+          raceNumber: 1,
+          isPitLap: i == 5,
+          position: i < 5 ? 4 : 3,
+        ),
+    ], round: 'Round 4 - Alsace Village (Reverse)');
+
     final manager = FusedRaceStateManager(
       telemetryService: TelemetryUdpService(),
       hudService: HudOcrService(),
@@ -203,10 +232,11 @@ void main() {
     await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('PRACTICE')));
     await tester.pumpAndSettle();
     await binding.takeScreenshot('02_stint_dashboard_dropped_off');
-    await tester.tap(find.textContaining('WEATHER:'));
+    // The wet brief's stint tests: Wets vs Inters at its rain levels.
+    await tester.tap(find.text('CHOOSE STINT TEST').first);
     await tester.pumpAndSettle();
-    await binding.takeScreenshot('02b_weather_picker');
-    await tester.tap(find.text('Dry (cloudy or sunny)'));
+    await binding.takeScreenshot('02b_wet_stint_tests');
+    await tester.tapAt(const Offset(20, 20));
     await tester.pumpAndSettle();
     await tester.tap(find.text('HIDE'));
     await tester.pumpAndSettle();
@@ -247,7 +277,22 @@ void main() {
     await binding.takeScreenshot('08b_aprl_standings');
     await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('HOME')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('RACE STRATEGY').last);
+    await tester.tap(find.text('PRACTICE LOG'));
+    await tester.pumpAndSettle();
+    await binding.takeScreenshot('08c_practice_log_rounds');
+    await tester.tap(find.text('Round 4 - Alsace Village (Reverse)'));
+    await tester.pumpAndSettle();
+    await binding.takeScreenshot('08d_earlier_round_log');
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('RACE REPORTS'));
+    await tester.pumpAndSettle();
+    await binding.takeScreenshot('08e_race_report_rounds');
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('RACE BRIEF').last);
     await tester.pumpAndSettle();
     final timeline = find.textContaining('Assumes the slots');
     await tester.scrollUntilVisible(timeline, 300, scrollable: find.byType(Scrollable).first);

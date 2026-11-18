@@ -59,15 +59,15 @@ void main() {
     expect(find.text('17/11 – 19/11 · variable weather'), findsOneWidget);
     expect(find.text('Nürburgring Sprint'), findsWidgets, reason: 'track pre-selected');
 
-    final save = find.widgetWithText(OutlinedButton, 'SAVE BRIEFING FOR NEXT TIME');
-    await tester.scrollUntilVisible(save, 500, scrollable: find.byType(Scrollable).first);
-    await tester.tap(save, warnIfMissed: false);
+    // Saved automatically -- no Save button.
+    await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
+    await RaceStrategyScreen.lastSave;
 
     final (name, briefing, _, _, _) = await SavedBriefingStore.load();
     expect(name, 'Round 5 - Nürburgring Sprint');
     expect(briefing!.trackName, 'Nürburgring Sprint');
-    expect(briefing.wetOrChangeableWeather, isTrue);
+    expect(briefing.weatherSlots, '', reason: 'the weather comes from the weekly brief, not the calendar');
   });
 
   test("renaming 'Round 5' to its calendar name keeps the round's data; a different round still clears it", () {

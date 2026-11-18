@@ -67,7 +67,15 @@ class TtsStreamingService {
         : Uri.parse(
             'wss://api.elevenlabs.io/v1/text-to-speech/$voiceId/stream-input?model_id=eleven_turbo_v2&api_key=$apiKey');
 
-    _channel = WebSocketChannel.connect(uri);
+    final channel = WebSocketChannel.connect(uri);
+    try {
+      // A refused handshake (bad key, blocked network) otherwise surfaces
+      // as an unhandled error nobody can catch.
+      await channel.ready;
+    } catch (error) {
+      throw Exception('TTS ($provider) connection failed: $error');
+    }
+    _channel = channel;
 
     if (provider == 'elevenlabs') {
       _channel!.sink.add(jsonEncode({

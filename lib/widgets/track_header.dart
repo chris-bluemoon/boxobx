@@ -35,11 +35,23 @@ class TrackHeader extends StatelessWidget {
   /// a "change round" button where a page heading would go.
   final VoidCallback? onTap;
 
+  /// A page heading that isn't about a round (the APRL standings): this
+  /// title in place of the circuit, with its own overline and detail
+  /// line, and [emblemIcon] in the emblem.
+  final String? title;
+  final String? overlineText;
+  final String? details;
+  final IconData? emblemIcon;
+
   const TrackHeader({
     super.key,
     required this.roundName,
     required this.round,
     required this.outline,
+    this.title,
+    this.overlineText,
+    this.details,
+    this.emblemIcon,
     required this.accent,
     this.pageTitle,
     this.pageIcon,
@@ -52,12 +64,15 @@ class TrackHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final emblemSize = large ? 132.0 : 96.0;
-    final circuit = round?.circuit ?? (roundName ?? 'NO ROUND SELECTED');
-    final overline = round == null
+    final round = title == null ? this.round : null;
+    final circuit = title ?? round?.circuit ?? (roundName ?? 'NO ROUND SELECTED');
+    final overline = overlineText != null
+        ? overlineText!
+        : round == null
         ? (roundName == null
               ? (onTap == null ? 'PICK A ROUND ON THE HOME PAGE' : 'TAP TO PICK A ROUND')
               : 'CUSTOM ROUND')
-        : '${LeagueCalendar.season.toUpperCase()}  ·  ${round!.round.toUpperCase()}';
+        : '${LeagueCalendar.season.toUpperCase()}  ·  ${round.round.toUpperCase()}';
 
     final header = Container(
       padding: EdgeInsets.all(large ? 20 : 14),
@@ -74,7 +89,13 @@ class TrackHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _Emblem(outline: outline, accent: accent, size: emblemSize, fallbackLabel: _badgeLabel()),
+          _Emblem(
+            outline: title == null ? outline : null,
+            accent: accent,
+            size: emblemSize,
+            fallbackLabel: _badgeLabel(),
+            icon: emblemIcon,
+          ),
           SizedBox(width: large ? 22 : 16),
           Expanded(
             child: Column(
@@ -92,6 +113,13 @@ class TrackHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 _CircuitName(circuit.toUpperCase(), fontSize: large ? 34 : 26),
+                if (details != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    details!,
+                    style: TextStyle(color: Colors.grey.shade300, fontSize: large ? 14 : 12, letterSpacing: 1),
+                  ),
+                ],
                 if (round != null) ...[
                   const SizedBox(height: 8),
                   Wrap(
@@ -100,13 +128,13 @@ class TrackHeader extends StatelessWidget {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(
-                        round!.dates,
+                        round.dates,
                         style: TextStyle(color: Colors.grey.shade300, fontSize: large ? 14 : 12, letterSpacing: 1),
                       ),
-                      if (round!.featureRace) const _Tag('FEATURE RACE', Color(0xFFFFD54F), Colors.black),
-                      if (round!.variableWeather) const _Tag('VARIABLE WEATHER', Color(0xFF4FC3F7), Colors.black),
-                      if (round!.raceLengthMinutes != null)
-                        _Tag('${round!.raceLengthMinutes} MIN ENDURO', Colors.white, Colors.black),
+                      if (round.featureRace) const _Tag('FEATURE RACE', Color(0xFFFFD54F), Colors.black),
+                      if (round.variableWeather) const _Tag('VARIABLE WEATHER', Color(0xFF4FC3F7), Colors.black),
+                      if (round.raceLengthMinutes != null)
+                        _Tag('${round.raceLengthMinutes} MIN ENDURO', Colors.white, Colors.black),
                     ],
                   ),
                 ],
@@ -271,8 +299,15 @@ class _Emblem extends StatelessWidget {
   final Color accent;
   final double size;
   final String fallbackLabel;
+  final IconData? icon;
 
-  const _Emblem({required this.outline, required this.accent, required this.size, required this.fallbackLabel});
+  const _Emblem({
+    required this.outline,
+    required this.accent,
+    required this.size,
+    required this.fallbackLabel,
+    this.icon,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -285,7 +320,9 @@ class _Emblem extends StatelessWidget {
         border: Border.all(color: Colors.white12),
       ),
       padding: EdgeInsets.all(size * 0.1),
-      child: outline == null || outline!.length < 3
+      child: icon != null
+          ? Center(child: Icon(icon, color: accent, size: size * 0.5))
+          : outline == null || outline!.length < 3
           ? Center(
               child: Text(
                 fallbackLabel,

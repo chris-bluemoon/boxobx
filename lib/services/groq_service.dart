@@ -15,7 +15,26 @@ class GroqService {
   final String apiKey;
   static const String _baseUrl = 'https://api.groq.com/openai/v1';
 
-  GroqService(this.apiKey);
+  GroqService(this.apiKey, {http.Client? client}) : _client = client;
+
+  final http.Client? _client;
+
+  /// Checks Groq will talk to us from this network with this key (a
+  /// cheap model list); throws with Groq's answer if not. Run at start-up
+  /// so a blocked network shows before the race, not at the first call.
+  Future<void> checkAccess() async {
+    final client = _client ?? http.Client();
+    try {
+      final response = await client
+          .get(Uri.parse('$_baseUrl/models'), headers: {'Authorization': 'Bearer $apiKey'})
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) {
+        throw Exception('Groq check failed (${response.statusCode}): ${response.body}');
+      }
+    } finally {
+      if (_client == null) client.close();
+    }
+  }
 
   /// Sends the recorded PTT audio buffer to Groq Whisper for near-instant
   /// transcription.
@@ -55,8 +74,23 @@ Opponent pit calls: driversInPitNow is who is in the pit lane right now; opponen
 Traffic: traffic covers EVERY car on the course map, including ones not on the leaderboard (they're anonymous). nearestCars gives each car's gap in seconds around the lap: positive = behind us, negative = ahead; "count" means several cars bunched together. Use it for "is there traffic" questions and for judging where we'd rejoin after a pit stop (we rejoin roughly a pit-stop's time loss further back, i.e. near the cars that many seconds behind us).
 Pit rejoin: rejoinForecast is where we'd come out if we pitted now -- rejoinTraffic lists cars within 3s of us after the stop (positive = behind us, negative = ahead), clearAir says nobody within 1.5s, carsPassingWhileStopped counts cars (including lapped ones) that go by while we're stopped. playerInPit is true while we're in the pit lane. When asked "should I box"/"where do I come out", use this; prefer stopping into clear air over coming out just behind a car.
 
-Current race state: {RACE_STATE}
+{DRIVER_PROFILE}Current race state: {RACE_STATE}
 ''';
+
+  /// What Boxington has learnt about the driver over every round so far
+  /// (see DriverProfile.toPrompt); null until it's loaded.
+  String? driverProfile;
+
+  static String _profileSection(String? profile) => profile == null || profile.trim().isEmpty
+      ? ''
+      : 'Your driver -- what you have learnt from every lap and race they have logged with you so far:\n'
+          '$profile\n'
+          'Use it like an engineer who has worked with this driver all season: tailor calls to their weaknesses '
+          'before they bite (e.g. if they spin or lock up a lot in the wet, warn them as rain arrives and coach smooth '
+          'inputs; name the corner if one keeps catching them out), and credit them when they beat their usual. '
+          'Everyone is slower in the wet, so judge wet skill by the spins, lock-ups and places, not the lap times alone. '
+          'Bring the history up only when it helps the call -- never recite it, and never invent races or habits that '
+          'are not listed here.\n\n';
 
   /// Issues a streaming HTTP POST request to Groq's chat completions
   /// endpoint and yields text tokens as they arrive (250+ tokens/sec).
@@ -65,10 +99,9 @@ Current race state: {RACE_STATE}
     required FusedRaceState raceState,
   }) async* {
     final uri = Uri.parse('$_baseUrl/chat/completions');
-    final systemPrompt = _systemPromptTemplate.replaceFirst(
-      '{RACE_STATE}',
-      jsonEncode(raceState.toPromptContext()),
-    );
+    final systemPrompt = _systemPromptTemplate
+        .replaceFirst('{DRIVER_PROFILE}', _profileSection(driverProfile))
+        .replaceFirst('{RACE_STATE}', jsonEncode(raceState.toPromptContext()));
 
     final request = http.Request('POST', uri)
       ..headers.addAll({
@@ -84,7 +117,8 @@ Current race state: {RACE_STATE}
         ],
       });
 
-    final streamedResponse = await request.send();
+    final client = _client;
+    final streamedResponse = client != null ? await client.send(request) : await request.send();
 
     if (streamedResponse.statusCode != 200) {
       final body = await streamedResponse.stream.bytesToString();

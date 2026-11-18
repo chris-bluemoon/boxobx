@@ -108,9 +108,12 @@ class WeatherForecast {
   (int, int) lapsOfPhase(WeatherPhase phase, int totalLaps) => _laps(phase.firstSlot, phase.lastSlot, totalLaps);
 
   (int, int) _laps(int first, int last, int totalLaps) {
-    final perSlot = totalLaps / slots.length;
-    final from = ((first - 1) * perSlot).round() + 1;
-    final to = (last * perSlot).round().clamp(from, totalLaps);
+    // Fewer laps than slots (or none set yet) still gives a lap range,
+    // never an error: each slot gets at least its lap, within the race.
+    final laps = totalLaps < 1 ? 1 : totalLaps;
+    final perSlot = laps / slots.length;
+    final from = (((first - 1) * perSlot).round() + 1).clamp(1, laps);
+    final to = (last * perSlot).round().clamp(from, laps);
     return (from, to);
   }
 

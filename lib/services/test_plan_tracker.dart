@@ -65,14 +65,21 @@ class TestPlanTracker {
   /// shouldn't yet. [stint] is null until its first lap completes;
   /// [liveWearRemaining]/[liveFuelPercent] are the current readings, so
   /// a long stint can end mid-lap.
+  ///
+  /// [raceLaps]: for the full race test, the laps run so far across all
+  /// its stints (it carries on through the pit stops).
   static String? stopReason(
     PlannedTestStint planned,
     StintSummary? stint, {
     double? liveWearRemaining,
     double? liveFuelPercent,
+    int? raceLaps,
   }) {
     switch (planned.kind) {
-      case TestStintKind.lowFuel:
+      case TestStintKind.race:
+        final laps = raceLaps ?? stint?.laps.length ?? 0;
+        return laps >= planned.laps! ? 'full race distance done (${planned.laps} laps)' : null;
+      case TestStintKind.lowFuel || TestStintKind.wet:
         final laps = stint?.lapCount ?? 0;
         return laps >= planned.laps! ? '${planned.laps} laps done' : null;
       case TestStintKind.long:
@@ -95,6 +102,30 @@ class TestPlanTracker {
         }
         return null;
     }
+  }
+
+  /// A full race test's attempts: its stints grouped into runs of
+  /// consecutive stint numbers (oldest first).
+  static List<List<StintSummary>> raceRuns(List<StintSummary> oldestFirst) {
+    final runs = <List<StintSummary>>[];
+    for (final s in oldestFirst) {
+      if (runs.isNotEmpty && runs.last.last.stintNumber == s.stintNumber - 1) {
+        runs.last.add(s);
+      } else {
+        runs.add([s]);
+      }
+    }
+    return runs;
+  }
+
+  static int lapsIn(List<StintSummary> run) => run.fold(0, (n, s) => n + s.laps.length);
+
+  /// The laps run so far in the current attempt at the full race test
+  /// [testNumber] (0 if none).
+  static int raceLapsSoFar(List<PracticeLapRecord> laps, int testNumber) {
+    final tagged = StintSummary.fromLaps(laps).reversed.where((s) => s.stintNumber != 0 && s.testNumber == testNumber).toList();
+    final runs = raceRuns(tagged);
+    return runs.isEmpty ? 0 : lapsIn(runs.last);
   }
 
   /// Laps from fresh tyres to [planned]'s wear target, from the most
@@ -122,6 +153,19 @@ class TestPlanTracker {
 
     for (final planned in plan.stints) {
       final tagged = stints.where((s) => s.stintNumber != 0 && s.testNumber == planned.number).toList();
+      if (planned.kind == TestStintKind.race) {
+        // One attempt is a run of back-to-back stints (split by its stops).
+        final runs = raceRuns(tagged);
+        if (planned.number == activeTestNumber) {
+          statuses.add(TestStatus.inProgress);
+          matched.add(tagged.isEmpty ? null : tagged.last);
+          continue;
+        }
+        final done = runs.where((run) => run.any((s) => s.testTargetReached) || stopReason(planned, run.last, raceLaps: lapsIn(run)) != null);
+        statuses.add(done.isEmpty ? TestStatus.toDo : TestStatus.done);
+        matched.add(done.isEmpty ? null : done.first.last);
+        continue;
+      }
       if (planned.number == activeTestNumber) {
         // The latest stint tagged with this test is the one running.
         statuses.add(TestStatus.inProgress);
@@ -165,6 +209,7 @@ class TestPlanCaller {
       progress.matchedStints[index],
       liveWearRemaining: liveWearRemaining,
       liveFuelPercent: liveFuelPercent,
+      raceLaps: planned.kind == TestStintKind.race ? TestPlanTracker.raceLapsSoFar(laps, planned.number) : null,
     );
     final key = (planned.number, currentStintNumber);
     if (reason == null || _called == key) return null;

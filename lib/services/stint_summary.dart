@@ -62,6 +62,15 @@ class StintSummary {
   /// Laps either side of a lap that it's judged against.
   static const int neighbourLaps = 2;
 
+  /// A slow lap the pace never comes back from -- no later lap of the
+  /// stint clearly quicker -- is the tyres going, not a mistake, when
+  /// the gauge shows them this worn (percent left) or it's one of
+  /// [fadeRunLaps] or more such laps at the end; unless a spin was
+  /// logged on it or it's more than [maxFadeMs] off (an off).
+  static const double wornTyresPercent = 60;
+  static const int fadeRunLaps = 2;
+  static const double maxFadeMs = 8000;
+
   /// The tyres have gone off once the pace is this many standard
   /// deviations (and at least [dropOffFloorMs]) slower than peak pace,
   /// and stays there.
@@ -174,14 +183,38 @@ class StintSummary {
     if (laps.length < 3) return (laps, const [], null);
     final residuals = _residuals([for (final l in laps) l.lapTimeMs]);
     final limit = math.max(outlierSigmas * _robustSigma(residuals), outlierFloorMs);
+    final off = [for (var i = 0; i < laps.length; i++) residuals[i].abs() > limit];
+    final steady = [
+      for (var i = 0; i < laps.length; i++)
+        if (!off[i]) laps[i],
+    ];
+
+    // Slow laps at the end of a stint the pace never recovers from: the
+    // tyres going, not mistakes (16 Nov: the last lap on 25% Inters was
+    // being left out as off pace).
+    bool recovers(int i) => [for (var j = i + 1; j < laps.length; j++) laps[j].lapTimeMs].any((t) => t < laps[i].lapTimeMs - limit);
+    final fade = [
+      for (var i = 0; i < laps.length; i++)
+        off[i] && residuals[i] > 0 && residuals[i] <= maxFadeMs && laps[i].spinCount == 0 && !recovers(i),
+    ];
+    var run = 0;
     final kept = <PracticeLapRecord>[];
     final dropped = <PracticeLapRecord>[];
-    for (var i = 0; i < laps.length; i++) {
-      (residuals[i].abs() > limit ? dropped : kept).add(laps[i]);
+    for (var i = laps.length - 1; i >= 0; i--) {
+      run = fade[i] ? run + 1 : 0;
+      final worn = (laps[i].tireWearPercent ?? 100) <= wornTyresPercent;
+      if (!off[i] || (fade[i] && (worn || run >= fadeRunLaps || (i + 1 < laps.length && fade[i + 1])))) {
+        kept.insert(0, laps[i]);
+      } else {
+        dropped.insert(0, laps[i]);
+      }
     }
-    if (kept.length < 3) return (kept, dropped, null);
-    final keptResiduals = _residuals([for (final l in kept) l.lapTimeMs]);
-    final variance = keptResiduals.map((r) => r * r).reduce((a, b) => a + b) / (keptResiduals.length - 1);
+
+    // Consistency from the steady laps only: the faded ones would widen
+    // it (and with it the drop-off line they show).
+    if (steady.length < 3) return (kept, dropped, null);
+    final steadyResiduals = _residuals([for (final l in steady) l.lapTimeMs]);
+    final variance = steadyResiduals.map((r) => r * r).reduce((a, b) => a + b) / (steadyResiduals.length - 1);
     return (kept, dropped, math.sqrt(variance));
   }
 

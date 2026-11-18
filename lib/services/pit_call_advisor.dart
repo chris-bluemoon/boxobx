@@ -92,6 +92,39 @@ class PitCall {
   }
 }
 
+/// The Race Mode PIT LAP tile: the next stop to make.
+class NextPitLap {
+  final int lap;
+
+  /// The fuel runs out (before the finish) ahead of the next planned
+  /// stop, or there's no planned stop left.
+  final bool forFuel;
+  final PlannedPitStop? plannedStop;
+
+  const NextPitLap({required this.lap, this.forFuel = false, this.plannedStop});
+
+  /// The next stop: the strategy's next stop not yet made (one per stop
+  /// made so far, skipping any left [PitCallAdvisor.windowLaps] behind),
+  /// moved earlier to when the fuel runs out if that's sooner. Null when
+  /// no stop is needed: no planned stop left and the fuel lasts the race
+  /// (or, without the race length, until the fuel prediction says so).
+  static NextPitLap? of(FusedRaceState state, {required List<PlannedPitStop> plannedStops, required int stopsMade}) {
+    final lap = state.telemetry.currentLap;
+    PlannedPitStop? planned;
+    for (final (i, stop) in plannedStops.indexed) {
+      if (i < stopsMade || stop.lap < lap - PitCallAdvisor.windowLaps) continue;
+      planned = stop;
+      break;
+    }
+    final total = state.raceLaps?.fuelSafeTotal ?? (state.telemetry.totalLaps > 0 ? state.telemetry.totalLaps : null);
+    final prediction = state.fuelPrediction;
+    var empty = prediction.hasEnoughData ? prediction.predictedEmptyLap : null;
+    if (empty != null && total != null && empty > total) empty = null; // makes the finish
+    if (empty != null && (planned == null || empty < planned.lap)) return NextPitLap(lap: empty, forFuel: true);
+    return planned == null ? null : NextPitLap(lap: planned.lap, plannedStop: planned);
+  }
+}
+
 /// Decides when Boxington should make an unprompted pit call, and what
 /// to recommend.
 ///

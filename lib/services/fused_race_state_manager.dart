@@ -14,6 +14,7 @@ import 'race_lap_estimator.dart';
 import 'sector_calculator.dart';
 import 'fuel_predictor.dart';
 import 'crash_detector.dart';
+import 'spin_detector.dart';
 import 'race_rival_tracker.dart';
 import 'tire_wear_tracker.dart';
 import 'practice_lap_logger.dart';
@@ -69,6 +70,18 @@ class FusedRaceStateManager {
   /// to it (Race Mode only).
   Stream<Crash> get crashes => _crashController.stream;
 
+  /// Spins (see SpinDetector), logged on the lap with the nearest corner.
+  final SpinDetector spinDetector = SpinDetector();
+  final _spinController = StreamController<(Spin, int)>.broadcast();
+
+  /// Fires once per spin, with the nearest corner (0 = unknown) -- unless
+  /// it came with a crash, which is called instead.
+  Stream<(Spin, int)> get spins => _spinController.stream;
+  DateTime? _lastCrashAt;
+
+  /// A spin this far from a corner's apex isn't put on that corner, m.
+  static const double spinCornerRadiusM = 120;
+
   /// The chosen race rival (see RaceRivalTracker) -- Race Mode calls.
   final RaceRivalTracker raceRivalTracker = RaceRivalTracker();
   final _rivalEventController = StreamController<RivalEvent>.broadcast();
@@ -98,9 +111,45 @@ class FusedRaceStateManager {
   /// rather than silently stopping altogether.
   bool _flagsTrusted = false;
   bool _wasOnTrack = false;
+
+  /// GT7 drops the car out of view mid-race too -- the pit-stop cutscene
+  /// sets "loading" -- so going off track only ends the session once
+  /// it's lasted [offTrackEndsSession], or when the lap counter comes
+  /// back lower (a new race). Ending it on every pit stop split one race
+  /// into several and wiped the fuel and pit tracking mid-race.
+  static const Duration offTrackEndsSession = Duration(seconds: 90);
+
+  /// When the car went off track, while the session is still open.
+  DateTime? _offTrackSince;
+
+  /// The tyre GT7's pit menu shows for our car during this stop, held
+  /// until the new set is on (the wear gauge jumps back up): the menu
+  /// can show a tyre before the driver has chosen, and the in-lap was
+  /// still driven on the old set.
+  String? _pitMenuTyre;
+  bool _newTyresOn = false;
+
+  /// The tyre label on GT7's HUD wear gauge ("RH", "RS", "IM"...), as the
+  /// relay reads it: a new one counts once it has held [hudTyreHold]
+  /// (more than one reading -- the relay re-reads every 2s), and then
+  /// only where the tyres can have changed -- before the first lap is
+  /// done, or at a stop once the gauge shows a fresh set. GT7's pit
+  /// screen covers the label, and misreads on in-laps were logging
+  /// worn Hards as Softs.
+  static const Duration hudTyreHold = Duration(seconds: 5);
+  String? _hudTyreCandidate;
+  DateTime? _hudTyreSince;
+  String? _hudTyreApplied;
+
+  /// The lap counter last seen on track (0 = none yet this session) --
+  /// the state's telemetry is blanked while GT7 shows a cutscene.
+  int _lapOnTrack = 0;
+  int? _lapWhenOffTrack;
+
+  /// The clock (a test can set it).
+  DateTime Function() now = DateTime.now;
   int? _activeCarCode;
   int? _lastLapForStartLine;
-  bool _playerWasInPit = false;
 
   /// The pit stop time entered for the current round (GT7's on-screen
   /// "Pit Stop Time", whole stop including service -- see
@@ -210,8 +259,28 @@ class FusedRaceStateManager {
     final onTrack = !_flagsTrusted || (frame.isCarOnTrack && !frame.isLoading);
     final driving = !_flagsTrusted || frame.isDriving;
 
-    if (_wasOnTrack && !onTrack) _endSession();
+    if (_wasOnTrack && !onTrack) {
+      _offTrackSince = now();
+      _lapWhenOffTrack = _state.telemetry.currentLap;
+    }
     _wasOnTrack = onTrack;
+
+    final offSince = _offTrackSince;
+    if (offSince != null) {
+      if (!onTrack) {
+        pitStopTracker.noteOutOfView();
+        if (now().difference(offSince) >= offTrackEndsSession) {
+          _offTrackSince = null;
+          _endSession();
+        }
+      } else {
+        // Back on track: the same race carries on unless the lap counter
+        // went back (a restart or the next race).
+        _offTrackSince = null;
+        final before = _lapWhenOffTrack ?? 0;
+        if (frame.currentLap < before || (frame.currentLap == 1 && before > 1)) _endSession();
+      }
+    }
 
     if (!onTrack) {
       // In menus GT7 keeps streaming the last values, frozen. Show a
@@ -229,12 +298,14 @@ class FusedRaceStateManager {
       _state = _state.copyWith(telemetry: frame, sessionPhase: SessionPhase.paused);
       _controller.add(_state);
       crashDetector.reset();
+      spinDetector.reset();
       return;
     }
 
+    _lapOnTrack = frame.currentLap;
     _updateActiveCar(frame);
     _learnStartFinishLine(frame);
-    _applyPitStopUpdate(pitStopTracker.update(frame));
+    _applyPitStopUpdate(pitStopTracker.update(frame, driving: true)); // past the driving check above
 
     sectorCalculator.recordsReference = _state.mode.logsTimeTrialLaps;
     final sectorState = sectorCalculator.evaluate(frame);
@@ -256,7 +327,17 @@ class FusedRaceStateManager {
     }
     shiftHistoryTracker.update(frame);
     final crash = crashDetector.update(frame);
-    if (crash != null) _crashController.add(crash);
+    if (crash != null) {
+      _lastCrashAt = now();
+      _crashController.add(crash);
+    }
+    final spin = spinDetector.update(frame);
+    if (spin != null) {
+      final corner = _nearestCorner(spin.x, spin.z);
+      practiceLapLogger.reportSpin(corner);
+      final crashed = _lastCrashAt;
+      if (crashed == null || now().difference(crashed) > const Duration(seconds: 5)) _spinController.add((spin, corner));
+    }
     _state = _state.copyWith(
       telemetry: frame,
       sectors: sectorState,
@@ -305,16 +386,31 @@ class FusedRaceStateManager {
       _state = _state.copyWith(waterPercentPerMinute: waterTrend.percentPerMinute, clearWaterTrend: waterTrend.percentPerMinute == null);
     }
 
+    _considerHudTyreLabel(hud.tireCompound);
+
+    if (!pitStopTracker.inStop && !pitStopTracker.stoppedRecently) {
+      // The stop is behind us: the next one starts afresh.
+      _pitMenuTyre = null;
+      _newTyresOn = false;
+    }
     if (hud.playerInPit) {
-      if (!_playerWasInPit) _applyPitStopUpdate(pitStopTracker.reportPlayerInPit());
+      // Every update while the "P" shows: it only counts once the car
+      // has stopped (the tracker registers a stop once).
+      _applyPitStopUpdate(pitStopTracker.reportPlayerInPit());
       // The compound GT7 shows being fitted to our car is the tyre for
-      // the stint that follows.
+      // the stint that follows -- read only when we've really stopped,
+      // so a misread "P" can't change the tyre.
       final fitted = _compoundForPitTyre(hud.playerPitService?.tyre);
-      if (fitted != null) practiceLapLogger.currentTireCompound = fitted;
+      if (fitted != null && (pitStopTracker.stoppedRecently || pitStopTracker.inStop)) {
+        if (_newTyresOn) {
+          practiceLapLogger.currentTireCompound = fitted;
+        } else {
+          _pitMenuTyre = fitted;
+        }
+      }
       final progress = hud.traffic.playerLapProgress;
       if (hud.traffic.trackReady && progress != null) _state = _state.copyWith(pitLapProgress: progress);
     }
-    _playerWasInPit = hud.playerInPit;
 
     final pitted = pitLaneMonitor.check(hud.driversInPit, ourLap: _state.telemetry.currentLap);
     final rivalEvents = raceRivalTracker.update(
@@ -335,8 +431,55 @@ class FusedRaceStateManager {
     rivalEvents.forEach(_rivalEventController.add);
   }
 
+  int _nearestCorner(double x, double z) {
+    var best = 0;
+    var bestDistance = spinCornerRadiusM * spinCornerRadiusM;
+    for (final c in sectorCalculator.corners) {
+      final d = (c.x - x) * (c.x - x) + (c.z - z) * (c.z - z);
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = c.number;
+      }
+    }
+    return best;
+  }
+
   /// GT7's pit-stop tyre letter (see the relay's read_pit_service) to the
   /// compound name laps are logged with.
+  void _considerHudTyreLabel(String? label) {
+    final compound = compoundForHudLabel(label);
+    if (compound == null) return;
+    if (compound != _hudTyreCandidate) {
+      _hudTyreCandidate = compound;
+      _hudTyreSince = now();
+      return;
+    }
+    if (now().difference(_hudTyreSince!) < hudTyreHold || compound == _hudTyreApplied) return;
+    if (compound == practiceLapLogger.currentTireCompound) {
+      _hudTyreApplied = compound;
+      return;
+    }
+    final startingTyre = _lapOnTrack <= 1;
+    final wear = practiceLapLogger.currentTireWearPercent;
+    final freshSetAtStop = (pitStopTracker.inStop || pitStopTracker.stoppedRecently || _newTyresOn) &&
+        wear != null &&
+        wear >= PitStopTracker.freshTyresPercent;
+    if (!startingTyre && !freshSetAtStop) return; // tyres don't change on track: a misread
+    _hudTyreApplied = compound;
+    practiceLapLogger.currentTireCompound = compound;
+    _state = _state.copyWith(practiceLaps: practiceLapLogger.laps);
+  }
+
+  /// The relay's HUD tyre label to the compound laps are logged with.
+  static String? compoundForHudLabel(String? label) => switch (label) {
+    'RH' => 'Racing Hard',
+    'RM' => 'Racing Medium',
+    'RS' => 'Racing Soft',
+    'IM' => 'Intermediate',
+    'W' => 'Heavy Wet',
+    _ => null,
+  };
+
   static String? _compoundForPitTyre(String? letter) => switch (letter) {
     'S' => 'Racing Soft',
     'M' => 'Racing Medium',
@@ -383,11 +526,15 @@ class FusedRaceStateManager {
       final pitLaps = {stopLap, stopLap + 1};
       tireWearTracker.excludeLaps(pitLaps);
       practiceLapLogger.markPitLaps(pitLaps);
-      // New tyres and/or fuel: what follows is a new stint.
-      practiceLapLogger.startNewStint(automatic: true);
+      // New tyres and/or fuel: what follows is a new stint (still part of
+      // a full race test, if one is running).
+      practiceLapLogger.startNewStint(automatic: true, pitStop: true);
     }
 
+    if (stopLap != null) _newTyresOn = false;
     if (update.tiresChanged) {
+      _newTyresOn = true;
+      if (_pitMenuTyre case final tyre?) practiceLapLogger.currentTireCompound = tyre;
       // New stint: degradation is measured against the fresh set only.
       tireWearTracker
         ..reset()
@@ -395,6 +542,15 @@ class FusedRaceStateManager {
       _state = _state.copyWith(tireWearEstimate: TireWearEstimate.insufficientData());
     }
     _controller.add(_state);
+  }
+
+  /// The driver's NEW RACE button, for when the app hasn't noticed a new
+  /// race (a restart during lap 1, where the lap counter doesn't go
+  /// back): ends this session, so the next lap starts a new race with
+  /// fuel, pit and call tracking starting over.
+  void startNewRace() {
+    _offTrackSince = null;
+    _endSession();
   }
 
   /// The driver left the track: everything measured per session starts
@@ -406,7 +562,11 @@ class FusedRaceStateManager {
     pitStopTracker.reset();
     pitLaneMonitor.reset();
     crashDetector.reset();
+    spinDetector.reset();
     raceRivalTracker.reset();
+    _hudTyreCandidate = null;
+    _hudTyreApplied = null;
+    _lapOnTrack = 0;
     practiceLapLogger.startNewSession();
     timeTrialLogger.startNewSession();
     sectorCalculator.reset();
@@ -528,8 +688,8 @@ class FusedRaceStateManager {
 
   /// The driver is starting planned test [testNumber] (see TestPlan):
   /// laps from now on are a new stint, counted towards that test.
-  void startTestStint(int testNumber) {
-    practiceLapLogger.startNewStint(testNumber: testNumber);
+  void startTestStint(int testNumber, {bool throughStops = false}) {
+    practiceLapLogger.startNewStint(testNumber: testNumber, throughStops: throughStops);
     _controller.add(_state);
   }
 
@@ -583,6 +743,7 @@ class FusedRaceStateManager {
     _sessionEndedController.close();
     _opponentPittedController.close();
     _crashController.close();
+    _spinController.close();
     _rivalEventController.close();
   }
 }

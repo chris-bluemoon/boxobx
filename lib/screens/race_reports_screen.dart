@@ -16,23 +16,67 @@ String _gap(double? seconds) => seconds == null ? '--' : '${seconds >= 0 ? '+' :
 String _short(String compound) => compound.replaceFirst('Racing ', '');
 
 /// Every race run in Race Mode this round (test races and the real one),
-/// newest first; tap one for its report.
-class RaceReportsScreen extends StatelessWidget {
+/// newest first; tap one for its report. With [onDeleteRace], each race
+/// can be deleted (its laps are removed from the round's log).
+class RaceReportsScreen extends StatefulWidget {
   final List<PracticeLapRecord> laps;
   final RaceStrategy? strategy;
   final TimeTrialLap? timeTrialBest;
   final String? roundName;
 
-  const RaceReportsScreen({super.key, required this.laps, this.strategy, this.timeTrialBest, this.roundName});
+  /// Deletes the laps with these recordedAt times from the round's log.
+  final Future<void> Function(Set<DateTime> recordedAts)? onDeleteRace;
+
+  const RaceReportsScreen({
+    super.key,
+    required this.laps,
+    this.strategy,
+    this.timeTrialBest,
+    this.roundName,
+    this.onDeleteRace,
+  });
+
+  @override
+  State<RaceReportsScreen> createState() => _RaceReportsScreenState();
+}
+
+class _RaceReportsScreenState extends State<RaceReportsScreen> {
+  late List<PracticeLapRecord> _laps = widget.laps;
+
+  Future<void> _delete(RaceReport report) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete Race ${report.raceNumber}?'),
+        content: Text(
+          'Its ${report.lapCount} lap${report.lapCount == 1 ? '' : 's'} (${_date(report.startedAt)}) are removed '
+          'from the log for good, so they no longer count towards the strategy either.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCEL')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('DELETE', style: TextStyle(color: Colors.red.shade300)),
+          ),
+        ],
+      ),
+    );
+    if (sure != true) return;
+    final gone = {for (final l in report.laps) l.recordedAt};
+    await widget.onDeleteRace!(gone);
+    if (!mounted) return;
+    setState(() => _laps = [for (final l in _laps) if (!gone.contains(l.recordedAt)) l]);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final reports = RaceReport.fromLaps(laps);
+    final reports = RaceReport.fromLaps(_laps);
+    final roundName = widget.roundName;
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
-        title: Text('RACE REPORTS${roundName == null ? '' : ' · ${roundName!.toUpperCase()}'}'),
+        title: Text('RACE REPORTS${roundName == null ? '' : ' · ${roundName.toUpperCase()}'}'),
       ),
       body: reports.isEmpty
           ? Center(
@@ -59,11 +103,25 @@ class RaceReportsScreen extends StatelessWidget {
                         ' · ${report.pitStops.length} stop${report.pitStops.length == 1 ? '' : 's'}',
                         style: TextStyle(color: Colors.grey.shade400),
                       ),
-                      trailing: const Icon(Icons.chevron_right, color: Colors.white),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (widget.onDeleteRace != null)
+                            IconButton(
+                              tooltip: 'Delete this race',
+                              icon: Icon(Icons.delete_outline, color: Colors.grey.shade400),
+                              onPressed: () => _delete(report),
+                            ),
+                          const Icon(Icons.chevron_right, color: Colors.white),
+                        ],
+                      ),
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) =>
-                              RaceReportScreen(report: report, strategy: strategy, timeTrialBest: timeTrialBest),
+                          builder: (_) => RaceReportScreen(
+                            report: report,
+                            strategy: widget.strategy,
+                            timeTrialBest: widget.timeTrialBest,
+                          ),
                         ),
                       ),
                     ),

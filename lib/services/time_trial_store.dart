@@ -24,6 +24,12 @@ class TimeTrialStore {
     return maps.map(TimeTrialLap.fromMap).toList();
   }
 
+  /// One round's time-trial laps (any round, not just the current one).
+  static Future<List<TimeTrialLap>> loadFor(String round) async {
+    final maps = await AppDatabase.loadRound(AppDatabase.timeTrialLaps, round);
+    return maps.map(TimeTrialLap.fromMap).toList();
+  }
+
   /// Clears the current round's time-trial laps.
   static Future<void> clear({String? round}) => save(const [], round: round);
 }

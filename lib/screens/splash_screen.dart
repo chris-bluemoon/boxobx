@@ -38,15 +38,16 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   Timer? _timer;
   AudioPlayer? _player;
 
-  /// The engine sound as the tyres roll in (assets/audio/splash_v8_rev.m4a):
-  /// 2.4 s of a throaty V8 revving, its big blips peaking as the tyres land
-  /// -- cut from "v8 engine rev.wav" by overmedium,
-  /// https://freesound.org/s/651534 (CC0: public domain, no attribution
-  /// required).
+  /// A pit-stop wheel gun as the tyres roll in (assets/audio/splash_wheel_gun.m4a):
+  /// 2 s, two short bursts -- guns off, then guns on as the letters appear
+  /// -- cut from "Impact wrench in the open air" by jacekksiazek,
+  /// https://freesound.org/s/397932 (CC0: public domain, no attribution
+  /// required), the gaps silenced and brought up to the old engine
+  /// sound's loudness.
   ///
   /// just_audio caches an asset by its path and never refreshes it, so a
   /// changed sound needs a new file name or devices keep the old one.
-  static const _engineSound = 'assets/audio/splash_v8_rev.m4a';
+  static const _wheelGunSound = 'assets/audio/splash_wheel_gun.m4a';
 
   /// The wordmark's font size before any shrinking to fit the screen.
   static const double _size = 110;
@@ -55,13 +56,13 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   void initState() {
     super.initState();
     _timer = Timer(widget.duration, _goNext);
-    if (widget.playSound) _playEngine();
+    if (widget.playSound) _playWheelGun();
   }
 
-  Future<void> _playEngine() async {
+  Future<void> _playWheelGun() async {
     try {
       final player = _player = AudioPlayer();
-      await player.setAsset(_engineSound);
+      await player.setAsset(_wheelGunSound);
       if (!mounted) return;
       await player.play();
     } catch (error) {

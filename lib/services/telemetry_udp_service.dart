@@ -5,7 +5,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:cipherlib/cipherlib.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 
 import '../models/telemetry_frame.dart';
 import '../models/connection_status.dart';
@@ -44,6 +44,11 @@ class TelemetryUdpService {
 
   Isolate? _isolate;
   ReceivePort? _receivePort;
+  ReceivePort? _errorPort;
+
+  /// Errors that escaped the worker's own handling (should stay 0).
+  @visibleForTesting
+  int workerErrors = 0;
   Timer? _watchdog;
   final _controller = StreamController<TelemetryFrame>.broadcast();
   final _statusController = StreamController<ConnectionStatus>.broadcast();
@@ -64,7 +69,19 @@ class TelemetryUdpService {
     _receivePort = ReceivePort();
     _setStatus(ConnectionStatus.connecting);
 
-    _isolate = await Isolate.spawn(_telemetryIsolateEntry, _TelemetryIsolateArgs(_receivePort!.sendPort, consoleIp));
+    // errorsAreFatal: false -- an error in the worker (e.g. the PS5 being
+    // unreachable) must never stop telemetry; it's reported, not fatal.
+    _errorPort = ReceivePort()
+      ..listen((error) {
+        workerErrors++;
+        if (error is List && error.isNotEmpty) debugPrint('Telemetry worker error (kept running): ${error.first}');
+      });
+    _isolate = await Isolate.spawn(
+      _telemetryIsolateEntry,
+      _TelemetryIsolateArgs(_receivePort!.sendPort, consoleIp),
+      errorsAreFatal: false,
+      onError: _errorPort!.sendPort,
+    );
 
     _receivePort!.listen((message) {
       if (message is Map<String, dynamic>) {
@@ -87,6 +104,8 @@ class TelemetryUdpService {
     _isolate = null;
     _receivePort?.close();
     _receivePort = null;
+    _errorPort?.close();
+    _errorPort = null;
     _watchdog?.cancel();
     _watchdog = null;
     _setStatus(ConnectionStatus.disconnected);
@@ -124,8 +143,27 @@ Future<void> _telemetryIsolateEntry(_TelemetryIsolateArgs args) async {
   final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, TelemetryUdpService.listenPort);
   final consoleAddress = InternetAddress(args.consoleIp);
 
+  // The PS5 can be unreachable for a while -- off, asleep, or this device
+  // not on its network yet ("No route to host"). A failed send must not
+  // kill this isolate: the next heartbeat a second later tries again, so
+  // telemetry goes live as soon as the console can be reached.
+  var lastError = '';
+  void heartbeatFailed(Object e) {
+    // Usually a SocketException: "No route to host". Said once per new
+    // error, not every second.
+    final message = e is SocketException ? (e.osError?.message ?? e.message) : '$e';
+    if (message == lastError) return;
+    lastError = message;
+    // ignore: avoid_print
+    print('Telemetry heartbeat to the console failed ($message); retrying every second.');
+  }
+
   void sendHeartbeat() {
-    socket.send(TelemetryUdpService.handshake, consoleAddress, TelemetryUdpService.heartbeatPort);
+    try {
+      socket.send(TelemetryUdpService.handshake, consoleAddress, TelemetryUdpService.heartbeatPort);
+    } catch (e) {
+      heartbeatFailed(e);
+    }
   }
 
   sendHeartbeat();
@@ -139,12 +177,18 @@ Future<void> _telemetryIsolateEntry(_TelemetryIsolateArgs args) async {
     if (event != RawSocketEvent.read) return;
     final datagram = socket.receive();
     if (datagram == null) return;
+    lastError = '';
 
     final frame = decodeGt7Packet(datagram.data);
     if (frame != null) {
       args.sendPort.send(frame.toMap());
     }
-  }, onDone: () => heartbeatTimer.cancel());
+  },
+      // A failed send is reported HERE, as an error on the socket's stream
+      // (not thrown by send itself), so it has to be handled here too --
+      // left unhandled it killed this isolate and telemetry never came back.
+      onError: heartbeatFailed,
+      onDone: () => heartbeatTimer.cancel());
 }
 
 /// Decrypts (Salsa20) and decodes a raw GT7 "packet A" (296 bytes) into a
@@ -240,6 +284,10 @@ TelemetryFrame? decodeGt7Packet(Uint8List data) {
     maxAlertRpm: maxAlertRpm,
     packetId: packetId,
     wheelSpeedsKmh: wheelSpeedsKmh,
+    // World velocity (0x10/0x14/0x18) and angular velocity (0x2C/0x30/0x34).
+    velocityX: f32(0x10),
+    velocityZ: f32(0x18),
+    yawRate: f32(0x30),
   );
 }
 

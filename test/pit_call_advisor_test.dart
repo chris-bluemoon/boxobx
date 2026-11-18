@@ -139,4 +139,35 @@ void main() {
     expect(check(_state(inPit: true)), isNull);
     expect(check(_state(lap: 26, fuelEmptyLap: 26), stops: const []), isNull);
   });
+
+  group('the PIT LAP tile in a race', () {
+    const stops = [
+      PlannedPitStop(lap: 9, tireCompound: 'Racing Hard', reasoning: ''),
+      PlannedPitStop(lap: 21, tireCompound: 'Intermediate', reasoning: ''),
+    ];
+
+    test('follows the strategy, not a fuel lap past the flag', () {
+      final next = NextPitLap.of(_state(lap: 3, fuelEmptyLap: 36), plannedStops: stops, stopsMade: 0);
+      expect(next?.lap, 9);
+      expect(next?.forFuel, isFalse);
+    });
+
+    test('moves on to the next planned stop once one is made', () {
+      expect(NextPitLap.of(_state(lap: 10), plannedStops: stops, stopsMade: 1)?.lap, 21);
+    });
+
+    test('a planned stop missed by more than 2 laps is dropped', () {
+      expect(NextPitLap.of(_state(lap: 12), plannedStops: stops, stopsMade: 0)?.lap, 21);
+    });
+
+    test('fuel running out before the next planned stop comes first', () {
+      final next = NextPitLap.of(_state(lap: 12, fuelEmptyLap: 19), plannedStops: stops, stopsMade: 1);
+      expect(next?.lap, 19);
+      expect(next?.forFuel, isTrue);
+    });
+
+    test('nothing once every stop is made and the fuel reaches the flag', () {
+      expect(NextPitLap.of(_state(lap: 22, fuelEmptyLap: 30), plannedStops: stops, stopsMade: 2), isNull);
+    });
+  });
 }

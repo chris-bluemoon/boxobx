@@ -102,6 +102,13 @@ class PracticeLapRecord {
   /// off, or laps from before it was read).
   final double? waterPercent;
 
+  /// Spins on the lap (see SpinDetector): the corner each was nearest
+  /// (C1, C2, ...; 0 = not near a known corner). Null for laps logged
+  /// before spins were tracked -- [] is a lap with none.
+  final List<int>? spinCorners;
+
+  int get spinCount => spinCorners?.length ?? 0;
+
   const PracticeLapRecord({
     required this.lapNumber,
     required this.lapTimeMs,
@@ -126,6 +133,7 @@ class PracticeLapRecord {
     this.lockupPercent,
     this.weather,
     this.waterPercent,
+    this.spinCorners,
   });
 
   /// Fuel percent actually consumed over this lap -- negative values
@@ -165,6 +173,7 @@ class PracticeLapRecord {
     lockupPercent: (map['lockupPercent'] as num?)?.toDouble(),
     weather: map['weather'] as String?,
     waterPercent: (map['waterPercent'] as num?)?.toDouble(),
+    spinCorners: (map['spinCorners'] as List?)?.map((c) => (c as num).toInt()).toList(),
   );
 
   Map<String, dynamic> toMap() => {
@@ -191,6 +200,7 @@ class PracticeLapRecord {
     'lockupPercent': lockupPercent,
     'weather': weather,
     'waterPercent': waterPercent,
+    'spinCorners': spinCorners,
   };
 
   /// Returns a copy with tireWearPercent set -- used by the Practice
@@ -221,6 +231,7 @@ class PracticeLapRecord {
     lockupPercent: lockupPercent,
     weather: weather,
     waterPercent: waterPercent,
+    spinCorners: spinCorners,
   );
 
   /// Returns a copy marked as the lap on which its test was called
@@ -249,6 +260,7 @@ class PracticeLapRecord {
     lockupPercent: lockupPercent,
     weather: weather,
     waterPercent: waterPercent,
+    spinCorners: spinCorners,
   );
 
   /// Returns a copy with a different lapNumber -- used by
@@ -279,5 +291,6 @@ class PracticeLapRecord {
     lockupPercent: lockupPercent,
     weather: weather,
     waterPercent: waterPercent,
+    spinCorners: spinCorners,
   );
 }

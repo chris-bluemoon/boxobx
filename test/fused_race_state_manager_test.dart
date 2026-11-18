@@ -4,6 +4,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:boxbox/models/app_mode.dart';
 import 'package:boxbox/models/fused_race_state.dart';
 import 'package:boxbox/models/hud_overlay_data.dart';
 import 'package:boxbox/models/power_band_config.dart';
@@ -62,6 +63,22 @@ void main() {
     expect(manager.current.sessionPhase, SessionPhase.unknown);
   });
 
+  test('a replay (GT7 never says the car is on track) still sees the pit stop', () {
+    // Recorded from a GT7 replay: flags 0x198 at 190 km/h, carOnTrack never set.
+    const replay = 0x198;
+    final manager = _manager();
+    var fuel = 100.0;
+    manager.handleTelemetryFrame(_frame(lap: 1, fuel: fuel, flags: replay));
+    for (var lap = 2; lap <= 9; lap++) {
+      fuel -= 4.4;
+      manager.handleTelemetryFrame(_frame(lap: lap, fuel: fuel, lastLapTimeMs: 96000, flags: replay));
+    }
+    manager.handleTelemetryFrame(_frame(lap: 9, fuel: fuel, speedKmh: 0, flags: replay));
+    manager.handleTelemetryFrame(_frame(lap: 9, fuel: fuel + 30, speedKmh: 0, flags: replay));
+    expect(manager.pitStopTracker.stopCount, 1);
+    expect(manager.pitStopTracker.pitLaps, {9, 10});
+  });
+
   test('paused frames are shown but not counted', () {
     final manager = _manager();
     manager.handleTelemetryFrame(_frame(lap: 1, fuel: 100));
@@ -72,8 +89,10 @@ void main() {
     expect(manager.current.practiceLaps, isEmpty);
   });
 
-  test('leaving the track ends the session: predictors reset, laps kept, display blanked', () async {
+  test('leaving the track for good ends the session: predictors reset, laps kept, display blanked', () async {
     final manager = _manager();
+    var clock = DateTime(2026, 11, 16, 15);
+    manager.now = () => clock;
     var sessionsEnded = 0;
     manager.sessionEnded.listen((_) => sessionsEnded++);
 
@@ -85,6 +104,12 @@ void main() {
     // Back to the menu: GT7 keeps sending lap 3 values, but off track.
     manager.handleTelemetryFrame(_frame(lap: 3, fuel: 94, flags: 0));
     manager.handleTelemetryFrame(_frame(lap: 3, fuel: 94, flags: TelemetryFlags.loadingOrProcessing));
+    await Future<void>.delayed(Duration.zero);
+    expect(manager.current.sessionPhase, SessionPhase.offTrack);
+    expect(sessionsEnded, 0, reason: 'could be a pit stop: not ended yet');
+
+    clock = clock.add(FusedRaceStateManager.offTrackEndsSession);
+    manager.handleTelemetryFrame(_frame(lap: 3, fuel: 94, flags: 0));
     await Future<void>.delayed(Duration.zero);
 
     expect(sessionsEnded, 1);
@@ -154,6 +179,8 @@ void main() {
     ]);
 
     manager.handleTelemetryFrame(_frame(lap: 7, fuel: 60, flags: 0));
+    // A new race: the lap counter starts again.
+    manager.handleTelemetryFrame(_frame(lap: 1, fuel: 100));
     expect(manager.current.opponentPitStops, isEmpty);
   });
 
@@ -172,8 +199,9 @@ void main() {
     manager.handleTelemetryFrame(_frame(lap: 4, fuel: 58, lastLapTimeMs: 100000));
     expect(manager.current.startFinishLapProgress, 4.0);
 
-    // Leaving the track forgets it -- the next session may be elsewhere.
+    // A new session forgets it -- it may be elsewhere.
     manager.handleTelemetryFrame(_frame(lap: 4, fuel: 58, flags: 0));
+    manager.handleTelemetryFrame(_frame(lap: 1, fuel: 100));
     expect(manager.current.startFinishLapProgress, isNull);
   });
 
@@ -196,8 +224,12 @@ void main() {
     manager.handleHudData(hud(inPit: false));
     expect(manager.current.pitLapProgress, isNull);
 
+    // The "P" shows as we enter the pit lane: not a stop until we stop.
     manager.handleHudData(hud(inPit: true, progress: 4.0));
     expect(manager.current.pitLapProgress, 4.0);
+    expect(manager.pitStopTracker.pitLaps, isEmpty);
+    manager.handleTelemetryFrame(_frame(lap: 2, fuel: 97, speedKmh: 0));
+    manager.handleHudData(hud(inPit: true, progress: 4.0));
     expect(manager.pitStopTracker.pitLaps, {2, 3});
 
     // Still in the pits on the next update: not registered twice.
@@ -251,12 +283,199 @@ void main() {
     expect(restarted.current.practiceLaps, hasLength(3));
   });
 
+  group('the HUD tyre label', () {
+    HudOverlayData hud(String label, {double? wear}) => HudOverlayData.fromMap({
+          'tireCompound': label,
+          if (wear != null) ...{
+            'tireWearFrontLeftPercent': wear,
+            'tireWearFrontRightPercent': wear,
+            'tireWearRearLeftPercent': wear,
+            'tireWearRearRightPercent': wear,
+          },
+        });
+
+    test('sets the starting tyre once it holds -- a blip does not', () {
+      final manager = _manager();
+      var clock = DateTime(2026, 11, 18, 15);
+      manager.now = () => clock;
+      manager.handleTelemetryFrame(_frame(lap: 1, fuel: 100));
+      manager.handleHudData(hud('RM'));
+      clock = clock.add(const Duration(seconds: 2));
+      manager.handleHudData(hud('RS')); // one misread
+      clock = clock.add(const Duration(seconds: 2));
+      for (var i = 0; i < 4; i++) {
+        manager.handleHudData(hud('RH'));
+        clock = clock.add(const Duration(seconds: 2));
+      }
+      expect(manager.practiceLapLogger.currentTireCompound, 'Racing Hard');
+    });
+
+    // 16 and 18 Nov: every in-lap logged as Softs on worn tyres.
+    test('mid-race, a label that changes on worn tyres is a misread', () {
+      final manager = _manager();
+      var clock = DateTime(2026, 11, 18, 15);
+      manager.now = () => clock;
+      manager.setPracticeTireCompound('Racing Hard');
+      manager.handleTelemetryFrame(_frame(lap: 9, fuel: 50));
+      manager.handleTelemetryFrame(_frame(lap: 9, fuel: 50, flags: 0)); // pit entry, out of view
+      for (var i = 0; i < 5; i++) {
+        manager.handleHudData(hud('RS', wear: 74));
+        clock = clock.add(const Duration(seconds: 2));
+      }
+      expect(manager.practiceLapLogger.currentTireCompound, 'Racing Hard');
+    });
+
+    test('at a stop, the new set read on a fresh gauge is the tyre', () {
+      final manager = _manager();
+      var clock = DateTime(2026, 11, 18, 15);
+      manager.now = () => clock;
+      manager.setPracticeTireCompound('Racing Hard');
+      manager.handleTelemetryFrame(_frame(lap: 9, fuel: 50));
+      manager.handleTelemetryFrame(_frame(lap: 10, fuel: 50, lastLapTimeMs: 97000, speedKmh: 0)); // in the box
+      for (var i = 0; i < 5; i++) {
+        manager.handleHudData(hud('IM', wear: 99));
+        clock = clock.add(const Duration(seconds: 2));
+      }
+      expect(manager.practiceLapLogger.currentTireCompound, 'Intermediate');
+    });
+  });
+
   test("the tyre GT7 shows being fitted to our car in the pits becomes the logged tyre", () {
     final manager = _manager();
-    manager.handleHudData(HudOverlayData.fromMap({
+    final pitService = HudOverlayData.fromMap({
       'playerInPit': true,
       'playerPitService': {'tyre': 'S', 'fuel': 20},
-    }));
+    });
+    manager.handleTelemetryFrame(_frame(lap: 5, fuel: 60));
+    manager.handleHudData(pitService);
+    expect(manager.practiceLapLogger.currentTireCompound, isNot('Racing Soft'), reason: 'moving: a misread "P"');
+    manager.handleTelemetryFrame(_frame(lap: 5, fuel: 60, speedKmh: 0));
+    manager.handleHudData(pitService);
+    expect(manager.practiceLapLogger.currentTireCompound, isNot('Racing Soft'), reason: 'not on the car yet');
+    // The new set goes on: the wear gauge jumps back up.
+    HudOverlayData wear(double w) => HudOverlayData.fromMap({
+          'tireWearFrontLeftPercent': w,
+          'tireWearFrontRightPercent': w,
+          'tireWearRearLeftPercent': w,
+          'tireWearRearRightPercent': w,
+        });
+    manager.handleHudData(wear(40));
+    for (var i = 0; i < 3; i++) {
+      manager.handleHudData(wear(100));
+    }
     expect(manager.practiceLapLogger.currentTireCompound, 'Racing Soft');
+  });
+
+  // AI race, 16 Nov: GT7's pit menu showed Soft at pit entry, then the
+  // Hards were fitted -- the in-lap was logged on Softs.
+  test('the in-lap keeps the old tyre; the tyre chosen in the pit menu starts once it is on', () {
+    final manager = _manager()..setMode(AppMode.race);
+    manager.setPracticeTireCompound('Intermediate');
+    HudOverlayData hud({double? wear, String? menu}) => HudOverlayData.fromMap({
+          if (wear != null) ...{
+            'tireWearFrontLeftPercent': wear,
+            'tireWearFrontRightPercent': wear,
+            'tireWearRearLeftPercent': wear,
+            'tireWearRearRightPercent': wear,
+          },
+          'playerInPit': menu != null,
+          if (menu != null) 'playerPitService': {'tyre': menu, 'fuel': 40},
+        });
+    var fuel = 100.0;
+    manager.handleTelemetryFrame(_frame(lap: 1, fuel: fuel));
+    for (var lap = 2; lap <= 10; lap++) {
+      fuel -= 4;
+      manager.handleTelemetryFrame(_frame(lap: lap, fuel: fuel, lastLapTimeMs: 100000));
+      manager.handleHudData(hud(wear: 100.0 - lap * 2));
+    }
+    // Pit entry at the end of lap 10: out of view, the menu shows Soft.
+    manager.handleTelemetryFrame(_frame(lap: 10, fuel: fuel, flags: 0));
+    manager.handleHudData(hud(menu: 'S'));
+    manager.handleTelemetryFrame(_frame(lap: 11, fuel: fuel, lastLapTimeMs: 97000, speedKmh: 60));
+    // The box on lap 11: Hards chosen, fuel in, new tyres read on the way out.
+    manager.handleTelemetryFrame(_frame(lap: 11, fuel: fuel, speedKmh: 0));
+    manager.handleHudData(hud(menu: 'H'));
+    manager.handleTelemetryFrame(_frame(lap: 11, fuel: fuel + 30, speedKmh: 0));
+    for (var i = 0; i < 4; i++) {
+      manager.handleHudData(hud(wear: 100));
+    }
+    manager.handleTelemetryFrame(_frame(lap: 12, fuel: fuel + 26, lastLapTimeMs: 125000));
+    final laps = manager.practiceLapLogger.laps;
+    expect(laps[laps.length - 2].tireCompound, 'Intermediate', reason: 'lap 10, the in-lap');
+    expect(laps.last.tireCompound, 'Racing Hard', reason: 'lap 11, the stop');
+  });
+
+  // Round 5 at the Nürburgring on 16 Nov: one race, logged as 7 races and
+  // a "pit stop" nearly every lap.
+  test('a pit stop where GT7 drops the car out of view stays one race, one stint per set of tyres', () async {
+    final manager = _manager()..setMode(AppMode.race);
+    var clock = DateTime(2026, 11, 16, 15);
+    manager.now = () => clock;
+    var sessionsEnded = 0;
+    manager.sessionEnded.listen((_) => sessionsEnded++);
+    HudOverlayData hud({double wear = 80, bool inPit = false}) => HudOverlayData.fromMap({
+          'tireWearFrontLeftPercent': wear,
+          'tireWearFrontRightPercent': wear,
+          'tireWearRearLeftPercent': wear,
+          'tireWearRearRightPercent': wear,
+          'playerInPit': inPit,
+        });
+
+    var fuel = 100.0;
+    manager.handleTelemetryFrame(_frame(lap: 1, fuel: fuel));
+    for (var lap = 2; lap <= 6; lap++) {
+      fuel -= 4;
+      manager.handleTelemetryFrame(_frame(lap: lap, fuel: fuel, lastLapTimeMs: 98000));
+      // Misreads mid-stint: a low wear reading, then normal ones; a "P".
+      manager.handleHudData(hud(wear: 40));
+      for (var i = 0; i < 4; i++) {
+        manager.handleHudData(hud(wear: 90.0 - lap));
+      }
+      manager.handleHudData(hud(wear: 90.0 - lap, inPit: true));
+    }
+    expect(manager.pitStopTracker.pitLaps, isEmpty, reason: 'no stop without stopping');
+
+    // Pit on lap 6: the cutscene takes the car out of view for 40s,
+    // refuelled and on fresh tyres.
+    for (var s = 0; s < 40; s++) {
+      clock = clock.add(const Duration(seconds: 1));
+      manager.handleTelemetryFrame(_frame(lap: 6, fuel: fuel, flags: TelemetryFlags.carOnTrack | TelemetryFlags.loadingOrProcessing));
+    }
+    fuel = 60;
+    manager.handleTelemetryFrame(_frame(lap: 6, fuel: fuel, speedKmh: 40));
+    for (var i = 0; i < 4; i++) {
+      manager.handleHudData(hud(wear: 100));
+    }
+    manager.handleTelemetryFrame(_frame(lap: 7, fuel: fuel - 1, lastLapTimeMs: 125000));
+    manager.handleTelemetryFrame(_frame(lap: 8, fuel: fuel - 5, lastLapTimeMs: 97000));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(sessionsEnded, 0);
+    final laps = manager.current.practiceLaps;
+    expect(laps.map((l) => l.raceNumber).toSet(), {1});
+    expect(laps.map((l) => l.stintNumber).toSet(), hasLength(2));
+    expect(manager.pitStopTracker.stopCount, 1);
+    expect(laps.where((l) => l.isPitLap), hasLength(2));
+  });
+
+  test('NEW RACE: the next lap starts a new race, with fuel tracking starting over', () async {
+    final manager = _manager()..setMode(AppMode.race);
+    var sessionsEnded = 0;
+    manager.sessionEnded.listen((_) => sessionsEnded++);
+    expect(manager.practiceLapLogger.upcomingRaceNumber, 1);
+    manager.handleTelemetryFrame(_frame(lap: 1, fuel: 100));
+    manager.handleTelemetryFrame(_frame(lap: 2, fuel: 97, lastLapTimeMs: 90000));
+    manager.handleTelemetryFrame(_frame(lap: 3, fuel: 94, lastLapTimeMs: 90000));
+    expect(manager.practiceLapLogger.upcomingRaceNumber, 1);
+    expect(manager.current.fuelPrediction.hasEnoughData, isTrue);
+
+    // A restart during lap 1: the lap counter never goes back past where it was.
+    manager.startNewRace();
+    await Future<void>.delayed(Duration.zero);
+    expect(sessionsEnded, 1);
+    expect(manager.practiceLapLogger.upcomingRaceNumber, 2);
+    manager.handleTelemetryFrame(_frame(lap: 1, fuel: 100));
+    manager.handleTelemetryFrame(_frame(lap: 2, fuel: 97, lastLapTimeMs: 91000));
+    expect(manager.current.practiceLaps.map((l) => l.raceNumber), [1, 1, 2]);
   });
 }

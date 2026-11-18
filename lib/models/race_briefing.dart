@@ -106,7 +106,8 @@ class RaceBriefing {
   /// How many mandatory pit stops the regulations require (0 if none).
   final int mandatoryPitStopCount;
 
-  /// Whether this race involves wet/changeable conditions at all.
+  /// Whether any of the race's weather slots rain (set from [weatherSlots]
+  /// by the Race Brief; kept for briefs saved before that).
   final bool wetOrChangeableWeather;
 
   /// The briefing's GT7 weather slots, as entered (e.g.

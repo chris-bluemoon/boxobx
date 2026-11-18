@@ -69,6 +69,17 @@ class TelemetryFrame {
   /// GripTracker). Empty when unknown.
   final List<double> wheelSpeedsKmh;
 
+  /// The car's velocity over the ground, world X and Z (offsets 0x10 and
+  /// 0x18, m/s): the direction it's actually travelling.
+  final double velocityX;
+  final double velocityZ;
+
+  /// How fast the car is rotating about the vertical axis (angular
+  /// velocity Y, offset 0x30, rad/s). Against the turn of [velocityX]/
+  /// [velocityZ] it shows the car rotating more than it's turning: a
+  /// slide, or a spin (see SpinDetector).
+  final double yawRate;
+
   const TelemetryFrame({
     required this.rpm,
     required this.speedKmh,
@@ -92,6 +103,9 @@ class TelemetryFrame {
     this.maxAlertRpm = 0,
     this.packetId = 0,
     this.wheelSpeedsKmh = const [],
+    this.velocityX = 0,
+    this.velocityZ = 0,
+    this.yawRate = 0,
   });
 
   bool get isCarOnTrack => flags & TelemetryFlags.carOnTrack != 0;
@@ -145,6 +159,9 @@ class TelemetryFrame {
     'maxAlertRpm': maxAlertRpm,
     'packetId': packetId,
     'wheelSpeedsKmh': wheelSpeedsKmh,
+    'velocityX': velocityX,
+    'velocityZ': velocityZ,
+    'yawRate': yawRate,
   };
 
   factory TelemetryFrame.fromMap(Map<String, dynamic> map) => TelemetryFrame(
@@ -170,6 +187,9 @@ class TelemetryFrame {
     maxAlertRpm: (map['maxAlertRpm'] as num?)?.toInt() ?? 0,
     packetId: (map['packetId'] as num?)?.toInt() ?? 0,
     wheelSpeedsKmh: [for (final w in (map['wheelSpeedsKmh'] as List?) ?? const []) (w as num).toDouble()],
+    velocityX: (map['velocityX'] as num?)?.toDouble() ?? 0,
+    velocityZ: (map['velocityZ'] as num?)?.toDouble() ?? 0,
+    yawRate: (map['yawRate'] as num?)?.toDouble() ?? 0,
   );
 }
 

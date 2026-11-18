@@ -65,6 +65,50 @@ class RaceStrategy {
   /// assumedPercentPerLap's "measured vs assumed" badge works.
   final bool pitStopTimeIsMeasured;
 
+  /// The round's practice stint tests done and planned when this
+  /// strategy was generated (see TestPlan). Until all are done, the plan
+  /// rests on assumptions (generic fuel use, the community tyre guide for
+  /// the weather), not the driver's own laps.
+  final int testsDone;
+  final int testsPlanned;
+
+  /// What the plan rests on, one line each (fuel, pit stop, each wet
+  /// spell's tyre: measured or assumed) -- the "why" when it changes.
+  final List<String> basis;
+
+  /// GT7's fuel map (MFD) to run: 1 is full power; higher maps burn less
+  /// fuel and give up some pace (see PitStopCalculator.fuelMapFactor).
+  final int fuelMap;
+
+  /// Built on the full set of practice stint tests.
+  bool get validatedByPractice => testsPlanned > 0 && testsDone >= testsPlanned;
+
+  RaceStrategy withPractice({required int done, required int planned}) => RaceStrategy(
+    pitStops: pitStops,
+    startingTireCompound: startingTireCompound,
+    summary: summary,
+    assumedPercentPerLap: assumedPercentPerLap,
+    totalEstimatedTimeLossSeconds: totalEstimatedTimeLossSeconds,
+    pitStopTimeIsMeasured: pitStopTimeIsMeasured,
+    testsDone: done,
+    testsPlanned: planned,
+    basis: basis,
+    fuelMap: fuelMap,
+  );
+
+  RaceStrategy copyWith({String? summary, List<String>? basis, int? fuelMap}) => RaceStrategy(
+    pitStops: pitStops,
+    startingTireCompound: startingTireCompound,
+    summary: summary ?? this.summary,
+    assumedPercentPerLap: assumedPercentPerLap,
+    totalEstimatedTimeLossSeconds: totalEstimatedTimeLossSeconds,
+    pitStopTimeIsMeasured: pitStopTimeIsMeasured,
+    testsDone: testsDone,
+    testsPlanned: testsPlanned,
+    basis: basis ?? this.basis,
+    fuelMap: fuelMap ?? this.fuelMap,
+  );
+
   const RaceStrategy({
     required this.pitStops,
     required this.startingTireCompound,
@@ -72,6 +116,10 @@ class RaceStrategy {
     required this.assumedPercentPerLap,
     this.totalEstimatedTimeLossSeconds = 0.0,
     this.pitStopTimeIsMeasured = false,
+    this.testsDone = 0,
+    this.testsPlanned = 0,
+    this.basis = const [],
+    this.fuelMap = 1,
   });
 
   factory RaceStrategy.fromMap(Map<String, dynamic> map) => RaceStrategy(
@@ -83,6 +131,10 @@ class RaceStrategy {
         assumedPercentPerLap: (map['assumedPercentPerLap'] as num?)?.toDouble() ?? 0.0,
         totalEstimatedTimeLossSeconds: (map['totalEstimatedTimeLossSeconds'] as num?)?.toDouble() ?? 0.0,
         pitStopTimeIsMeasured: map['pitStopTimeIsMeasured'] as bool? ?? false,
+        testsDone: (map['testsDone'] as num?)?.toInt() ?? 0,
+        testsPlanned: (map['testsPlanned'] as num?)?.toInt() ?? 0,
+        basis: (map['basis'] as List?)?.cast<String>() ?? const [],
+        fuelMap: (map['fuelMap'] as num?)?.toInt() ?? 1,
       );
 
   Map<String, dynamic> toMap() => {
@@ -92,5 +144,9 @@ class RaceStrategy {
         'assumedPercentPerLap': assumedPercentPerLap,
         'totalEstimatedTimeLossSeconds': totalEstimatedTimeLossSeconds,
         'pitStopTimeIsMeasured': pitStopTimeIsMeasured,
+        'testsDone': testsDone,
+        'testsPlanned': testsPlanned,
+        'basis': basis,
+        'fuelMap': fuelMap,
       };
 }

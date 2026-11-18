@@ -159,4 +159,30 @@ void main() {
     expect(prefs.getString('practice_log_laps'), isNull);
     expect(prefs.getString('time_trial_laps'), isNull);
   });
+
+  test('rounds(): every round with laps, its stints, laps and track, most recently driven first', () async {
+    PracticeLapRecord at(PracticeLapRecord lap, DateTime t, {int stint = 1, bool race = false}) => PracticeLapRecord.fromMap({
+      ...lap.toMap(),
+      'recordedAt': t.toIso8601String(),
+      'stintNumber': stint,
+      'isRaceLap': race,
+    });
+    await SavedBriefingStore.save(name: 'Round 4 - Alsace Village (Reverse)', briefing: briefing);
+    await PracticeLogStore.save(
+      [at(lap1, DateTime(2026, 11, 1)), at(lap2, DateTime(2026, 11, 1, 1), stint: 2, race: true)],
+      round: 'Round 4 - Alsace Village (Reverse)',
+    );
+    await PracticeLogStore.save([at(lap1, DateTime(2026, 11, 14))], round: 'Round 5 - Nürburgring Sprint');
+
+    final rounds = await PracticeLogStore.rounds();
+    expect(rounds.map((r) => r.round), ['Round 5 - Nürburgring Sprint', 'Round 4 - Alsace Village (Reverse)']);
+    final r4 = rounds.last;
+    expect(r4.laps, 2);
+    expect(r4.stints, 2);
+    expect(r4.raceLaps, 1);
+    expect(r4.bestMs, 89500);
+    expect(r4.track, 'Suzuka Circuit', reason: "from the round's saved brief");
+    expect(rounds.first.track, 'Nürburgring Sprint', reason: 'no brief: from the league calendar');
+    expect((await PracticeLogStore.loadFor('Round 4 - Alsace Village (Reverse)')).length, 2);
+  });
 }

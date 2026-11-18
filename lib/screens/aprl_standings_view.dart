@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 
 import '../models/championship_standing.dart';
+import '../services/aprl_leaderboard_service.dart';
 import '../services/championship_standings_store.dart';
 import '../services/league_roster.dart';
 import 'championship_screen.dart';
 
 /// The APRL tab: the league standings as a table (position, driver,
 /// points, gap to the leader and to us, rounds raced), our row
-/// highlighted, with ENTER RESULTS opening the entry form.
+/// highlighted. Filled from the APRL leaderboard each time the tab
+/// opens (and on REFRESH); ENTER RESULTS still opens the entry form.
 class AprlStandingsView extends StatefulWidget {
-  const AprlStandingsView({super.key});
+  /// The page heading, the same one the other tabs use.
+  final Widget? header;
+
+  const AprlStandingsView({super.key, this.header});
 
   @override
   State<AprlStandingsView> createState() => _AprlStandingsViewState();
@@ -18,18 +23,43 @@ class AprlStandingsView extends StatefulWidget {
 class _AprlStandingsViewState extends State<AprlStandingsView> {
   List<ChampionshipStanding>? _standings;
 
+  /// When the standings last came from the leaderboard.
+  DateTime? _fetchedAt;
+  bool _refreshing = false;
+
+  /// Why the last refresh failed (the saved standings are shown).
+  String? _refreshError;
+
   @override
   void initState() {
     super.initState();
-    _load();
+    _load().then((_) => _refresh());
+  }
+
+  Future<void> _refresh() async {
+    if (_refreshing || !AprlLeaderboardService.enabled) return;
+    setState(() {
+      _refreshing = true;
+      _refreshError = null;
+    });
+    try {
+      await AprlLeaderboardService.refresh();
+      await _load();
+    } catch (e) {
+      if (mounted) setState(() => _refreshError = 'Couldn\'t reach the APRL leaderboard, so these are the saved standings.');
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   Future<void> _load() async {
     final standings = await ChampionshipStandingsStore.load();
+    final fetchedAt = await AprlLeaderboardService.lastFetched();
     if (!mounted) return;
-    setState(
-      () => _standings = ChampionshipStandingsStore.sortedByPosition(standings),
-    );
+    setState(() {
+      _standings = ChampionshipStandingsStore.sortedByPosition(standings);
+      _fetchedAt = fetchedAt;
+    });
   }
 
   Future<void> _enterResults() async {
@@ -45,21 +75,39 @@ class _AprlStandingsViewState extends State<AprlStandingsView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (widget.header != null) ...[
+          widget.header!,
+          const SizedBox(height: 10),
+        ],
         Row(
           children: [
-            const Icon(Icons.emoji_events, color: Colors.amber, size: 30),
-            const SizedBox(width: 10),
-            const Expanded(
-              child: Text(
-                'APRL STANDINGS',
+            Expanded(child: _sourceLine()),
+            const SizedBox(width: 12),
+            OutlinedButton.icon(
+              onPressed: _refreshing ? null : _refresh,
+              icon: _refreshing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh, color: Colors.white),
+              label: const Text(
+                'REFRESH',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.5,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.white38),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
                 ),
               ),
             ),
+            const SizedBox(width: 10),
             OutlinedButton.icon(
               onPressed: _enterResults,
               icon: const Icon(Icons.edit, color: Colors.white),
@@ -80,19 +128,16 @@ class _AprlStandingsViewState extends State<AprlStandingsView> {
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        Text(
-          'Apex Point Racing League · GT3 Clubman Division',
-          style: TextStyle(color: Colors.grey.shade400, fontSize: 15),
-        ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         Expanded(
           child: standings == null
               ? const Center(child: CircularProgressIndicator())
               : standings.isEmpty
               ? Center(
                   child: Text(
-                    'No standings yet.\nTap ENTER RESULTS to add each round\'s points from the league\'s Discord report.',
+                    _refreshing
+                        ? 'Getting the standings from the APRL leaderboard...'
+                        : 'No standings yet.\nTap REFRESH to get them from the APRL leaderboard, or ENTER RESULTS to add them by hand.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.grey.shade400, fontSize: 17),
                   ),
@@ -100,6 +145,26 @@ class _AprlStandingsViewState extends State<AprlStandingsView> {
               : _table(standings),
         ),
       ],
+    );
+  }
+
+  /// Where the standings came from, and when.
+  Widget _sourceLine() {
+    String two(int n) => n.toString().padLeft(2, '0');
+    final at = _fetchedAt;
+    final text =
+        _refreshError ??
+        (at == null
+            ? 'Entered by hand.'
+            : 'From the APRL leaderboard · updated ${at.day}/${at.month} ${two(at.hour)}:${two(at.minute)}');
+    return Text(
+      text,
+      style: TextStyle(
+        color: _refreshError != null
+            ? Colors.orangeAccent
+            : Colors.grey.shade400,
+        fontSize: 15,
+      ),
     );
   }
 

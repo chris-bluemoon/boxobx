@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
@@ -15,6 +18,11 @@ import '../services/practice_fuel_calculator.dart';
 import '../services/race_lap_estimator.dart';
 import '../services/time_trial_store.dart';
 import '../models/time_trial_lap.dart';
+import '../models/test_plan.dart';
+import '../services/test_plan_tracker.dart';
+import '../services/strategy_changes.dart';
+import '../services/wet_pace_table.dart';
+import '../services/base_rates.dart';
 
 /// Pre-race strategy planning screen: enter this week's APRL driver
 /// briefing and get an AI-generated pit-stop strategy, informed by
@@ -41,6 +49,31 @@ class RaceStrategyScreen extends StatefulWidget {
 
   const RaceStrategyScreen({super.key, required this.getCurrentFuelPrediction, required this.getPracticeLaps});
 
+  /// The last auto-save, so the dashboard can wait for it before
+  /// reloading the round when this screen closes.
+  /// The brief's text size, relative to the rest of the app.
+  static const double textScale = 1.5;
+
+  /// GT7's sponsor prefixes, moved after the circuit's name in the track list.
+  static const _sponsorPrefixes = ['Michelin Raceway ', 'WeatherTech Raceway '];
+
+  /// "Michelin Raceway Road Atlanta" -> "Road Atlanta (Michelin Raceway)"; other names as they are.
+  static String trackLabel(String name) {
+    for (final prefix in _sponsorPrefixes) {
+      if (name.startsWith(prefix)) return '${name.substring(prefix.length)} (${prefix.trim()})';
+    }
+    return name;
+  }
+
+  /// The star's footnote: the plan isn't yet built on the driver's own
+  /// practice stints.
+  static String notValidatedNote(RaceStrategy strategy) =>
+      '★ Not validated yet: full practice stints are required. '
+      '${strategy.testsPlanned > 0 ? '${strategy.testsDone} of ${strategy.testsPlanned} stint tests done. ' : ''}'
+      'Run them in Practice, then generate the strategy again.';
+
+  static Future<void> lastSave = Future.value();
+
   @override
   State<RaceStrategyScreen> createState() => _RaceStrategyScreenState();
 }
@@ -57,13 +90,14 @@ final List<double> _refuelSpeedOptions = List.generate(16, (i) => (i + 1).toDoub
 /// need for a useable-tyre-category dropdown at all, just one fixed
 /// compound chip list covering every option that could ever apply.
 const List<String> _tireCompoundOptions = ['Racing Hard', 'Racing Medium', 'Racing Soft', 'Intermediate', 'Heavy Wet'];
+
+/// The slicks the driver picks from; at least one is always ticked.
+const List<String> _dryCompoundOptions = ['Racing Hard', 'Racing Medium', 'Racing Soft'];
+
+/// Always available in GT7 races, so not shown to pick -- added to every brief.
+const List<String> _wetCompounds = ['Intermediate', 'Heavy Wet'];
 const List<int> _mandatoryPitStopOptions = [0, 1, 2, 3];
 
-/// 0 disables the tyre-stint cap entirely (stint length is fuel-range
-/// only, the original behavior) -- otherwise a realistic range of
-/// maximum laps a single tyre set should run, mirroring a standard
-/// sim-racing pit-calculator's "maximum tyre stint" input.
-const List<int> _maxTyreStintLapsOptions = [0, 5, 8, 10, 12, 15, 18, 20, 25, 30];
 
 /// Every lap count from 1-120 -- enough for a 90-minute race on a short
 /// lap, as a plain dropdown avoids fat-finger typos (e.g. "32" vs "320")
@@ -79,7 +113,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   final _roundNameController = TextEditingController(text: LeagueCalendar.rounds.first.name);
   final _raceLengthMinutesController = TextEditingController();
   final _fuelController = TextEditingController(text: '100');
-  final _notesController = TextEditingController();
   final _weatherController = TextEditingController();
   bool _savedBriefingLoaded = false;
 
@@ -88,12 +121,10 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   double _tyreWearMultiplier = 1.0;
   double _fuelConsumptionMultiplier = 1.0;
   double _refuelingSpeed = 8.0;
-  final _finishReserveController = TextEditingController(text: '0');
-  int _maxTyreStintLaps = 0;
+  /// The slicks ticked (wet tyres are always available, see _wetCompounds).
   final Set<String> _selectedTireCompounds = {'Racing Hard', 'Racing Medium'};
   String _mandatoryTyreCompound = 'N/A';
   int _mandatoryPitStopCount = 0;
-  bool _wetOrChangeableWeather = false;
 
   RaceStrategy? _strategy;
   bool _loading = false;
@@ -114,12 +145,63 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   /// including service), saved with the briefing.
   final _pitStopTimeController = TextEditingController();
 
+  /// The brief saves itself: every edit is written shortly after it's
+  /// made (no Save button). Held off until the saved brief has loaded,
+  /// and while switching rounds, so defaults never overwrite a saved one.
+  bool _autoSaveReady = false;
+  Timer? _saveTimer;
+  String? _lastSavedJson;
+
+  void _scheduleSave() {
+    if (!_autoSaveReady) return;
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 400), _saveNow);
+  }
+
+  String get _roundName => _roundNameController.text.trim().isEmpty ? 'Round 1' : _roundNameController.text.trim();
+
+  /// The form as it would be saved, or null if it isn't complete.
+  String? _formJson() {
+    final briefing = _buildBriefingFromForm(quiet: true);
+    return briefing == null ? null : jsonEncode([_roundName, briefing.toMap(), _strategy?.toMap()]);
+  }
+
+  /// Saves the form as it stands, if it's complete and has changed.
+  void _saveNow() {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    if (!_autoSaveReady) return;
+    final briefing = _buildBriefingFromForm(quiet: true);
+    if (briefing == null) return;
+    final name = _roundName;
+    final json = jsonEncode([name, briefing.toMap(), _strategy?.toMap()]);
+    if (json == _lastSavedJson) return;
+    _lastSavedJson = json;
+    RaceStrategyScreen.lastSave = SavedBriefingStore.save(name: name, briefing: briefing, strategy: _strategy);
+  }
+
   @override
   void initState() {
     super.initState();
     _strategist = RaceStrategistService(dotenv.env['GROQ_API_KEY'] ?? '');
     _tracksFuture = TrackDatabase.load();
-    _loadSavedBriefing();
+    for (final c in [
+      _raceLengthMinutesController,
+      _fuelController,
+      _weatherController,
+      _pitStopTimeController,
+    ]) {
+      c.addListener(_scheduleSave);
+    }
+    // Opening the brief saves nothing: only edits after it has loaded
+    // (and the track list has filled the track) count.
+    Future.wait([_loadSavedBriefing(), _tracksFuture]).whenComplete(() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _lastSavedJson = _formJson();
+        _autoSaveReady = true;
+      });
+    });
     TimeTrialStore.load().then((laps) {
       if (mounted) setState(() => _timeTrialBest = TimeTrialLap.best(laps));
     });
@@ -187,11 +269,10 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
 
   @override
   void dispose() {
+    if (_saveTimer != null) _saveNow(); // an edit still waiting to be saved
     _roundNameController.dispose();
     _raceLengthMinutesController.dispose();
     _fuelController.dispose();
-    _finishReserveController.dispose();
-    _notesController.dispose();
     _weatherController.dispose();
     _pitStopTimeController.dispose();
     super.dispose();
@@ -225,29 +306,25 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     _refuelingSpeed = briefing.refuelingSpeedLitersPerSec;
     _pitStopTimeController.text = briefing.pitStopTimeSeconds?.toString() ?? '';
     _fuelController.text = briefing.startingFuelPercent.toString();
-    _finishReserveController.text = briefing.finishFuelReservePercent.toString();
-    _maxTyreStintLaps = briefing.maxTyreStintLaps;
     _selectedTireCompounds
       ..clear()
-      ..addAll(briefing.availableTireCompounds);
+      ..addAll(briefing.availableTireCompounds.where(_dryCompoundOptions.contains));
+    if (_selectedTireCompounds.isEmpty) _selectedTireCompounds.add('Racing Medium');
     _mandatoryTyreCompound = briefing.mandatoryTyreCompound;
     _mandatoryPitStopCount = briefing.mandatoryPitStopCount;
-    _wetOrChangeableWeather = briefing.wetOrChangeableWeather;
-    _notesController.text = briefing.additionalNotes;
     _weatherController.text = briefing.weatherSlots;
     _strategy = strategy;
     _savedBriefingLoaded = true;
   }
 
   /// Names the briefing after round [name] and fills in what the league
-  /// calendar says about it: the track, wet/changeable weather, and a
-  /// timed race length for enduros.
+  /// calendar says about it: the track and a timed race length for
+  /// enduros. (The weather comes from the weekly brief.)
   void _applyCalendarRound(String name) {
     _roundNameController.text = name;
     final round = LeagueCalendar.byName(name);
     if (round == null) return;
     _trackName = round.gt7Track;
-    _wetOrChangeableWeather = round.variableWeather;
     if (round.raceLengthMinutes != null) {
       _raceLengthMinutesController.text = round.raceLengthMinutes.toString();
     }
@@ -256,33 +333,38 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   /// The round picker changed: that round's own saved briefing if it has
   /// one, otherwise the calendar's details for it.
   Future<void> _switchRound(String name) async {
+    _saveNow(); // the round being left
+    _autoSaveReady = false;
     setState(() => _applyCalendarRound(name));
     final saved = await SavedBriefingStore.briefingFor(name);
-    if (saved == null || !mounted || _roundNameController.text != name) return;
-    setState(() => _applyBriefing(name, saved.$1, saved.$2));
+    if (mounted && saved != null && _roundNameController.text == name) {
+      setState(() => _applyBriefing(name, saved.$1, saved.$2));
+    }
+    _autoSaveReady = true;
+    _scheduleSave(); // makes it the active round, as Save used to
   }
 
   /// Builds a RaceBriefing from whatever is CURRENTLY in the form
   /// fields, or null (with _error set) if required fields are missing.
-  /// Used by both _generateStrategy() and _saveBriefing() so that
-  /// saving always reflects the latest on-screen edits rather than a
-  /// stale briefing object left over from the last time "GENERATE
-  /// STRATEGY" was pressed -- previously Save silently persisted that
-  /// stale object, so edits made after generating (or after loading a
-  /// saved briefing) without re-generating were never actually saved.
-  RaceBriefing? _buildBriefingFromForm() {
+  /// Used by both _generateStrategy() and the auto-save, so what's saved
+  /// is always the latest on-screen edits.
+  RaceBriefing? _buildBriefingFromForm({bool quiet = false}) {
     final fuel = double.tryParse(_fuelController.text.trim());
     final raceLengthMinutes = int.tryParse(_raceLengthMinutesController.text.trim());
-    final finishReserve = double.tryParse(_finishReserveController.text.trim()) ?? 0.0;
 
     if (_trackName == null || fuel == null || _selectedTireCompounds.isEmpty) {
-      setState(() => _error = 'Pick a track, starting fuel %, and at least one tire compound.');
+      if (!quiet) setState(() => _error = 'Pick a track, starting fuel %, and at least one tire compound.');
       return null;
     }
-    final weatherText = _wetOrChangeableWeather ? _weatherController.text.trim() : '';
+    // Every race has weather: one slot ("C01") or several in race order.
+    final weatherText = _weatherController.text.trim();
     final weather = WeatherForecast.tryParse(weatherText);
+    if (weatherText.isEmpty && !quiet) {
+      setState(() => _error = 'Enter the race weather from the brief, e.g. C01 or R06/R05/C03/S14.');
+      return null;
+    }
     if (weatherText.isNotEmpty && weather == null) {
-      setState(() => _error = 'Weather slots should look like R06/R05/C03/S14 (R rain, C cloudy, S sunny).');
+      if (!quiet) setState(() => _error = 'Weather slots should look like R06/R05/C03/S14 (R rain, C cloudy, S sunny).');
       return null;
     }
 
@@ -295,34 +377,28 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       refuelingSpeedLitersPerSec: _refuelingSpeed,
       pitStopTimeSeconds: _enteredPitStopTime(),
       startingFuelPercent: fuel,
-      finishFuelReservePercent: finishReserve,
-      maxTyreStintLaps: _maxTyreStintLaps,
-      availableTireCompounds: _selectedTireCompounds.toList(),
+      // No finish fuel reserve and no tyre-stint cap: stints are set by
+      // fuel range and the weather (both off the form).
+      finishFuelReservePercent: 0,
+      maxTyreStintLaps: 0,
+      availableTireCompounds: [
+        for (final c in _dryCompoundOptions)
+          if (_selectedTireCompounds.contains(c)) c,
+        ..._wetCompounds,
+      ],
       mandatoryTyreCompound: _mandatoryTyreCompound,
       mandatoryPitStopCount: _mandatoryPitStopCount,
-      wetOrChangeableWeather: _wetOrChangeableWeather,
+      // Wet if any slot rains; the brief's slots are the only weather input.
+      wetOrChangeableWeather: weather?.slots.any((slot) => slot.isRain) ?? false,
       weatherSlots: weather?.code ?? '',
-      additionalNotes: _notesController.text.trim(),
     );
-  }
-
-  Future<void> _saveBriefing() async {
-    final briefing = _buildBriefingFromForm();
-    if (briefing == null) return;
-    await SavedBriefingStore.save(
-      name: _roundNameController.text.trim().isEmpty ? 'Round 1' : _roundNameController.text.trim(),
-      briefing: briefing,
-      strategy: _strategy,
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('Saved as "${_roundNameController.text.trim()}"')));
   }
 
   Future<void> _generateStrategy() async {
     final briefing = _buildBriefingFromForm();
     if (briefing == null) return;
+    // The plan being replaced, to say what changed.
+    final previous = _strategy;
 
     setState(() {
       _loading = true;
@@ -350,26 +426,45 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       // (pit laps excluded) once there are enough; fall back to the
       // live rolling average otherwise.
       final practiceLaps = widget.getPracticeLaps();
-      final practiceLapAverage = PracticeFuelCalculator.averagePercentPerLap(practiceLaps);
-      final practiceFuelPrediction = widget.getCurrentFuelPrediction();
-      final measuredPercentPerLap =
-          practiceLapAverage ?? (practiceFuelPrediction.hasEnoughData ? practiceFuelPrediction.percentPerLap : null);
+      // This round's laps only: the live fuel figure could be from
+      // another track or fuel setting -- earlier rounds come in through
+      // the base rates below, scaled to this round.
+      final measuredPercentPerLap = PracticeFuelCalculator.averagePercentPerLap(practiceLaps);
+
+      // Fuel use and tyre wear from every round driven so far.
+      BaseRates baseRates;
+      try {
+        baseRates = await BaseRates.load();
+      } catch (_) {
+        baseRates = BaseRates.none;
+      }
 
       // GT7's own pit stop time for this track, if entered.
       final measuredPitStopTimeLossSeconds = briefing.pitStopTimeSeconds;
 
-      final strategy = await _strategist.generateStrategy(
+      final generated = await _strategist.generateStrategy(
         briefing,
         trackLengthMeters: trackLengthMeters,
         measuredPercentPerLap: measuredPercentPerLap,
         measuredPitStopTimeLossSeconds: measuredPitStopTimeLossSeconds,
+        // Your wet testing decides each wet spell's tyre, where it covers it.
+        wetPace: WetPaceTable.fromLaps(practiceLaps),
+        baseRates: baseRates,
+      );
+      // How much of the round's practice stint testing it rests on.
+      final plan = TestPlan.fromBriefing(briefing, startCompound: generated.startingTireCompound);
+      final progress = TestPlanTracker.progress(plan, widget.getPracticeLaps());
+      final strategy = generated.withPractice(
+        done: progress.statuses.where((s) => s == TestStatus.done).length,
+        planned: plan.stints.length,
       );
       setState(() {
         _strategy = strategy;
         _usedMeasuredFuelData = measuredPercentPerLap != null;
-        _usedPracticeLapFuelData = practiceLapAverage != null;
+        _usedPracticeLapFuelData = measuredPercentPerLap != null;
         _loading = false;
       });
+      if (previous != null && mounted) await _showChanges(previous, strategy);
     } catch (error) {
       setState(() {
         _error = 'Strategy generation failed: $error';
@@ -378,12 +473,73 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     }
   }
 
+  /// After regenerating: what's different from the plan it replaced, and
+  /// what the new one rests on (measured from practice, or assumed).
+  Future<void> _showChanges(RaceStrategy previous, RaceStrategy updated) {
+    final changes = StrategyChanges.between(previous, updated);
+    final body = TextStyle(color: Colors.grey.shade300, fontSize: 16);
+    Widget heading(String text) => Padding(
+      padding: const EdgeInsets.only(top: 12, bottom: 6),
+      child: Text(text, style: TextStyle(color: Colors.grey.shade400, fontSize: 14, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+    );
+    Widget bullet(String text, {Color? colour}) => Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text('•  $text', style: body.copyWith(color: colour)),
+    );
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey.shade900,
+        title: Text(
+          changes.isEmpty ? 'Strategy unchanged' : 'Strategy updated',
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+        ),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (changes.isEmpty)
+                  Text('Same plan as before.', style: body)
+                else ...[
+                  heading('WHAT CHANGED'),
+                  for (final c in changes) bullet(c, colour: Colors.white),
+                ],
+                if (updated.basis.isNotEmpty) ...[
+                  heading('WHY: WHAT IT\'S BASED ON'),
+                  for (final b in updated.basis) bullet(b),
+                ],
+                if (!updated.validatedByPractice) ...[
+                  const SizedBox(height: 6),
+                  Text(RaceStrategyScreen.notValidatedNote(updated), style: TextStyle(color: Colors.amber.shade300, fontSize: 15)),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Dropdowns, chips and switches all edit through setState: a rebuild
+    // means something may have changed (an unchanged form isn't re-saved).
+    _scheduleSave();
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(backgroundColor: Colors.black, title: const Text('RACE STRATEGY')),
-      body: SafeArea(
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        title: const Text('RACE BRIEF', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+      ),
+      // Bigger text throughout: the brief is read at arm's length on the iPad.
+      body: MediaQuery.withClampedTextScaling(
+        minScaleFactor: RaceStrategyScreen.textScale,
+        maxScaleFactor: RaceStrategyScreen.textScale * 1.5,
+        child: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -395,7 +551,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
               if (_savedBriefingLoaded) ...[
                 const SizedBox(height: 4),
                 Text(
-                  'Loaded saved briefing from last session.',
+                  'Saved automatically as you edit.',
                   style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
                 ),
               ],
@@ -426,8 +582,10 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                   return _dropdown<String>(
                     label: 'Track name',
                     value: _trackName!,
-                    items: tracks.map((t) => t.name).toList(),
-                    labelOf: (v) => v,
+                    // By the name drivers use: "Road Atlanta", not GT7's sponsored "Michelin Raceway ...".
+                    items: tracks.map((t) => t.name).toList()
+                      ..sort((a, b) => RaceStrategyScreen.trackLabel(a).toLowerCase().compareTo(RaceStrategyScreen.trackLabel(b).toLowerCase())),
+                    labelOf: RaceStrategyScreen.trackLabel,
                     onChanged: (v) => setState(() => _trackName = v),
                   );
                 },
@@ -496,42 +654,28 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 ],
               ),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: _textField(
-                      _finishReserveController,
-                      'Finish fuel reserve % (safety margin)',
-                      keyboardType: TextInputType.number,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _dropdown<int>(
-                      label: 'Max tyre stint (laps, 0 = no cap)',
-                      value: _maxTyreStintLaps,
-                      items: _maxTyreStintLapsOptions,
-                      labelOf: (v) => v == 0 ? 'No cap' : v.toString(),
-                      onChanged: (v) => setState(() => _maxTyreStintLaps = v!),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
               _sectionLabel('AVAILABLE TYRE COMPOUNDS'),
               const SizedBox(height: 4),
+              Text(
+                'Tick at least one. Intermediates and Wets are always available.',
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+              ),
+              const SizedBox(height: 6),
               Wrap(
                 spacing: 8,
                 runSpacing: 4,
-                children: _tireCompoundOptions.map((compound) {
+                children: _dryCompoundOptions.map((compound) {
                   final selected = _selectedTireCompounds.contains(compound);
+                  // The last ticked slick can't be unticked.
+                  final locked = selected && _selectedTireCompounds.length == 1;
                   return FilterChip(
                     label: Text(compound),
                     selected: selected,
+                    tooltip: locked ? 'At least one slick is needed' : null,
                     onSelected: (value) => setState(() {
                       if (value) {
                         _selectedTireCompounds.add(compound);
-                      } else {
+                      } else if (!locked) {
                         _selectedTireCompounds.remove(compound);
                       }
                     }),
@@ -573,22 +717,14 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
               ),
               const SizedBox(height: 8),
-              SwitchListTile(
-                value: _wetOrChangeableWeather,
-                onChanged: (value) => setState(() => _wetOrChangeableWeather = value),
-                title: const Text('Wet / changeable weather', style: TextStyle(color: Colors.white)),
-                activeColor: Colors.greenAccent,
-                tileColor: Colors.grey.shade900,
-              ),
-              if (_wetOrChangeableWeather) ...[
-                const SizedBox(height: 8),
+              ...[
                 TextField(
                   controller: _weatherController,
                   onChanged: (_) => setState(() {}),
                   textCapitalization: TextCapitalization.characters,
                   style: const TextStyle(color: Colors.white, letterSpacing: 1),
                   decoration: InputDecoration(
-                    labelText: 'Weather slots from the briefing (e.g. R06/R05/C03/S14)',
+                    labelText: 'Race weather from the brief (e.g. C01, or R06/R05/C03/S14)',
                     labelStyle: TextStyle(color: Colors.grey.shade500),
                     errorText: _weatherController.text.trim().isEmpty || WeatherForecast.tryParse(_weatherController.text) != null
                         ? null
@@ -603,8 +739,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                   _weatherTimeline(forecast),
                 ],
               ],
-              const SizedBox(height: 8),
-              _textField(_notesController, 'Additional notes (grid penalties, etc.)', maxLines: 3),
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: _loading ? null : _generateStrategy,
@@ -624,19 +758,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 const SizedBox(height: 12),
                 Text(_error!, style: const TextStyle(color: Colors.redAccent)),
               ],
-              const SizedBox(height: 16),
-              OutlinedButton(
-                onPressed: _saveBriefing,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: BorderSide(color: Colors.grey.shade600),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-                child: const Text(
-                  'SAVE BRIEFING FOR NEXT TIME',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                ),
-              ),
               if (_strategy != null) ...[
                 const SizedBox(height: 24),
                 _sectionLabel('RECOMMENDED STRATEGY'),
@@ -646,6 +767,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -808,17 +930,25 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Starting tire: ${strategy.startingTireCompound}',
+            'Starting tire: ${strategy.startingTireCompound}${strategy.validatedByPractice ? '' : ' ★'}',
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(strategy.summary, style: TextStyle(color: Colors.grey.shade300)),
+          if (!strategy.validatedByPractice) ...[
+            const SizedBox(height: 10),
+            Text(
+              RaceStrategyScreen.notValidatedNote(strategy),
+              style: TextStyle(color: Colors.amber.shade300, fontSize: 14),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(
             children: [
               Text(
                 '${_usedMeasuredFuelData ? 'Measured' : 'Assumed'} fuel use: '
-                '${strategy.assumedPercentPerLap.toStringAsFixed(2)}%/lap',
+                '${strategy.assumedPercentPerLap.toStringAsFixed(2)}%/lap'
+                '${strategy.fuelMap > 1 ? ' on Fuel Map ${strategy.fuelMap}' : ''}',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
               ),
               if (_usedMeasuredFuelData) ...[

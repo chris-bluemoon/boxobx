@@ -7,6 +7,7 @@ import '../models/fused_race_state.dart';
 import '../models/connection_status.dart';
 import '../models/voice_engine_status.dart';
 import '../widgets/voice_status_badge.dart';
+import '../services/driver_profile.dart';
 import '../services/telemetry_udp_service.dart';
 import '../services/hud_ocr_service.dart';
 import '../services/sector_calculator.dart';
@@ -30,7 +31,6 @@ import '../services/test_plan_tracker.dart';
 import '../services/stint_summary.dart';
 import '../services/water_trend.dart';
 import '../services/wet_tyre_caller.dart';
-import '../services/race_report.dart';
 import '../services/corner_report.dart';
 import '../models/test_plan.dart';
 import '../services/app_mode_store.dart';
@@ -38,12 +38,12 @@ import '../models/app_mode.dart';
 import '../models/sector_state.dart';
 import '../models/time_trial_lap.dart';
 import '../models/race_strategy.dart';
-import '../models/weather_forecast.dart';
 import 'race_strategy_screen.dart';
 import 'practice_log_screen.dart';
+import 'practice_rounds_screen.dart';
 import 'aprl_standings_view.dart';
 import '../services/tyre_best_laps.dart';
-import 'race_reports_screen.dart';
+import 'race_rounds_screen.dart';
 import 'corner_report_screen.dart';
 import '../widgets/telemetry_card.dart';
 import '../widgets/tire_temp_card.dart';
@@ -148,6 +148,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// Boxington's voice pipeline, a dot in the Race Mode heading.
   VoiceEngineStatus _voiceStatus = VoiceEngineStatus.idle;
 
+  /// Why Boxington can't speak (see VoiceEngine.problem), shown as a
+  /// banner on every page; null when he can.
+  String? _voiceProblem;
+  Timer? _voiceRecheck;
+
+  /// "BOXINGTON OFFLINE" across the top of every page while the voice
+  /// can't reach its services -- tap to check again.
+  Widget _voiceProblemBanner(String problem) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Material(
+      color: Colors.red.shade900,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: _voiceEngine.checkConnection,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            children: [
+              const Icon(Icons.voice_over_off, color: Colors.white, size: 26),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      const TextSpan(text: 'BOXINGTON OFFLINE  ', style: TextStyle(fontWeight: FontWeight.bold)),
+                      TextSpan(text: problem),
+                    ],
+                  ),
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                ),
+              ),
+              Text('TAP TO RETRY', style: TextStyle(color: Colors.red.shade100, fontSize: 13, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
   ConnectionStatus _telemetryStatus = ConnectionStatus.disconnected;
   ConnectionStatus _hudStatus = ConnectionStatus.disconnected;
 
@@ -169,7 +209,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// applies to practice laps logged from now on (GT7's telemetry has
   /// no tire-compound field at all, so this manual selection is the
   /// only source of truth; see PracticeLapLogger).
-  String _selectedTireCompound = 'Racing Medium';
 
   static const List<String> _tireCompoundOptions = [
     'Racing Hard',
@@ -179,28 +218,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     'Heavy Wet',
   ];
 
-  /// Maps the laptop OCR relay's raw compound code (read off GT7's HUD
-  /// tire-wear widget -- see laptop_ocr/tire_wear_reader.py) to one of
-  /// this dropdown's display strings. Only the compounds actually
-  /// reachable from the dropdown are mapped; anything else (e.g. a
-  /// comfort/sport-compound code, or a misread) is deliberately left
-  /// unmapped so an unreliable read can never silently overwrite the
-  /// driver's manual selection with the wrong compound.
-  static const Map<String, String> _ocrCompoundToDropdownValue = {
-    'RH': 'Racing Hard',
-    'RM': 'Racing Medium',
-    'RS': 'Racing Soft',
-    'IM': 'Intermediate',
-    'W': 'Heavy Wet',
-  };
-
-  /// Last OCR compound code this picker auto-applied, so a change is
-  /// only ever auto-applied ONCE per new value read -- if the driver
-  /// manually overrides the picker afterward (e.g. the OCR read is
-  /// wrong), that manual choice sticks until the OCR reads something
-  /// genuinely different again, rather than snapping back on every
-  /// subsequent HUD update.
-  String? _lastAutoAppliedOcrCompound;
 
   /// If the HUD OCR relay just read a (dropdown-mappable) tire
   /// compound that's different from the last one this picker
@@ -236,6 +253,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       closed = true;
       if (logger.activeTestNumber != testNumber) return; // ended/changed meanwhile
       _raceStateManager.completeActiveTest();
+      _raceStateManager.practiceLapLogger.setWeather(null);
       setState(() => _justCompletedTest = completed);
     }
 
@@ -364,7 +382,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         backgroundColor: Colors.grey.shade900,
         title: Text('Start stint test ${test.number}?', style: const TextStyle(color: Colors.white)),
         content: Text(
-          '${_testPlanProgress(_testPlan!).targetFor(test)}\n\nYour next lap starts this stint test. Fit ${test.compoundShort}s with '
+          '${_testPlanProgress(_testPlan!).targetFor(test)}\n\n'
+          '${test.weather == null ? '' : 'Set the lobby weather to ${test.weatherName}. '}'
+          'Your next lap starts this stint test. Fit ${test.compoundShort.endsWith('s') ? test.compoundShort : '${test.compoundShort}s'} with '
           '${test.startFuelPercent.toStringAsFixed(0)}% fuel.',
           style: TextStyle(color: Colors.grey.shade300),
         ),
@@ -381,14 +401,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// the planned compound. The app takes the driver's word for it.
   void _startTest(PlannedTestStint test) {
     _justCompletedTest = null;
-    _raceStateManager.startTestStint(test.number);
+    // The test's weather (a wet test's rain preset; dry otherwise) goes on
+    // its laps -- no weather to pick.
+    _raceStateManager.practiceLapLogger.setWeather(test.weather);
+    _raceStateManager.startTestStint(test.number, throughStops: test.kind == TestStintKind.race);
     _testPlanCaller.reset();
     if (_tireCompoundOptions.contains(test.compound)) {
-      setState(() => _selectedTireCompound = test.compound);
       _raceStateManager.setPracticeTireCompound(test.compound);
-    } else {
-      setState(() {});
     }
+    setState(() {});
   }
 
   Future<void> _confirmEndTest(PlannedTestStint test) async {
@@ -409,6 +430,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
     if (ok == true) {
       _raceStateManager.startNewStint();
+      _raceStateManager.practiceLapLogger.setWeather(null);
       setState(() {});
     }
   }
@@ -489,11 +511,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _openRaceReports() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => RaceReportsScreen(
-          laps: _state.practiceLaps,
-          strategy: _savedStrategy,
-          timeTrialBest: TimeTrialLap.best(_state.timeTrialLaps),
-          roundName: _activeRoundName,
+        builder: (_) => RaceRoundsScreen(
+          currentRound: _activeRoundName ?? '',
+          currentLaps: () => _state.practiceLaps,
+          currentStrategy: _savedStrategy,
+          currentTimeTrialBest: TimeTrialLap.best(_state.timeTrialLaps),
+          deleteCurrentLaps: _raceStateManager.removePracticeLaps,
         ),
       ),
     );
@@ -505,9 +528,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // The splash page's wordmark: tyres for the O's.
         const Align(
           alignment: Alignment.centerLeft,
-          child: BoxBoxLogo(size: 40, tagline: 'YOUR GT7 ENGINEER'),
+          child: BoxBoxWheelWordmark(size: 52, tagline: 'YOUR GT7 ENGINEER'),
         ),
         const SizedBox(height: 16),
         _trackHeader(accent: Colors.blueGrey.shade600, large: true, onTap: _pickRound),
@@ -532,15 +556,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         const SizedBox(height: 16),
         Row(
           children: [
-            _homeButton(Icons.flag, 'RACE STRATEGY', _openRaceStrategy),
+            _homeButton(Icons.flag, 'RACE BRIEF', _openRaceStrategy),
             const SizedBox(width: 12),
-            _homeButton(Icons.list_alt, 'PRACTICE LOG', _openPracticeLog),
+            _homeButton(Icons.list_alt, 'PRACTICE LOG', _openPracticeRounds),
             const SizedBox(width: 12),
-            _homeButton(
-              Icons.assessment,
-              'RACE REPORTS (${RaceReport.fromLaps(_state.practiceLaps).length})',
-              _openRaceReports,
-            ),
+            _homeButton(Icons.assessment, 'RACE REPORTS', _openRaceReports),
           ],
         ),
       ],
@@ -597,7 +617,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return _homeCard(
       icon: Icons.timer,
       title: 'BEST LAPS BY TYRE',
-      onTap: _openPracticeLog,
+      onTap: _openPracticeRounds,
       child: tyres.isEmpty
           ? Text(
               'No laps yet. Drive in Practice, a race or a time trial and each tyre\'s best lap shows here.',
@@ -688,11 +708,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     const big = TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold);
     return _homeCard(
       icon: Icons.flag,
-      title: 'RACE STRATEGY',
+      title: 'RACE BRIEF',
       onTap: _openRaceStrategy,
       child: strategy == null
           ? Text(
-              'No strategy yet. Open Race Strategy to brief the round and plan the stops.',
+              'No strategy yet. Open the Race Brief to brief the round and plan the stops.',
               style: TextStyle(color: Colors.grey.shade400, fontSize: 16),
             )
           : ListView(
@@ -704,7 +724,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   style: TextStyle(color: Colors.amber.shade300, fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.5),
                 ),
                 const SizedBox(height: 8),
-                Text('Start on ${short(strategy.startingTireCompound)}', style: big),
+                Text('Start on ${short(strategy.startingTireCompound)}${strategy.validatedByPractice ? '' : ' ★'}', style: big),
                 for (final stop in strategy.pitStops)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
@@ -718,8 +738,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: Colors.grey.shade300, fontSize: 15),
                   ),
+                if (!strategy.validatedByPractice) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    RaceStrategyScreen.notValidatedNote(strategy),
+                    style: TextStyle(color: Colors.amber.shade300, fontSize: 14),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 Text(
+                  '${strategy.fuelMap > 1 ? 'Fuel Map ${strategy.fuelMap} · ' : ''}'
                   'Fuel ${strategy.assumedPercentPerLap.toStringAsFixed(1)}%/lap · '
                   '${strategy.totalEstimatedTimeLossSeconds.toStringAsFixed(0)} s in the pits',
                   style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
@@ -799,21 +827,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'Call it out briefly, with what it means for us if anything.';
   }
 
-  void _maybeAutoFillTireCompoundFromOcr(FusedRaceState state) {
-    final ocrCompound = state.hud.tireCompound;
-    if (ocrCompound == null) return;
-    if (ocrCompound == _lastAutoAppliedOcrCompound) return;
-
-    final mappedValue = _ocrCompoundToDropdownValue[ocrCompound];
-    if (mappedValue == null) return;
-
-    _lastAutoAppliedOcrCompound = ocrCompound;
-    if (mappedValue == _selectedTireCompound) return;
-
-    setState(() => _selectedTireCompound = mappedValue);
-    _raceStateManager.setPracticeTireCompound(mappedValue);
-  }
-
   @override
   void initState() {
     super.initState();
@@ -848,11 +861,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Rejoin words play instantly from cache (no AI or TTS round trip).
     if (widget.connectOnStart) _voiceEngine.precacheClips(_rejoinWords.values);
 
+    // Can Boxington reach Groq from this network? Checked now, so a
+    // blocked network shows before the race -- and again every 30s
+    // while he can't, so the banner clears once it's sorted.
+    _voiceEngine.problems.listen((problem) {
+      if (mounted) setState(() => _voiceProblem = problem);
+    });
+    if (widget.connectOnStart) {
+      _voiceEngine.checkConnection();
+      _voiceRecheck = Timer.periodic(const Duration(seconds: 30), (_) {
+        if (_voiceEngine.problem != null) _voiceEngine.checkConnection();
+      });
+    }
+
     _raceStateManager.stream.listen((state) {
       if (!mounted) return;
       _trackPositionLoss(state.hud.gridPosition);
       setState(() => _state = state);
-      _maybeAutoFillTireCompoundFromOcr(state);
       _maybeMakePitCall(state);
       _maybeMakeTestPlanCall(state);
       _maybeMakeDropOffCall(state);
@@ -881,7 +906,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Leaving the track (race over, exiting to the menu, loading the
     // next session) now resets per-session state automatically -- the
     // refresh button is only needed if GT7's flags aren't available.
-    _raceStateManager.sessionEnded.listen((_) => _resetSessionTracking());
+    _raceStateManager.sessionEnded.listen((_) {
+      _resetSessionTracking();
+      _refreshDriverProfile();
+    });
+    _refreshDriverProfile();
 
     _raceStateManager.opponentPitted.listen((stops) {
       // Stops are logged in both modes; only called out in a race.
@@ -897,6 +926,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _raceStateManager.crashes.listen((crash) {
       if (!_mode.incidentCalls || _choosingMode) return;
       _voiceEngine.speakProactively(crash.toPrompt(), _state);
+    });
+
+    _raceStateManager.spins.listen((event) {
+      if (!DriverProfile.boxingtonUsesIt || !_mode.incidentCalls || _choosingMode) return;
+      final (spin, corner) = event;
+      _voiceEngine.speakProactively(spin.toPrompt(corner: corner), _state);
     });
 
     _raceStateManager.telemetryStatusStream.listen((status) {
@@ -1061,8 +1096,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  /// The Practice Log's list of rounds with stints (Home); the current
+  /// round opens with its live laps.
+  Future<void> _openPracticeRounds() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PracticeRoundsScreen(
+          currentRound: _activeRoundName ?? '',
+          currentLaps: () => _state.practiceLaps,
+          openCurrentRound: _openPracticeLog,
+        ),
+      ),
+    );
+  }
+
+  /// The current round's log (straight from the Practice screen).
   Future<void> _openPracticeLog() async {
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PracticeLogScreen(
           laps: _state.practiceLaps,
@@ -1099,11 +1149,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // The driver may have saved a (re)named round while on that screen
     // -- refresh the dashboard's badge so it reflects whichever round
     // practice laps now count toward.
+    await RaceStrategyScreen.lastSave; // the brief saves itself as it's edited
     _loadActiveRoundName();
   }
 
   /// Dashboard-owned per-session state, reset automatically when GT7
   /// reports leaving the track (FusedRaceStateManager.sessionEnded).
+  /// What Boxington knows about the driver, from every round's laps (see
+  /// DriverProfile) -- rebuilt at start and after each session, so the
+  /// last race is in it.
+  Future<void> _refreshDriverProfile() async {
+    if (!DriverProfile.boxingtonUsesIt) return;
+    try {
+      final profile = await DriverProfile.load();
+      _voiceEngine.groqService.driverProfile = profile.isEmpty ? null : profile.toPrompt();
+    } catch (error) {
+      debugPrint('Driver profile not loaded: $error');
+    }
+  }
+
   void _resetSessionTracking() {
     _shiftCoachTrigger.reset();
     // Clears tracked rival positions too -- otherwise a rival's LAST
@@ -1123,6 +1187,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
+    _voiceRecheck?.cancel();
     _raceStateManager.dispose();
     _voiceEngine.dispose();
     super.dispose();
@@ -1157,11 +1222,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   /// Replaces the old raw FUEL% card -- that percentage is already shown
-  /// directly on GT7's own HUD, so showing it a second time here wasted
-  /// dashboard space. The predicted pit lap (derived by FuelPredictor
-  /// from per-lap consumption) is something the driver can't read off
-  /// the game screen directly.
+  /// directly on GT7's own HUD. Race Mode: the strategy's next stop (or
+  /// sooner, when the fuel runs out first -- see NextPitLap); NONE when
+  /// no stop is left. Practice: the lap the fuel runs out.
   String _pitLapDisplayValue() {
+    if (_mode == AppMode.race) {
+      final next = _nextPitLap();
+      if (next != null) return 'L${next.lap}';
+      final known = _state.fuelPrediction.hasEnoughData || _plannedStops.isNotEmpty;
+      return known && _state.telemetry.currentLap > 0 ? 'NONE' : '--';
+    }
     final prediction = _state.fuelPrediction;
     if (!prediction.hasEnoughData || prediction.predictedEmptyLap == null) {
       return '--';
@@ -1169,15 +1239,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return 'L${prediction.predictedEmptyLap}';
   }
 
-  /// Flashes red once the predicted empty lap is close (within 2 laps),
-  /// mirroring the urgency the old low-fuel-percent alert conveyed.
+  NextPitLap? _nextPitLap() => NextPitLap.of(
+    _state,
+    plannedStops: _plannedStops,
+    stopsMade: _raceStateManager.pitStopTracker.stopCount,
+  );
+
+  String _pitLapLabel() {
+    if (_mode != AppMode.race) return 'PIT LAP';
+    final next = _nextPitLap();
+    if (next == null) return 'PIT LAP';
+    if (next.forFuel) return 'PIT LAP · FUEL';
+    final tyre = next.plannedStop!.tireCompound;
+    return tyre.isEmpty ? 'PIT LAP · PLAN' : 'PIT LAP · ${_shortTyre(tyre).toUpperCase()}';
+  }
+
+  static String _shortTyre(String compound) => switch (compound) {
+    'Heavy Wet' => 'Wets',
+    'Intermediate' => 'Inters',
+    _ => compound.replaceFirst('Racing ', ''),
+  };
+
+  /// Red once the stop is close (within 2 laps).
   bool _pitLapAlert() {
-    final prediction = _state.fuelPrediction;
-    if (!prediction.hasEnoughData || prediction.predictedEmptyLap == null) {
-      return false;
+    final int? lap;
+    if (_mode == AppMode.race) {
+      lap = _nextPitLap()?.lap;
+    } else {
+      final prediction = _state.fuelPrediction;
+      lap = prediction.hasEnoughData ? prediction.predictedEmptyLap : null;
     }
-    final lapsRemaining = prediction.predictedEmptyLap! - _state.telemetry.currentLap;
-    return lapsRemaining <= 2;
+    return lap != null && lap - _state.telemetry.currentLap <= 2;
   }
 
   @override
@@ -1187,16 +1279,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: switch (_tab) {
-            _Tab.home => _homePage(),
-            _Tab.aprl => const AprlStandingsView(),
-            _ => _modePage(),
-          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_voiceProblem case final problem?) _voiceProblemBanner(problem),
+              Expanded(child: _pageForTab()),
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: _bottomBar(),
     );
   }
+
+  Widget _pageForTab() => switch (_tab) {
+            _Tab.home => _homePage(),
+            _Tab.aprl => AprlStandingsView(
+              // The league as a whole, so no round or circuit.
+              header: TrackHeader(
+                roundName: null,
+                round: null,
+                outline: null,
+                accent: Colors.amber.shade800,
+                title: 'CHAMPIONSHIP STANDINGS',
+                overlineText: LeagueCalendar.season.toUpperCase(),
+                details: 'Apex Point Racing League · GT3 Clubman Division',
+                emblemIcon: Icons.emoji_events,
+                pageTitle: 'APRL',
+                pageIcon: Icons.emoji_events,
+                statusDots: _connectionDots(),
+              ),
+            ),
+            _ => _modePage(),
+          };
 
   /// Home, the three modes, and the league.
   Widget _bottomBar() {
@@ -1264,6 +1379,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  /// Telemetry and HUD OCR as dots for the page headings.
+  List<Widget> _connectionDots() => [
+    StatusBadge(label: 'TELEMETRY', status: _telemetryStatus, dotOnly: true),
+    StatusBadge(label: 'HUD OCR', status: _hudStatus, dotOnly: true),
+  ];
+
   /// The current mode's page: header (with the connection dots), status
   /// chips and the mode's own body.
   Widget _modePage() {
@@ -1274,8 +1395,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           pageTitle: _mode.label,
           pageIcon: _modeIcon(_mode),
           statusDots: [
-            StatusBadge(label: 'TELEMETRY', status: _telemetryStatus, dotOnly: true),
-            StatusBadge(label: 'HUD OCR', status: _hudStatus, dotOnly: true),
+            ..._connectionDots(),
             // Boxington only talks back in a race (listening, thinking, errors).
             if (_mode == AppMode.race) VoiceStatusBadge(status: _voiceStatus, dotOnly: true),
           ],
@@ -1322,10 +1442,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (_telemetryStatus == ConnectionStatus.live &&
             (_state.sessionPhase == SessionPhase.paused || _state.sessionPhase == SessionPhase.offTrack))
           _chip(_state.sessionPhase == SessionPhase.paused ? 'PAUSED' : 'OFF TRACK', color: Colors.grey.shade800),
+        if (_mode == AppMode.race) ...[
+          _chip(_raceChipLabel(), color: Colors.red.shade900.withValues(alpha: 0.4), border: Colors.red.shade700),
+          _chip('NEW RACE', color: Colors.grey.shade800, border: Colors.grey.shade600, onTap: _confirmNewRace),
+        ],
         if (_mode == AppMode.race) ?_timeTrialComparisonChip(),
         if (_mode.rivalCallouts) _rivalChip(),
       ],
     );
+  }
+
+  /// e.g. "RACE 3 · LAP 12/32": the race laps are going into, so a wrong
+  /// split or merge shows at once (NEW RACE fixes a missed start).
+  String _raceChipLabel() {
+    final race = _raceStateManager.practiceLapLogger.upcomingRaceNumber;
+    final lap = _state.telemetry.currentLap;
+    final total = _state.raceLaps?.total;
+    if (lap <= 0 || _state.sessionPhase == SessionPhase.offTrack) return 'RACE $race';
+    return 'RACE $race · LAP $lap${total == null ? '' : '/$total'}';
+  }
+
+  Future<void> _confirmNewRace() async {
+    final next = _raceStateManager.practiceLapLogger.laps.fold<int>(0, (m, l) => (l.raceNumber ?? 0) > m ? l.raceNumber! : m) + 1;
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Start a new race?'),
+        content: Text(
+          'Your next lap starts Race $next, and fuel, pit stop and call tracking start over. '
+          'The app normally sees a new race by itself; use this if it missed one (e.g. a restart on lap 1).',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCEL')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('NEW RACE')),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    setState(_raceStateManager.startNewRace);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Your next lap starts Race $next'), duration: const Duration(seconds: 2)));
   }
 
   /// The race rival: who, and where they are; tap to choose.
@@ -1396,7 +1553,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            _selectedTireCompound,
+            // What the laps are being logged on (the HUD tyre label, the
+            // pit stop, or a test's tyre -- see FusedRaceStateManager).
+            _raceStateManager.practiceLapLogger.currentTireCompound,
             style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
           ),
         ),
@@ -1415,8 +1574,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// Practice's weather chip: the GT7 weather the laps are being
-  /// tested in (set the same in the practice lobby), for wet testing.
   /// " ↑" / " ↓" when the water gauge is clearly rising or falling.
   String _waterArrow() {
     final rate = _state.waterPercentPerMinute;
@@ -1424,62 +1581,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return rate > 0 ? ' ↑' : ' ↓';
   }
 
+  /// The weather being tested, set by the running stint test (a wet
+  /// test's rain preset), and GT7's water gauge -- for information only;
+  /// nothing to pick. Hidden when dry with no gauge reading.
   Widget _weatherChip() {
     final weather = _raceStateManager.practiceLapLogger.currentWeather;
+    final water = _state.hud.waterPercent;
+    if (weather == null && water == null) return const SizedBox.shrink();
+    final parts = [?weather, if (water != null) 'WATER ${water.round()}%${_waterArrow()}'];
     return _chip(
-      'WEATHER: ${weather ?? 'DRY'}${_state.hud.waterPercent == null ? '' : ' · WATER ${_state.hud.waterPercent!.round()}%${_waterArrow()}'} ▾',
-      color: weather == null ? Colors.amber.shade900.withValues(alpha: 0.35) : const Color(0xFF0D47A1),
-      border: weather == null ? Colors.amber.shade700 : Colors.lightBlue.shade400,
-      onTap: _pickWeather,
+      parts.join(' · '),
+      color: weather == null ? Colors.grey.shade800 : const Color(0xFF0D47A1),
+      border: weather == null ? Colors.grey.shade600 : Colors.lightBlue.shade400,
     );
-  }
-
-  /// Picks the weather being tested: dry or a rain preset, with the
-  /// presets in the round's weather brief marked. A change starts a new
-  /// stint, so each stint is one weather.
-  Future<void> _pickWeather() async {
-    final inBrief = {...?_state.weather?.slots.where((s) => s.isRain).map((s) => s.code)};
-    final current = _raceStateManager.practiceLapLogger.currentWeather;
-    Widget option(String? code, String name, String tyre) => SimpleDialogOption(
-      onPressed: () => Navigator.pop(context, code ?? 'DRY'),
-      child: Row(
-        children: [
-          Icon(code == current ? Icons.radio_button_checked : Icons.radio_button_off, size: 20, color: code == current ? Colors.white : Colors.grey),
-          const SizedBox(width: 12),
-          SizedBox(width: 44, child: Text(code ?? 'DRY', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(name, style: const TextStyle(fontSize: 14)),
-                Text(tyre, style: TextStyle(color: Colors.grey.shade400, fontSize: 14)),
-              ],
-            ),
-          ),
-          if (code != null && inBrief.contains(code)) Text('IN BRIEF', style: TextStyle(color: Colors.lightBlue.shade200, fontSize: 13, letterSpacing: 1)),
-        ],
-      ),
-    );
-    final picked = await showDialog<String>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: const Text('Weather being tested'),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-            child: Text(
-              'Set the same weather in the practice lobby. Changing it starts a new stint.',
-              style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
-            ),
-          ),
-          option(null, 'Dry (cloudy or sunny)', 'Slicks'),
-          for (var n = 1; n <= 8; n++)
-            if (WeatherSlot('R0$n') case final slot) option(slot.code, slot.name, slot.tyre.label),
-        ],
-      ),
-    );
-    if (picked == null || !mounted) return;
-    setState(() => _raceStateManager.practiceLapLogger.setWeather(picked == 'DRY' ? null : picked));
   }
 
   // --- race ---------------------------------------------------------------
@@ -1520,7 +1634,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Row(
                   children: [
                     Expanded(
-                      child: TelemetryCard(label: 'PIT LAP', value: _pitLapDisplayValue(), alert: _pitLapAlert()),
+                      child: TelemetryCard(label: _pitLapLabel(), value: _pitLapDisplayValue(), alert: _pitLapAlert()),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -1846,6 +1960,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final best = stint?.bestLapMs;
     final dropOff = stint?.dropOffMs;
     final wentOff = stint?.tyreDropOff != null;
+    final onTrack = _state.sessionPhase == SessionPhase.driving && _telemetryStatus == ConnectionStatus.live;
+    final stintLapsDone = stint?.laps.length ?? 0;
 
     Widget tile(String label, String value, {bool alert = false}) => Expanded(
       child: TelemetryCard(label: label, value: value, alert: alert),
@@ -1870,9 +1986,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           wear <= running!.stopAtWearRemainingPercent! + TestPlanTracker.wearTolerancePercent,
                     ),
                     const SizedBox(width: 12),
+                    // On track: the lap being driven in this stint (so the
+                    // first lap shows 1, not 0 until it's done); otherwise
+                    // the laps completed.
                     tile(
-                      (stint?.excludedLaps.length ?? 0) == 0 ? 'LAPS' : 'LAPS (+${stint!.excludedLaps.length} OFF-PACE)',
-                      '${stint?.lapCount ?? 0}${expected == null ? '' : ' / ~$expected'}',
+                      [
+                        onTrack ? 'ON LAP' : 'LAPS',
+                        if ((stint?.excludedLaps.length ?? 0) > 0) '${stint!.excludedLaps.length} OFF-PACE',
+                      ].join(' · '),
+                      '${onTrack ? stintLapsDone + 1 : stintLapsDone}${expected == null ? '' : ' / ~$expected'}',
                     ),
                   ],
                 ),

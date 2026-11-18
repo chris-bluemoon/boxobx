@@ -33,6 +33,47 @@ class VoiceEngine {
   Stream<VoiceEngineStatus> get statusStream => _statusController.stream;
   VoiceEngineStatus get status => _status;
 
+  /// Why Boxington can't speak right now, in a few words (e.g. "Groq
+  /// access denied: check the network"), or null when he can. Set by any
+  /// failed call or [checkConnection]; cleared by the next one that works.
+  String? get problem => _problem;
+  String? _problem;
+  final _problemController = StreamController<String?>.broadcast();
+  Stream<String?> get problems => _problemController.stream;
+
+  void _setProblem(String? problem) {
+    if (problem == _problem) return;
+    _problem = problem;
+    _problemController.add(problem);
+  }
+
+  /// Asks Groq whether it will answer from this network.
+  Future<void> checkConnection() async {
+    try {
+      await groqService.checkAccess();
+      _setProblem(null);
+    } catch (error) {
+      debugPrint('VoiceEngine.checkConnection failed: $error');
+      _setProblem(describeProblem(error));
+    }
+  }
+
+  /// A failure in a few words for the dashboard.
+  static String describeProblem(Object error) {
+    final text = '$error';
+    if (text.contains('Access denied')) return 'Groq access denied: check the network (VPN / Private Relay off)';
+    if (text.contains('Invalid API Key') || text.contains('(401)') || text.contains('invalid_api_key')) {
+      return 'Groq API key rejected';
+    }
+    if (text.contains('rate_limit') || text.contains('(429)')) return 'Groq rate limit reached';
+    if (error is SocketException || error is TimeoutException || text.contains('Failed host lookup')) {
+      return 'No internet connection';
+    }
+    if (text.contains('TTS (')) return 'Voice service (${text.contains('cartesia') ? 'Cartesia' : 'ElevenLabs'}) not connecting: check its key / the network';
+    if (text.contains('Groq')) return 'Groq error: ${text.length > 80 ? '${text.substring(0, 80)}…' : text}';
+    return 'Voice error: ${text.length > 80 ? '${text.substring(0, 80)}…' : text}';
+  }
+
   /// Callouts that arrived while Boxington was busy -- see
   /// ProactiveCalloutQueue and speakProactively.
   final ProactiveCalloutQueue _proactiveQueue;
@@ -214,6 +255,7 @@ class VoiceEngine {
       await _streamBoxingtonResponse(syntheticPrompt, raceState);
     } catch (error, stackTrace) {
       debugPrint('VoiceEngine.speakProactively failed: $error\n$stackTrace');
+      _setProblem(describeProblem(error));
       _setStatus(VoiceEngineStatus.error);
       Timer(const Duration(seconds: 2), () => _setStatus(VoiceEngineStatus.idle));
     }
@@ -244,6 +286,7 @@ class VoiceEngine {
       // it impossible to diagnose. debugPrint at least surfaces it in
       // `flutter run`/`flutter logs` output.
       debugPrint('VoiceEngine.onPushToTalkReleased failed: $error\n$stackTrace');
+      _setProblem(describeProblem(error));
       _setStatus(VoiceEngineStatus.error);
       Timer(const Duration(seconds: 2), () => _setStatus(VoiceEngineStatus.idle));
     }
@@ -292,6 +335,8 @@ class VoiceEngine {
         ttsService.sendToken(token);
       }
       ttsService.flush();
+      // Groq answered: whatever was wrong isn't any more.
+      _setProblem(null);
 
       // Wait for the TTS provider to explicitly signal it has sent all
       // audio for this utterance (Cartesia's done:true / ElevenLabs'
@@ -334,6 +379,7 @@ class VoiceEngine {
     _transcriptController.close();
     _responseController.close();
     _statusController.close();
+    _problemController.close();
   }
 }
 

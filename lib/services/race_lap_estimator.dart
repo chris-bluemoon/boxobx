@@ -59,7 +59,12 @@ class RaceLapEstimator {
     _lastSeenLap = frame.currentLap;
 
     final minutes = raceLengthMinutes;
-    if (minutes == null || minutes <= 0) return null;
+    if (minutes == null || minutes <= 0) {
+      // A lap race GT7 sent no lap count for: the brief's laps, so pit
+      // and tyre calls still know where the finish is.
+      final planned = plannedLaps;
+      return planned == null || planned <= 0 ? null : RaceLaps(total: planned);
+    }
 
     final clean = [
       for (final e in _lapTimesMs.entries)

@@ -162,4 +162,31 @@ void main() {
     expect(find.textContaining('Lap 3: Soft, +37% fuel'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('a race can be deleted from Race Reports, after a confirm', (tester) async {
+    tester.view.physicalSize = const Size(2048, 1536);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    // Real laps have their own recordedAt times.
+    final laps = [
+      for (final (i, l) in [..._race(1), ..._race(2)].indexed)
+        PracticeLapRecord.fromMap({...l.toMap(), 'recordedAt': DateTime(2026, 11, 16, 14, i).toIso8601String()}),
+    ];
+    Set<DateTime>? deleted;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RaceReportsScreen(laps: laps, onDeleteRace: (gone) async => deleted = gone),
+      ),
+    );
+    await tester.tap(find.byTooltip('Delete this race').last); // Race 1 (newest first)
+    await tester.pumpAndSettle();
+    expect(find.text('Delete Race 1?'), findsOneWidget);
+    await tester.tap(find.text('DELETE'));
+    await tester.pumpAndSettle();
+
+    expect(deleted, {for (final l in laps.take(6)) l.recordedAt});
+    expect(find.textContaining('Race 1 ·'), findsNothing);
+    expect(find.textContaining('Race 2 ·'), findsOneWidget);
+  });
 }

@@ -261,6 +261,27 @@ class AppDatabase {
     return (rows.first['briefing'] as String, rows.first['strategy'] as String?);
   }
 
+  /// Each round with practice/race laps logged: its lap and stint
+  /// counts, race laps, fastest non-pit lap and when it was last driven,
+  /// with its saved briefing (JSON, for the track) if it has one. Most
+  /// recently driven first.
+  static Future<List<Map<String, Object?>>> practiceRoundSummaries() async {
+    final db = await instance;
+    final rows = db.select('''
+      SELECT p.round AS round,
+             COUNT(*) AS laps,
+             COUNT(DISTINCT p.stint) AS stints,
+             SUM(p.is_race_lap) AS race_laps,
+             MIN(CASE WHEN p.is_pit_lap = 0 AND p.lap_time_ms > 0 THEN p.lap_time_ms END) AS best_ms,
+             MAX(p.recorded_at) AS last_driven,
+             b.briefing AS briefing
+      FROM $practiceLaps p
+      LEFT JOIN $roundBriefings b ON b.round = p.round
+      GROUP BY p.round
+      ORDER BY last_driven DESC''');
+    return [for (final row in rows) {for (final k in row.keys) k: row[k]}];
+  }
+
   /// Every round with a saved briefing, most recently saved first.
   static Future<List<String>> roundsWithBriefings() async {
     final db = await instance;

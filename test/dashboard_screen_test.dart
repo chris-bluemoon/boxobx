@@ -55,7 +55,7 @@ void main() {
     }
     expect(find.text('BEST LAPS BY TYRE'), findsOneWidget);
     expect(find.textContaining('No laps yet'), findsOneWidget);
-    expect(find.text('RACE STRATEGY'), findsNWidgets(2), reason: 'the card and the button');
+    expect(find.text('RACE BRIEF'), findsNWidgets(2), reason: 'the card and the button');
     expect(find.textContaining('No strategy yet'), findsOneWidget);
     expect(find.text('PRACTICE LOG'), findsOneWidget);
     expect(find.textContaining('RACE REPORTS'), findsOneWidget);
@@ -98,7 +98,8 @@ void main() {
     await tester.tap(tab('APRL'));
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.text('APRL STANDINGS'), findsOneWidget);
+    expect(find.textContaining('STANDINGS'), findsOneWidget);
+    expect(find.widgetWithText(TrackHeader, 'APRL'), findsOneWidget, reason: 'the same heading as the other tabs');
     expect(find.text('ENTER RESULTS'), findsOneWidget);
     expect(find.text('PIT LAP'), findsNothing);
     await tester.tap(tab('HOME'));
