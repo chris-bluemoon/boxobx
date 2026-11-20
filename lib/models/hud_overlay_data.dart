@@ -145,6 +145,33 @@ class HudOverlayData {
 
   factory HudOverlayData.empty() => const HudOverlayData();
 
+  /// This reading with the water gauge left out (a dry round: nothing
+  /// to read it for).
+  HudOverlayData withoutWater() => waterPercent == null
+      ? this
+      : HudOverlayData(
+          gridPosition: gridPosition,
+          driverAhead: driverAhead,
+          driverBehind: driverBehind,
+          gapAheadSeconds: gapAheadSeconds,
+          gapBehindSeconds: gapBehindSeconds,
+          gapAheadTrend: gapAheadTrend,
+          gapBehindTrend: gapBehindTrend,
+          gapToLeaderSeconds: gapToLeaderSeconds,
+          gapToLeaderTrend: gapToLeaderTrend,
+          tireWearFrontLeftPercent: tireWearFrontLeftPercent,
+          tireWearFrontRightPercent: tireWearFrontRightPercent,
+          tireWearRearLeftPercent: tireWearRearLeftPercent,
+          tireWearRearRightPercent: tireWearRearRightPercent,
+          tireCompound: tireCompound,
+          radar: radar,
+          standings: standings,
+          driversInPit: driversInPit,
+          traffic: traffic,
+          playerInPit: playerInPit,
+          playerPitService: playerPitService,
+        );
+
   factory HudOverlayData.fromMap(Map<String, dynamic> map) => HudOverlayData(
         gridPosition: (map['gridPosition'] as num?)?.toInt() ?? 0,
         driverAhead: map['driverAhead'] as String?,

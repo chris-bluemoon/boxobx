@@ -21,6 +21,10 @@ class FuelPredictor {
   double? _fuelPercentAtLapStart;
   final List<double> _recentLapConsumption = [];
 
+  /// The fuel at the start of the lap being driven (null before the
+  /// first lap is seen) -- the fuel target works from it.
+  double? get fuelAtLapStart => _fuelPercentAtLapStart;
+
   /// Feeds a new telemetry frame in and returns the current prediction.
   /// Call this on every frame; it only updates its internal lap-start
   /// baseline when it detects the lap counter has actually incremented.

@@ -23,6 +23,10 @@ class PitCall {
   final PitCallReason reason;
   final PitCallAdvice advice;
   final PlannedPitStop? plannedStop;
+
+  /// The fuel map the plan runs up to [plannedStop] -- its map change, if
+  /// it has one, is part of the call.
+  final int? fuelMapBefore;
   final int? fuelEmptyLap;
   final RejoinForecast? forecast;
 
@@ -39,6 +43,7 @@ class PitCall {
     required this.reason,
     required this.advice,
     this.plannedStop,
+    this.fuelMapBefore,
     this.fuelEmptyLap,
     this.forecast,
     this.carBehindName,
@@ -51,7 +56,8 @@ class PitCall {
   String toPrompt() {
     final why = switch (reason) {
       PitCallReason.plannedStop =>
-        'our planned pit stop is lap ${plannedStop!.lap}${plannedStop!.tireCompound.isNotEmpty ? ' (fit ${plannedStop!.tireCompound})' : ''}',
+        'our planned pit stop is lap ${plannedStop!.lap}${plannedStop!.tireCompound.isNotEmpty ? ' (fit ${plannedStop!.tireCompound})' : ''}'
+            '${fuelMapBefore != null && plannedStop!.fuelMap != fuelMapBefore ? ', then ${plannedStop!.fuelMap == 1 ? 'back to ' : ''}Fuel Map ${plannedStop!.fuelMap} for the next stint' : ''}',
       PitCallReason.fuel => 'fuel runs out on lap $fuelEmptyLap',
     };
     final call = switch (advice) {
@@ -161,11 +167,12 @@ class PitCallAdvisor {
   void reset() => _lastCalledLap = null;
 
   /// [pitLapsThisSession]: GT7 laps on which we've already stopped
-  /// (PitStopTracker.pitLaps).
+  /// (PitStopTracker.pitLaps). [startFuelMap]: the map the plan starts on.
   PitCall? check(
     FusedRaceState state, {
     required List<PlannedPitStop> plannedStops,
     required Set<int> pitLapsThisSession,
+    int startFuelMap = 1,
   }) {
     final lap = state.telemetry.currentLap;
     // GT7's lap count, or the estimate in a timed race.
@@ -196,12 +203,19 @@ class PitCallAdvisor {
       reason: planned != null ? PitCallReason.plannedStop : PitCallReason.fuel,
       advice: advice,
       plannedStop: planned,
+      fuelMapBefore: planned == null ? null : _mapBefore(planned, plannedStops, startFuelMap),
       fuelEmptyLap: fuelEmpty,
       forecast: forecast,
       carBehindName: behindName,
       carBehindSecondsAfterStop: behindAfter,
       timedRaceLaps: raceLaps.estimated ? raceLaps.total : null,
     );
+  }
+
+  /// The plan's map for the stint that ends at [stop].
+  static int _mapBefore(PlannedPitStop stop, List<PlannedPitStop> stops, int startFuelMap) {
+    final i = stops.indexOf(stop);
+    return i > 0 ? stops[i - 1].fuelMap : startFuelMap;
   }
 
   static PlannedPitStop? _duePlannedStop(int lap, List<PlannedPitStop> stops, Set<int> pitLaps) {

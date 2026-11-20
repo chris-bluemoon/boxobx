@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../models/championship_standing.dart';
+import '../models/league_calendar.dart';
 import '../services/aprl_leaderboard_service.dart';
+import '../services/championship_outlook.dart';
 import '../services/championship_standings_store.dart';
 import '../services/league_roster.dart';
-import 'championship_screen.dart';
 
 /// The APRL tab: the league standings as a table (position, driver,
 /// points, gap to the leader and to us, rounds raced), our row
 /// highlighted. Filled from the APRL leaderboard each time the tab
-/// opens (and on REFRESH); ENTER RESULTS still opens the entry form.
+/// opens (and on REFRESH).
 class AprlStandingsView extends StatefulWidget {
   /// The page heading, the same one the other tabs use.
   final Widget? header;
@@ -62,13 +63,6 @@ class _AprlStandingsViewState extends State<AprlStandingsView> {
     });
   }
 
-  Future<void> _enterResults() async {
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const ChampionshipScreen()));
-    _load();
-  }
-
   @override
   Widget build(BuildContext context) {
     final standings = _standings;
@@ -107,25 +101,6 @@ class _AprlStandingsViewState extends State<AprlStandingsView> {
                 ),
               ),
             ),
-            const SizedBox(width: 10),
-            OutlinedButton.icon(
-              onPressed: _enterResults,
-              icon: const Icon(Icons.edit, color: Colors.white),
-              label: const Text(
-                'ENTER RESULTS',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.white38),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 14,
-                ),
-              ),
-            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -137,7 +112,7 @@ class _AprlStandingsViewState extends State<AprlStandingsView> {
                   child: Text(
                     _refreshing
                         ? 'Getting the standings from the APRL leaderboard...'
-                        : 'No standings yet.\nTap REFRESH to get them from the APRL leaderboard, or ENTER RESULTS to add them by hand.',
+                        : 'No standings yet.\nTap REFRESH to get them from the APRL leaderboard.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.grey.shade400, fontSize: 17),
                   ),
@@ -168,6 +143,54 @@ class _AprlStandingsViewState extends State<AprlStandingsView> {
     );
   }
 
+  /// What the next round needs against the drivers around us (see
+  /// ChampionshipOutlook).
+  Widget _outlookCard(ChampionshipOutlook outlook) {
+    final line = TextStyle(color: Colors.white, fontSize: 16, height: 1.35);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade900,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.lightBlue.shade300.withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'WHAT YOU NEED · ROUND ${outlook.nextRound} OF ${outlook.totalRounds}',
+            style: TextStyle(color: Colors.lightBlue.shade200, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1),
+          ),
+          const SizedBox(height: 8),
+          Text(outlook.titleLine(), style: line.copyWith(fontWeight: FontWeight.bold)),
+          for (final rival in outlook.rivals)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    rival.ahead ? Icons.arrow_upward : Icons.arrow_downward,
+                    size: 18,
+                    color: rival.ahead ? Colors.greenAccent : Colors.orangeAccent,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(rival.describe(), style: line)),
+                ],
+              ),
+            ),
+          const SizedBox(height: 8),
+          Text(
+            'Around your usual finish (P${outlook.typicalPlace}). Counts each driver\'s lowest round dropped; '
+            'leaves out the fastest-lap point. Level on points goes to countback.',
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _table(List<ChampionshipStanding> standings) {
     final leader = standings.first.totalPoints;
     final me = standings.where((s) => s.driverName == playerName).firstOrNull;
@@ -192,8 +215,10 @@ class _AprlStandingsViewState extends State<AprlStandingsView> {
     );
     String gap(int g) => g == 0 ? 'level' : (g > 0 ? '+$g' : '$g');
 
+    final outlook = ChampionshipOutlook.of(standings, player: playerName, totalRounds: LeagueCalendar.rounds.length);
     return ListView(
       children: [
+        if (outlook != null) _outlookCard(outlook),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: Row(

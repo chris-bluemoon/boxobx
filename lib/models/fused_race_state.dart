@@ -15,6 +15,8 @@ import 'time_trial_lap.dart';
 import 'weather_forecast.dart';
 import '../services/water_pace_model.dart';
 import '../services/wet_pace_table.dart';
+import '../services/corner_losses.dart';
+import '../services/fuel_target.dart';
 import '../services/corner_report.dart';
 import '../services/race_lap_estimator.dart';
 import '../services/rejoin_forecaster.dart';
@@ -78,6 +80,11 @@ class FusedRaceState {
   /// (see CornerReport); null until there's one to compare.
   final CornerReport? cornerReport;
 
+  /// Race Mode: the fuel each lap can use to reach the next planned stop
+  /// or the flag, against what it's using (see FuelTarget); null until
+  /// a lap's consumption is known.
+  final FuelTarget? fuelTarget;
+
   /// How many laps the race is -- GT7's count, or an estimate in a timed
   /// race (see RaceLapEstimator). Null if unknown.
   final RaceLaps? raceLaps;
@@ -116,6 +123,7 @@ class FusedRaceState {
     this.mode = AppMode.practice,
     this.timeTrialLaps = const [],
     this.cornerReport,
+    this.fuelTarget,
     this.raceLaps,
     this.raceRival,
     this.weather,
@@ -151,6 +159,8 @@ class FusedRaceState {
     AppMode? mode,
     List<TimeTrialLap>? timeTrialLaps,
     CornerReport? cornerReport,
+    FuelTarget? fuelTarget,
+    bool clearFuelTarget = false,
     RaceLaps? raceLaps,
     bool clearRaceLaps = false,
     RaceRivalState? raceRival,
@@ -182,6 +192,7 @@ class FusedRaceState {
       mode: mode ?? this.mode,
       timeTrialLaps: timeTrialLaps ?? this.timeTrialLaps,
       cornerReport: cornerReport ?? this.cornerReport,
+      fuelTarget: clearFuelTarget ? null : fuelTarget ?? this.fuelTarget,
       raceLaps: clearRaceLaps ? null : raceLaps ?? this.raceLaps,
       raceRival: clearRaceRival ? null : raceRival ?? this.raceRival,
       weather: clearWeather ? null : weather ?? this.weather,
@@ -232,6 +243,7 @@ class FusedRaceState {
       ),
     ..._wetPaceContext(),
     'predictedEmptyLap': fuelPrediction.predictedEmptyLap,
+    if (mode == AppMode.race && fuelTarget != null) 'fuelTarget': fuelTarget!.toPrompt(),
     'tireDegradationPercent': tireWearEstimate.percentSlowerThanStintBest,
     'consecutiveDegradingLaps': tireWearEstimate.consecutiveDegradingLaps,
     'practiceLapsLogged': practiceLaps.length,
@@ -276,6 +288,18 @@ class FusedRaceState {
       if (SectorState.bestSectors(timeTrialLaps.map((l) => l.sectorsMs)) case final b when !b.contains(null))
         'timeTrialBestSectorsSeconds': [for (final ms in b) (ms! / 1000).toStringAsFixed(3)],
       if (last > 0) 'lastLapVsTimeTrialBestSeconds': ((last - best.lapTimeMs) / 1000).toStringAsFixed(2),
+      if (_cornerLossLines() case final lines when lines.isNotEmpty) 'cornersLosingMostVsTimeTrialBest': lines,
     };
+  }
+
+  /// This race's (or, in practice, this stint's) clean laps against the
+  /// time-trial best: the corners costing the most (see CornerLosses).
+  List<String> _cornerLossLines() {
+    if (practiceLaps.isEmpty) return const [];
+    final last = practiceLaps.last;
+    final run = mode == AppMode.race
+        ? practiceLaps.where((l) => l.isRaceLap && l.raceNumber == last.raceNumber).toList()
+        : practiceLaps.where((l) => l.stintNumber == last.stintNumber).toList();
+    return CornerLosses.fromLaps(run).toPrompt();
   }
 }

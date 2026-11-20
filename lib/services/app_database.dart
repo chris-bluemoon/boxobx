@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -46,12 +47,52 @@ class AppDatabase {
 
   static Future<Database> _open() async {
     final dir = await getApplicationSupportDirectory();
-    final db = sqlite3.open(p.join(dir.path, _fileName));
-    db.execute('PRAGMA journal_mode = WAL');
-    db.execute('PRAGMA synchronous = NORMAL');
+    final db = openWritable(p.join(dir.path, _fileName), fallbackDir: p.join(dir.parent.path, _fallbackDirName));
     _migrate(db);
     await _importFromSharedPreferences(db);
     return db;
+  }
+
+  /// Where the database goes if the usual file can't be written (see
+  /// [openWritable]): a folder of the app's own under Library.
+  static const _fallbackDirName = 'BoxboxData';
+
+  /// Opens the database at [path] for writing, in WAL mode. A file the
+  /// app can read but not write -- one put back from a backup by a
+  /// device tool, owned by it rather than the app -- is copied into a
+  /// fresh file the app owns: in its place if the folder allows, else
+  /// in [fallbackDir], which is then used from then on.
+  @visibleForTesting
+  static Database openWritable(String path, {required String fallbackDir}) {
+    final fallback = File(p.join(fallbackDir, p.basename(path)));
+    if (fallback.existsSync()) return _openWal(fallback.path);
+    try {
+      return _openWal(path);
+    } on SqliteException catch (e) {
+      if (!e.toString().toLowerCase().contains('readonly')) rethrow;
+      final bytes = File(path).readAsBytesSync();
+      try {
+        File(path).deleteSync();
+        File(path).writeAsBytesSync(bytes, flush: true);
+        return _openWal(path);
+      } catch (_) {
+        fallback.parent.createSync(recursive: true);
+        fallback.writeAsBytesSync(bytes, flush: true);
+        return _openWal(fallback.path);
+      }
+    }
+  }
+
+  static Database _openWal(String path) {
+    final db = sqlite3.open(path);
+    try {
+      db.execute('PRAGMA journal_mode = WAL');
+      db.execute('PRAGMA synchronous = NORMAL');
+      return db;
+    } catch (_) {
+      db.dispose();
+      rethrow;
+    }
   }
 
   static void _migrate(Database db) {

@@ -47,13 +47,19 @@ class TyreDropOff {
 /// so are laps far off the stint's own pace (a spin, an off, traffic,
 /// a cold out-lap): they say nothing about the tyres or fuel. A lap is
 /// left out when it's more than [outlierSigmas] standard deviations
-/// (and at least [outlierFloorMs]) off the laps around it -- judged
+/// (and at least [outlierFloorMs], or [outlierFloorShareOfLap] of a
+/// typical lap if more) slower than the laps around it -- judged
 /// against its neighbours, not the whole stint, so the slowing of
 /// wearing tyres is never mistaken for mistakes (see [_offNeighbours]).
 class StintSummary {
   /// How far off its neighbours a lap must be to be left out.
   static const double outlierSigmas = 3;
   static const double outlierFloorMs = 500;
+
+  /// ...and at least this share of a typical lap: on a long lap, normal
+  /// lap-to-lap spread is bigger (19 Nov, Sainte-Croix C at 3:40: a lap
+  /// 1.1 s off a steep fuel-burn trend was being called off pace).
+  static const double outlierFloorShareOfLap = 0.0075;
 
   /// The spread is never taken as tighter than this, ms (an unusually
   /// metronomic run would otherwise make every small slip an outlier).
@@ -77,8 +83,23 @@ class StintSummary {
   static const double dropOffSigmas = 2.5;
   static const double dropOffFloorMs = 400;
 
-  /// Counted laps needed before drop-off can be called.
-  static const int dropOffMinLaps = 5;
+  /// Counted laps needed before drop-off can be called -- 3, so a stint
+  /// as short as a heavy-fuel tank (4 laps) can show one.
+  static const int dropOffMinLaps = 3;
+
+  /// The car gets lighter as the fuel burns, and quicker: about this
+  /// share of a lap per percent of the tank (0.037 s a % on a 3:40 lap,
+  /// Sainte-Croix C at x4). Used until the round's own laps measure it
+  /// ([fuelGainMsPerPercent]).
+  static const double fuelGainShareOfLapPerPercent = 0.00017;
+
+  /// What one percent of fuel is worth a lap, ms: measured from the
+  /// round's stints -- how much quicker each got per percent burned (the
+  /// median, lap time against fuel) -- held between half and three times
+  /// the [fuelGainShareOfLapPerPercent] figure (tyre wear slows a stint
+  /// too, so a measured figure runs low); that figure with no stint to
+  /// go on.
+  final double fuelGainMsPerPercent;
 
   final int stintNumber;
   final bool isRace;
@@ -86,7 +107,7 @@ class StintSummary {
   /// Every lap in the stint, oldest first (including pit laps).
   final List<PracticeLapRecord> laps;
 
-  StintSummary._(this.stintNumber, this.isRace, this.laps);
+  StintSummary._(this.stintNumber, this.isRace, this.laps, this.fuelGainMsPerPercent);
 
   /// Groups laps into stints, newest stint first. Laps logged before
   /// stints existed (stintNumber 0) form one group of their own.
@@ -96,8 +117,42 @@ class StintSummary {
       byStint.putIfAbsent(lap.stintNumber, () => []).add(lap);
     }
     final numbers = byStint.keys.toList()..sort((a, b) => b.compareTo(a));
-    return [for (final n in numbers) StintSummary._(n, byStint[n]!.any((l) => l.isRaceLap), byStint[n]!)];
+    final gain = _fuelGain(byStint.values);
+    return [for (final n in numbers) StintSummary._(n, byStint[n]!.any((l) => l.isRaceLap), byStint[n]!, gain)];
   }
+
+  static double _fuelGain(Iterable<List<PracticeLapRecord>> stints) {
+    final allTimes = [
+      for (final stint in stints)
+        for (final l in stint)
+          if (!l.isPitLap && l.lapTimeMs > 0) l.lapTimeMs.toDouble(),
+    ];
+    if (allTimes.isEmpty) return 0;
+    final assumed = fuelGainShareOfLapPerPercent * _median(allTimes);
+    final slopes = <double>[];
+    for (final stint in stints) {
+      final laps = [
+        for (final l in stint)
+          if (!l.isPitLap && l.lapTimeMs > 0 && !l.isRaceLap) l,
+      ];
+      if (laps.length < 3 || laps.map((l) => l.fuelMap ?? 1).toSet().length > 1) continue;
+      // Theil-Sen: the median of every pair's ms per percent burned.
+      final pairs = [
+        for (var i = 0; i < laps.length; i++)
+          for (var j = i + 1; j < laps.length; j++)
+            if (laps[i].fuelPercentAtLapStart - laps[j].fuelPercentAtLapStart > 1)
+              (laps[i].lapTimeMs - laps[j].lapTimeMs) / (laps[i].fuelPercentAtLapStart - laps[j].fuelPercentAtLapStart),
+      ];
+      if (pairs.isNotEmpty) slopes.add(_median(pairs));
+    }
+    if (slopes.isEmpty) return assumed;
+    return _median(slopes).clamp(assumed / 2, assumed * 3);
+  }
+
+  /// [lap]'s time as if on the stint's starting fuel: what the lighter
+  /// car gained added back.
+  double fuelCorrectedMs(PracticeLapRecord lap) =>
+      lap.lapTimeMs + fuelGainMsPerPercent * (startFuelPercent - lap.fuelPercentAtLapStart).clamp(0, 100);
 
   /// The planned test the driver ran this stint for, if any.
   int? get testNumber => laps.first.testNumber;
@@ -125,6 +180,10 @@ class StintSummary {
 
   /// Laps counted towards the figures.
   int get lapCount => _clean.length;
+
+  /// Laps driven, pit laps aside -- off-pace ones included (what a
+  /// fixed-length test counts: the driver did the lap).
+  int get lapsDriven => _noPit.length;
 
   /// Fastest counted lap, ms.
   int? get bestLapMs => _clean.isEmpty ? null : _clean.map((l) => l.lapTimeMs).reduce(math.min);
@@ -182,8 +241,12 @@ class StintSummary {
   static (List<PracticeLapRecord>, List<PracticeLapRecord>, double?) _filter(List<PracticeLapRecord> laps) {
     if (laps.length < 3) return (laps, const [], null);
     final residuals = _residuals([for (final l in laps) l.lapTimeMs]);
-    final limit = math.max(outlierSigmas * _robustSigma(residuals), outlierFloorMs);
-    final off = [for (var i = 0; i < laps.length; i++) residuals[i].abs() > limit];
+    final typical = _median([for (final l in laps) l.lapTimeMs.toDouble()]);
+    final limit = math.max(outlierSigmas * _robustSigma(residuals), math.max(outlierFloorMs, outlierFloorShareOfLap * typical));
+    // Only SLOW laps are off pace: a lap quicker than those around it is
+    // the driver's real pace, not a mistake (19 Nov: the fastest of a
+    // 3-lap fuel map test was left out, so the test never completed).
+    final off = [for (var i = 0; i < laps.length; i++) residuals[i] > limit];
     final steady = [
       for (var i = 0; i < laps.length; i++)
         if (!off[i]) laps[i],
@@ -228,23 +291,24 @@ class StintSummary {
 
   /// When the tyres went off, if they have: from the counted laps, the
   /// first lap from which the pace is clearly and lastingly slower than
-  /// the stint's peak (its best 3-lap average) -- that lap and the next
-  /// both over the line, and the median of everything since too, so
-  /// one slow lap or a brief dip isn't a drop-off. Fuel burning off
-  /// makes the car faster through a stint, so any sustained slowing is
-  /// the tyres. Null until [dropOffMinLaps] laps are counted, and while
-  /// the pace holds.
+  /// the stint's peak (its best 3-lap average; 2 laps under 6, 1 under
+  /// 4) -- that lap and the next both over the line, and the median of
+  /// everything since too, so one slow lap or a brief dip isn't a
+  /// drop-off. The times are taken fuel-corrected ([fuelCorrectedMs]):
+  /// the car getting lighter would otherwise hide the tyres going. Null
+  /// until [dropOffMinLaps] laps are counted, and while the pace holds.
   late final TyreDropOff? tyreDropOff = _findDropOff();
 
   TyreDropOff? _findDropOff() {
     final clean = _clean;
     if (clean.length < dropOffMinLaps) return null;
-    final times = [for (final l in clean) l.lapTimeMs.toDouble()];
+    final times = [for (final l in clean) fuelCorrectedMs(l)];
+    final window = times.length >= 6 ? 3 : (times.length >= 4 ? 2 : 1);
 
     var peakStart = 0;
     var peak = double.infinity;
-    for (var i = 0; i + 3 <= times.length; i++) {
-      final avg = _mean(times.sublist(i, i + 3));
+    for (var i = 0; i + window <= times.length; i++) {
+      final avg = _mean(times.sublist(i, i + window));
       if (avg < peak) {
         peak = avg;
         peakStart = i;

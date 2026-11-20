@@ -45,6 +45,10 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
+    // A stint shows its summary; its laps open out on request.
+    expect(find.text('L1'), findsNothing);
+    await tester.tap(find.text('SHOW 2 LAPS'));
+    await tester.pumpAndSettle();
     expect(find.text('L1'), findsOneWidget);
     expect(find.text('L2'), findsOneWidget);
 

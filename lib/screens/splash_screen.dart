@@ -36,18 +36,27 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     duration: const Duration(milliseconds: 2000),
   )..forward();
   Timer? _timer;
-  AudioPlayer? _player;
 
-  /// A pit-stop wheel gun as the tyres roll in (assets/audio/splash_wheel_gun.m4a):
-  /// 2 s, two short bursts -- guns off, then guns on as the letters appear
-  /// -- cut from "Impact wrench in the open air" by jacekksiazek,
-  /// https://freesound.org/s/397932 (CC0: public domain, no attribution
-  /// required), the gaps silenced and brought up to the old engine
-  /// sound's loudness.
+  /// A pit stop as the tyres roll in (assets/audio/splash_pitstop_sync.m4a):
+  /// the driver's pitstop.wav from 1.92 s to 7 s, faded over the last
+  /// 0.3 s -- cut so the wheel-gun whir (3.12 s into the wav) comes at
+  /// [_tyresStop], as the tyres come to rest.
+  /// It runs on past the 4 s splash into the dashboard, so its player
+  /// isn't the screen's: it's let go when the sound ends. Downloaded for
+  /// this app's own use -- check its licence before the app is shared or
+  /// published (the earlier CC0 one, splash_wheel_gun.m4a, is in git).
   ///
   /// just_audio caches an asset by its path and never refreshes it, so a
   /// changed sound needs a new file name or devices keep the old one.
-  static const _wheelGunSound = 'assets/audio/splash_wheel_gun.m4a';
+  static const _wheelGunSound = 'assets/audio/splash_pitstop_sync.m4a';
+
+  /// The share of the animation the tyres roll for, and so when they
+  /// stop: 1.2 s in -- where the whir is in [_wheelGunSound].
+  static const double _rollEnd = 0.6;
+
+  /// Since the animation started: a sound slow to load starts that far
+  /// in, so the whir still lands as the tyres stop.
+  final _sinceStart = Stopwatch()..start();
 
   /// The wordmark's font size before any shrinking to fit the screen.
   static const double _size = 110;
@@ -60,12 +69,21 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   }
 
   Future<void> _playWheelGun() async {
+    final player = AudioPlayer();
     try {
-      final player = _player = AudioPlayer();
       await player.setAsset(_wheelGunSound);
-      if (!mounted) return;
+      if (!mounted) {
+        await player.dispose();
+        return;
+      }
+      final late = _sinceStart.elapsed;
+      if (late > const Duration(milliseconds: 30)) await player.seek(late);
+      // Let go once it has played (play() completes then) -- not when the
+      // splash closes, so the sound plays out.
       await player.play();
+      await player.dispose();
     } catch (error) {
+      await player.dispose();
       // No sound is no reason to hold up the app.
       debugPrint('Splash sound failed: $error');
     }
@@ -85,7 +103,6 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   @override
   void dispose() {
     _timer?.cancel();
-    _player?.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -110,7 +127,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
             final t = _controller.value;
             // Both together, at their final spacing -- like a car's two
             // wheels rolling in.
-            final rolled = _phase(t, 0.0, 0.6);
+            final rolled = _phase(t, 0.0, _rollEnd);
             final offsets = [-travel * (1 - rolled), -travel * (1 - rolled)];
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),

@@ -100,7 +100,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.textContaining('STANDINGS'), findsOneWidget);
     expect(find.widgetWithText(TrackHeader, 'APRL'), findsOneWidget, reason: 'the same heading as the other tabs');
-    expect(find.text('ENTER RESULTS'), findsOneWidget);
+    expect(find.text('REFRESH'), findsOneWidget);
+    expect(find.text('ENTER RESULTS'), findsNothing);
+    expect(find.byType(StatusBadge), findsNothing, reason: 'no connection dots on the league page');
     expect(find.text('PIT LAP'), findsNothing);
     await tester.tap(tab('HOME'));
     await tester.pump(const Duration(milliseconds: 100));

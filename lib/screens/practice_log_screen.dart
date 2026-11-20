@@ -66,6 +66,10 @@ class PracticeLogScreen extends StatefulWidget {
 }
 
 class _PracticeLogScreenState extends State<PracticeLogScreen> {
+  /// Stints with their laps opened out (by stint number); the rest show
+  /// just their summary card.
+  final Set<int> _openStints = {};
+
   late List<PracticeLapRecord> _laps;
 
   @override
@@ -210,25 +214,38 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                     _testPlanCard(widget.testPlan!, laps),
                     const SizedBox(height: 20),
                   ],
-                  if (WetPaceTable.fromLaps(laps) case final table when widget.weather != null || !table.isEmpty || !WaterPaceModel.fromLaps(laps).isEmpty) ...[
+                  // Only for a wet round (the brief calls for Inters or
+                  // Wets), or one with wet running logged -- dry laps
+                  // alone (water 0%, slicks) don't make it one.
+                  if (WetPaceTable.fromLaps(laps) case final table
+                      when (widget.weather?.needsWetTyres ?? false) || _hasWetRunning(laps)) ...[
                     _sectionLabel('WET TESTING'),
                     const SizedBox(height: 8),
                     _wetTestingCard(table, WaterPaceModel.fromLaps(laps)),
                     const SizedBox(height: 20),
                   ],
-                  _sectionLabel('STINTS (swipe a lap left or long-press to delete it)'),
+                  _sectionLabel('STINTS'),
                   const SizedBox(height: 8),
                   for (final stint in StintSummary.fromLaps(laps)) ...[
                     _stintCard(stint),
-                    const SizedBox(height: 8),
-                    for (final lap in stint.laps.reversed) _lapRow(lap, counted: lap.isPitLap || stint.counts(lap)),
-                    const SizedBox(height: 16),
+                    _lapsToggle(stint),
+                    if (_openStints.contains(stint.stintNumber))
+                      for (final lap in stint.laps.reversed) _lapRow(lap, counted: lap.isPitLap || stint.counts(lap)),
+                    const SizedBox(height: 12),
                   ],
                 ],
               ),
       ),
     );
   }
+
+  /// Laps on Inters or Wets, in a rain preset, or on a wet track.
+  static bool _hasWetRunning(List<PracticeLapRecord> laps) => laps.any(
+    (l) =>
+        WetPaceTable.tyreOf(l.tireCompound) != WeatherTyre.slicks ||
+        (l.weather?.startsWith('R') ?? false) ||
+        (l.waterPercent ?? 0) >= WetPaceTable.wetTrackPercent,
+  );
 
   /// Wet testing: each tyre's pace in each weather (the brief's, plus
   /// any tested), what still needs running, and what a switch is worth
@@ -266,6 +283,14 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            [
+              widget.roundName ?? 'This round',
+              if (widget.weather != null) 'brief ${widget.weather!.code}',
+            ].join(' · '),
+            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 6),
           Text(
             'No dedicated wet tests: any wet laps count. Set the weather on the WEATHER chip to file laps by GT7 preset; '
             'with the relay running, every lap (practice or race) also logs the water gauge, which sets the crossovers below. '
@@ -399,7 +424,8 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
             ),
           Text(
             'Start a stint test from the panel on the dashboard (CHOOSE STINT TEST for any of them). Only '
-            'stints started as a stint test count. Long stints also end if fuel drops to 5% or the tyres drop off '
+            'stints started as a stint test count. A long stint runs one tank (or the race distance, if shorter) -- '
+            'no further than a race stint can go -- and ends sooner if fuel drops to 5% or the tyres drop off '
             '(lap times lastingly off peak pace; off-pace laps such as spins are left out).',
             style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
           ),
@@ -427,7 +453,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
       ('Laps', '${stint.lapCount}${excluded == 0 ? '' : ' (+$excluded off-pace)'}'),
       ('Consistency', consistency == null ? '--' : '±${(consistency / 1000).toStringAsFixed(2)}s'),
       ('Avg lap', lapTime(stint.averageLapMs)),
-      ('Fuel/lap', fuel == null ? '--' : '${fuel.toStringAsFixed(2)}%'),
+      ('Fuel/lap', fuel == null ? '--' : '${fuel.toStringAsFixed(1)}%'),
       ('Fuel lasts', laps(stint.projectedFuelLaps)),
       ('Wear/lap', wear == null ? '--' : '${wear.toStringAsFixed(1)}%'),
       ('Tyres last', laps(stint.projectedTyreLaps)),
@@ -492,6 +518,22 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
     );
   }
 
+  /// SHOW / HIDE the stint's laps, one row each (swipe a lap left or
+  /// long-press it to delete it).
+  Widget _lapsToggle(StintSummary stint) {
+    final open = _openStints.contains(stint.stintNumber);
+    final n = stint.laps.length;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: () => setState(() => open ? _openStints.remove(stint.stintNumber) : _openStints.add(stint.stintNumber)),
+        icon: Icon(open ? Icons.expand_less : Icons.expand_more, size: 18),
+        label: Text(open ? 'HIDE LAPS' : 'SHOW $n LAP${n == 1 ? '' : 'S'}'),
+        style: TextButton.styleFrom(foregroundColor: Colors.grey.shade400, visualDensity: VisualDensity.compact),
+      ),
+    );
+  }
+
   Widget _sectionLabel(String text) => Text(
         text,
         style: TextStyle(color: Colors.grey.shade400, fontSize: 13, fontWeight: FontWeight.w600, letterSpacing: 1.0),
@@ -519,7 +561,7 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
           ),
           Expanded(
             child: Text(
-              'avg ${avgFuel.toStringAsFixed(2)}%/lap',
+              'avg ${avgFuel.toStringAsFixed(1)}%/lap',
               style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             ),
           ),

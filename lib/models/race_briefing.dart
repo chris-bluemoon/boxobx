@@ -123,6 +123,16 @@ class RaceBriefing {
   /// almost anything not covered by the structured fields above.
   final String additionalNotes;
 
+  /// Where the driver starts the race, from qualifying (null: not
+  /// entered yet) -- a start lower down the order runs the slower tyre
+  /// first (see PitStopCalculator.startsNearFront).
+  final int? gridPosition;
+
+  /// Cars on the grid (null: [defaultGridSize] assumed).
+  final int? gridSize;
+
+  static const int defaultGridSize = 16;
+
   const RaceBriefing({
     required this.trackName,
     this.carClass = 'Gr.3',
@@ -144,6 +154,8 @@ class RaceBriefing {
     this.wetOrChangeableWeather = false,
     this.weatherSlots = '',
     this.additionalNotes = '',
+    this.gridPosition,
+    this.gridSize,
   });
 
   factory RaceBriefing.fromMap(Map<String, dynamic> map) => RaceBriefing(
@@ -167,6 +179,8 @@ class RaceBriefing {
         wetOrChangeableWeather: map['wetOrChangeableWeather'] as bool? ?? false,
         weatherSlots: map['weatherSlots'] as String? ?? '',
         additionalNotes: map['additionalNotes'] as String? ?? '',
+        gridPosition: (map['gridPosition'] as num?)?.toInt(),
+        gridSize: (map['gridSize'] as num?)?.toInt(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -190,6 +204,8 @@ class RaceBriefing {
         'wetOrChangeableWeather': wetOrChangeableWeather,
         'weatherSlots': weatherSlots,
         'additionalNotes': additionalNotes,
+        if (gridPosition != null) 'gridPosition': gridPosition,
+        if (gridSize != null) 'gridSize': gridSize,
       };
 }
 

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:boxbox/models/app_mode.dart';
 import 'package:boxbox/models/fused_race_state.dart';
 import 'package:boxbox/models/hud_overlay_data.dart';
+import 'package:boxbox/models/weather_forecast.dart';
 import 'package:boxbox/models/power_band_config.dart';
 import 'package:boxbox/models/telemetry_frame.dart';
 import 'package:boxbox/services/fuel_predictor.dart';
@@ -281,6 +282,41 @@ void main() {
     // A second load (as start() makes) doesn't reload and drop that lap.
     await restarted.loadPersistedData();
     expect(restarted.current.practiceLaps, hasLength(3));
+  });
+
+  test('a dry round ignores the water gauge; a round with rain (or no brief) reads it', () {
+    final manager = _manager();
+    final reading = HudOverlayData.fromMap({'waterPercent': 0.0, 'gridPosition': 4});
+    manager.setWeather(WeatherForecast.tryParse('S13'));
+    manager.handleHudData(reading);
+    expect(manager.current.hud.waterPercent, isNull);
+    expect(manager.current.hud.gridPosition, 4, reason: 'the rest of the reading is kept');
+    manager.setWeather(WeatherForecast.tryParse('S13/R04'));
+    manager.handleHudData(reading);
+    expect(manager.current.hud.waterPercent, 0.0);
+    manager.setWeather(null);
+    manager.handleHudData(reading);
+    expect(manager.current.hud.waterPercent, 0.0);
+  });
+
+  test('tyre wear is the most worn tyre, with which one it is', () {
+    final manager = _manager();
+    manager.handleHudData(HudOverlayData.fromMap({
+      'tireWearFrontLeftPercent': 42.0,
+      'tireWearFrontRightPercent': 55.0,
+      'tireWearRearLeftPercent': 70.0,
+      'tireWearRearRightPercent': 68.0,
+    }));
+    expect(manager.practiceLapLogger.currentTireWearPercent, 42.0);
+    expect(manager.practiceLapLogger.currentWorstTyre, 'FL');
+
+    // A corner the reader missed is left out, not counted as worn.
+    manager.handleHudData(HudOverlayData.fromMap({
+      'tireWearFrontRightPercent': 50.0,
+      'tireWearRearRightPercent': 61.0,
+    }));
+    expect(manager.practiceLapLogger.currentTireWearPercent, 50.0);
+    expect(manager.practiceLapLogger.currentWorstTyre, 'FR');
   });
 
   group('the HUD tyre label', () {

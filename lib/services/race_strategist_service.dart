@@ -1,3 +1,4 @@
+import 'fuel_map_measurement.dart';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -5,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../models/race_briefing.dart';
 import '../models/race_strategy.dart';
 import 'base_rates.dart';
+import 'dry_tyre_pace.dart';
 import 'pit_stop_calculator.dart';
 import 'wet_pace_table.dart';
 
@@ -47,6 +49,7 @@ Respond with ONLY a single JSON object (no markdown, no prose outside the JSON),
 The pitStopReasoning array must have exactly as many entries as there are pit stops listed below, in the same order.
 
 Computed plan: {PLAN}
+Fuel maps: "fuelMap" is the map to start on; each pit stop's "fuelMap" is the map for the stint after it (1 = full power, higher = leaner). Say where the map changes, if it does.
 If the briefing has weatherSlots (GT7 weather in race order: R = rain, C = cloudy, S = sunny) with rain, the plan's stops follow the weather (tyre changes where it turns wet or dry, refuelling at the same stops): explain them that way, and say the laps are estimates -- in the race the water gauge calls each stop.
 
 Race briefing: {BRIEFING}
@@ -65,6 +68,9 @@ Race briefing: {BRIEFING}
     double? measuredPitStopTimeLossSeconds,
     WetPaceTable? wetPace,
     BaseRates baseRates = BaseRates.none,
+    double? lapTimeSeconds,
+    Map<int, FuelMapMeasurement> measuredMaps = const {},
+    Map<String, DryTyrePace> dryPace = const {},
   }) async {
     final plan = PitStopCalculator.calculate(
       briefing,
@@ -73,6 +79,9 @@ Race briefing: {BRIEFING}
       measuredPitStopTimeLossSeconds: measuredPitStopTimeLossSeconds,
       wetPace: wetPace,
       baseRates: baseRates,
+      lapTimeSeconds: lapTimeSeconds,
+      measuredMaps: measuredMaps,
+      dryPace: dryPace,
     );
     if (plan.pitStops.isEmpty) {
       // Nothing for the AI to add reasoning to beyond the summary
@@ -90,7 +99,7 @@ Race briefing: {BRIEFING}
   Future<RaceStrategy> _phrasePlan(RaceStrategy plan, RaceBriefing briefing) async {
     final uri = Uri.parse('$_baseUrl/chat/completions');
     final prompt = _systemPrompt
-        .replaceFirst('{PLAN}', jsonEncode(plan.toMap()))
+        .replaceFirst('{PLAN}', jsonEncode(plan.toMap()..remove('planB')..remove('planC')..remove('inputs')))
         .replaceFirst('{BRIEFING}', jsonEncode(briefing.toMap()));
 
     final response = await http.post(
@@ -135,24 +144,18 @@ Race briefing: {BRIEFING}
       return plan;
     }
 
-    return RaceStrategy(
+    // The plan's own figures and Plan B as they are; only the words change.
+    return plan.copyWith(
       pitStops: [
         for (var i = 0; i < plan.pitStops.length; i++)
           PlannedPitStop(
             lap: plan.pitStops[i].lap,
             tireCompound: plan.pitStops[i].tireCompound,
             reasoning: reasoningList[i],
+            fuelMap: plan.pitStops[i].fuelMap,
           ),
       ],
-      startingTireCompound: plan.startingTireCompound,
       summary: summary,
-      assumedPercentPerLap: plan.assumedPercentPerLap,
-      totalEstimatedTimeLossSeconds: plan.totalEstimatedTimeLossSeconds,
-      pitStopTimeIsMeasured: plan.pitStopTimeIsMeasured,
-      testsDone: plan.testsDone,
-      testsPlanned: plan.testsPlanned,
-      basis: plan.basis,
-      fuelMap: plan.fuelMap,
     );
   }
 }

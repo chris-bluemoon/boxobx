@@ -76,7 +76,7 @@ class BaseRates {
         // fuel switched off (a qualifying run sits at 100%).
         final used = [
           for (final lap in round.laps)
-            if (!lap.isPitLap && lap.fuelConsumedPercent > 0) lap.fuelConsumedPercent,
+            if (!lap.isPitLap && lap.fuelConsumedPercent > 0) lap.map1FuelConsumedPercent,
         ];
         if (used.isNotEmpty) {
           fuelSum += used.fold<double>(0, (a, b) => a + b) / (round.fuelMultiplier * km);

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../models/corner_delta.dart';
 import '../models/weather_forecast.dart';
 import '../models/fused_race_state.dart';
 import '../models/telemetry_frame.dart';
@@ -11,6 +12,8 @@ import 'telemetry_udp_service.dart';
 import 'hud_ocr_service.dart';
 import 'corner_report.dart';
 import 'race_lap_estimator.dart';
+import 'fuel_target.dart';
+import '../models/race_strategy.dart';
 import 'sector_calculator.dart';
 import 'fuel_predictor.dart';
 import 'crash_detector.dart';
@@ -140,6 +143,10 @@ class FusedRaceStateManager {
   String? _hudTyreCandidate;
   DateTime? _hudTyreSince;
   String? _hudTyreApplied;
+
+  /// The tyre last read off GT7's HUD and held (see hudTyreHold), or null
+  /// if none has been -- the fitted tyre as seen, not just picked.
+  String? get hudTyre => _hudTyreApplied;
 
   /// The lap counter last seen on track (0 = none yet this session) --
   /// the state's telemetry is blanked while GT7 shows a cutscene.
@@ -316,7 +323,12 @@ class FusedRaceStateManager {
     // qualifying lap would skew fuel and wear figures).
     final raceLaps = raceLapEstimator.update(frame, pitLaps: pitStopTracker.pitLaps);
     final lapSectors = sectorState.justCompletedSectorsMs;
-    if (sectorState.lapJustCompleted) _updateCornerReport();
+    final fuelTarget = _fuelTarget(frame, fuelPrediction, raceLaps);
+    if (sectorState.lapJustCompleted) {
+      _updateCornerReport();
+    } else {
+      practiceLapLogger.completedLapCornerDeltas = null;
+    }
     practiceLapLogger.completedLapSectorsMs = lapSectors;
     if (_state.mode.logsStintLaps) practiceLapLogger.update(frame);
     if (_state.mode.logsTimeTrialLaps &&
@@ -348,6 +360,8 @@ class FusedRaceStateManager {
       sessionPhase: _flagsTrusted ? SessionPhase.driving : SessionPhase.unknown,
       raceLaps: raceLaps,
       clearRaceLaps: raceLaps == null,
+      fuelTarget: fuelTarget,
+      clearFuelTarget: fuelTarget == null,
     );
     _controller.add(_state);
 
@@ -360,22 +374,33 @@ class FusedRaceStateManager {
   }
 
   /// Processes one HUD OCR update -- see [handleTelemetryFrame].
-  void handleHudData(HudOverlayData hud) {
+  void handleHudData(HudOverlayData reading) {
+    // A dry round (a brief with no rain in it): the water gauge isn't
+    // read -- no gauge chip, no water calls, nothing logged.
+    final hud = (_state.weather?.hasRain ?? true) ? reading : reading.withoutWater();
     // Keeps PracticeLapLogger's auto-attached tire-wear reading
     // current so it reflects whatever the OCR relay most recently
     // read at the moment a lap actually completes, the same way
     // setPracticeTireCompound keeps currentTireCompound current from
     // the dashboard's manual picker -- see
     // PracticeLapLogger.currentTireWearPercent.
-    final wearReadings = [
-      hud.tireWearFrontLeftPercent,
-      hud.tireWearFrontRightPercent,
-      hud.tireWearRearLeftPercent,
-      hud.tireWearRearRightPercent,
-    ].whereType<double>();
+    //
+    // The wear kept is the MOST worn tyre's, not the average: tyres
+    // wear unevenly and the worst one is the one that goes off first,
+    // so it's what tyre life, stint lengths and stop calls should go
+    // by. Pit-stop detection keeps the average -- a fresh set lifts
+    // all four, and one misread corner moves it less.
+    final wearReadings = <(String, double)>[
+      if (hud.tireWearFrontLeftPercent case final w?) ('FL', w),
+      if (hud.tireWearFrontRightPercent case final w?) ('FR', w),
+      if (hud.tireWearRearLeftPercent case final w?) ('RL', w),
+      if (hud.tireWearRearRightPercent case final w?) ('RR', w),
+    ];
     if (wearReadings.isNotEmpty) {
-      final averageWear = wearReadings.reduce((a, b) => a + b) / wearReadings.length;
-      practiceLapLogger.currentTireWearPercent = averageWear;
+      final worst = wearReadings.reduce((a, b) => b.$2 < a.$2 ? b : a);
+      practiceLapLogger.currentTireWearPercent = worst.$2;
+      practiceLapLogger.currentWorstTyre = worst.$1;
+      final averageWear = wearReadings.fold<double>(0, (sum, r) => sum + r.$2) / wearReadings.length;
       _applyPitStopUpdate(pitStopTracker.reportTireWear(averageWear));
     }
 
@@ -608,6 +633,35 @@ class FusedRaceStateManager {
     _state = _state.copyWith(pitStopTimeSeconds: seconds, clearPitStopTime: seconds == null);
   }
 
+  /// The saved strategy's stops and the fuel map it starts on (each stop
+  /// names the next stint's) -- what the live fuel target works to (see
+  /// FuelTarget).
+  void setFuelPlan({List<PlannedPitStop> stops = const [], int startFuelMap = 1}) {
+    _plannedStops = stops;
+    _startFuelMap = startFuelMap;
+  }
+
+  List<PlannedPitStop> _plannedStops = const [];
+  int _startFuelMap = 1;
+
+  /// The plan's map for the stint after [stopsMade] stops.
+  int _stintFuelMap(int stopsMade) =>
+      stopsMade <= 0 || _plannedStops.isEmpty ? _startFuelMap : _plannedStops[(stopsMade - 1).clamp(0, _plannedStops.length - 1)].fuelMap;
+
+  FuelTarget? _fuelTarget(TelemetryFrame frame, FuelPrediction prediction, RaceLaps? raceLaps) {
+    if (!_state.mode.pitCalls || !prediction.hasEnoughData) return null;
+    final total = raceLaps?.fuelSafeTotal;
+    return FuelTarget.of(
+      currentLap: frame.currentLap,
+      fuelAtLapStart: fuelPredictor.fuelAtLapStart,
+      usingPerLap: prediction.percentPerLap,
+      plannedStops: _plannedStops,
+      stopsMade: pitStopTracker.stopCount,
+      totalLaps: total ?? (frame.totalLaps > 0 ? frame.totalLaps : null),
+      planMap: _stintFuelMap(pitStopTracker.stopCount),
+    );
+  }
+
   /// The current round's weather slots (null = none in its briefing).
   void setWeather(WeatherForecast? weather) {
     _state = _state.copyWith(weather: weather, clearWeather: weather == null);
@@ -616,12 +670,27 @@ class FusedRaceStateManager {
 
   /// Compares the lap just completed with the reference it was driven
   /// against, corner by corner (see CornerReport).
+  ///
+  /// The comparison is also kept on the lap record (see CornerDelta), so
+  /// a race's laps can be summed into where it loses time (CornerLosses).
   void _updateCornerReport() {
+    practiceLapLogger.completedLapCornerDeltas = null;
     final lap = sectorCalculator.lastLapTrace;
     final reference = sectorCalculator.lastLapComparedTo;
     if (lap == null || reference == null) return;
     final report = CornerReport.compare(lap, reference, sectorCalculator.corners);
-    if (report != null) _state = _state.copyWith(cornerReport: report);
+    if (report == null) return;
+    _state = _state.copyWith(cornerReport: report);
+    practiceLapLogger.completedLapCornerDeltas = [
+      for (final c in report.corners)
+        CornerDelta(
+          corner: c.corner.number,
+          ms: c.timeDeltaMs.round(),
+          brakeMeters: c.brakeDeltaMeters?.round(),
+          minKmh: c.minDeltaKmh.round(),
+          exitKmh: c.exitDeltaKmh.round(),
+        ),
+    ];
   }
 
   /// The round's time limit (null for a lap race) and the strategy's
@@ -688,8 +757,14 @@ class FusedRaceStateManager {
 
   /// The driver is starting planned test [testNumber] (see TestPlan):
   /// laps from now on are a new stint, counted towards that test.
-  void startTestStint(int testNumber, {bool throughStops = false}) {
-    practiceLapLogger.startNewStint(testNumber: testNumber, throughStops: throughStops);
+  void startTestStint(int testNumber, {bool throughStops = false, String? compound, int? fuelMap, List<int>? stintMaps}) {
+    practiceLapLogger.startNewStint(
+      testNumber: testNumber,
+      throughStops: throughStops,
+      testCompound: compound,
+      testFuelMap: fuelMap,
+      testStintMaps: stintMaps,
+    );
     _controller.add(_state);
   }
 

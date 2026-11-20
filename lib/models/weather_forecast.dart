@@ -84,6 +84,10 @@ class WeatherForecast {
 
   bool get hasRain => slots.any((s) => s.isRain);
 
+  /// Rain heavy enough for Inters or Wets somewhere in the race (light
+  /// rain, R01-R02, is still a slick race).
+  bool get needsWetTyres => slots.any((s) => s.isRain && s.tyre != WeatherTyre.slicks);
+
   /// The race split by the tyre the weather calls for.
   List<WeatherPhase> get phases {
     final result = <WeatherPhase>[];

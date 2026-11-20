@@ -1,3 +1,4 @@
+import '../models/corner_delta.dart';
 import '../models/telemetry_frame.dart';
 import '../models/practice_lap_record.dart';
 import '../models/power_band_config.dart';
@@ -56,7 +57,13 @@ class PracticeLapLogger {
   /// entry on the Practice Log screen -- GT7's telemetry packet itself
   /// has no tire-wear field at all, so this OCR reading is the only
   /// source of real (not proxied) wear data available.
+  ///
+  /// It's the most worn tyre's reading (see [currentWorstTyre]), not
+  /// the average of the four.
   double? currentTireWearPercent;
+
+  /// Which tyre [currentTireWearPercent] is: 'FL', 'FR', 'RL' or 'RR'.
+  String? currentWorstTyre;
 
   /// Latest reading of GT7's surface water gauge (percent), kept current
   /// by FusedRaceStateManager from the relay; see [reportWater].
@@ -83,6 +90,12 @@ class PracticeLapLogger {
   /// Sector times of the lap completing on the current frame (set by
   /// FusedRaceStateManager from SectorCalculator just before [update]).
   List<int>? completedLapSectorsMs;
+
+  /// The lap just completed against the round's time-trial best, corner
+  /// by corner (see CornerDelta) -- set by FusedRaceStateManager on the
+  /// frame the lap completes, like [completedLapSectorsMs]; null when it
+  /// couldn't be compared.
+  List<CornerDelta>? completedLapCornerDeltas;
 
   /// The GT7 weather being tested ("R01"-"R08"; null = dry), set on the
   /// dashboard -- attached to each lap like the tyre. Changing it starts
@@ -195,6 +208,9 @@ class PracticeLapLogger {
         raceNumber: isRaceMode ? _raceForNextLap() : null,
         position: currentPosition,
         sectorsMs: completedLapSectorsMs,
+        cornerDeltas: completedLapCornerDeltas,
+        // A test's laps are run on its fuel map; otherwise Map 1.
+        fuelMap: _currentTestNumber == null ? null : _currentTestFuelMap,
         wheelspinPercent: grip?.wheelspinPercent,
         tcsPercent: grip?.tcsPercent,
         lockupPercent: grip?.lockupPercent,
@@ -272,6 +288,36 @@ class PracticeLapLogger {
   bool _currentThroughStops = false;
   bool _requestedThroughStops = false;
 
+  /// The tyre the current/requested test is to be run on (null: any, as
+  /// in the full race test, which changes tyres at its stops).
+  String? _currentTestCompound;
+  String? _requestedTestCompound;
+
+  /// The fuel map the current/requested test is run on (null: Map 1).
+  int? _currentTestFuelMap;
+  int? _requestedTestFuelMap;
+
+  /// A test run through its stops (the full race test): each stint's fuel
+  /// map, and which stint of it the current/requested one is -- the map
+  /// moves on at each stop.
+  List<int>? _currentTestStintMaps;
+  List<int>? _requestedTestStintMaps;
+  int _currentTestStintIndex = 0;
+  int _requestedTestStintIndex = 0;
+
+  /// The running test's tyre, if it has one.
+  String? get activeTestCompound =>
+      activeTestNumber == null ? null : (_newStintRequested ? _requestedTestCompound : _currentTestCompound);
+
+  /// A test is running and the laps are being logged on a different tyre
+  /// from its own (the HUD read another tyre): those laps don't count
+  /// towards it (see TestPlanTracker).
+  bool get onWrongTyreForTest {
+    final tyre = activeTestCompound;
+    return tyre != null && tyre != currentTireCompound;
+  }
+
+
   /// The test being run right now: the one just started from the
   /// dashboard (even before its first lap completes), or the current
   /// stint's. Null when not running a test.
@@ -302,13 +348,53 @@ class PracticeLapLogger {
   ///
   /// [pitStop]: started by a pit stop. A test started [throughStops] (the
   /// full race test) carries on into the stint after the stop.
-  void startNewStint({int? testNumber, bool automatic = false, bool pitStop = false, bool throughStops = false}) {
+  ///
+  /// [testCompound]: the tyre the test is to be run on (see
+  /// [onWrongTyreForTest]). [testFuelMap]: the map it's run on; a test run
+  /// [throughStops] can give each stint's ([testStintMaps], in order).
+  void startNewStint({
+    int? testNumber,
+    bool automatic = false,
+    bool pitStop = false,
+    bool throughStops = false,
+    String? testCompound,
+    int? testFuelMap,
+    List<int>? testStintMaps,
+  }) {
     if (automatic && _newStintRequested && _requestedTestNumber != null) return;
     final active = activeTestNumber;
-    final carryOn = pitStop && active != null && (_newStintRequested ? _requestedThroughStops : _currentThroughStops);
+    final throughStopsNow = _newStintRequested ? _requestedThroughStops : _currentThroughStops;
+    // A stop also carries a test on when its stint so far has been on the
+    // wrong tyre: that's the driver coming in to fit the right one.
+    final wrongTyreSoFar = active != null &&
+        !_newStintRequested &&
+        _currentTestCompound != null &&
+        !_laps.any((l) => l.stintNumber == _currentStint && l.tireCompound == _currentTestCompound);
+    final carryOn = pitStop && active != null && (throughStopsNow || wrongTyreSoFar);
+    if (carryOn) {
+      final pending = _newStintRequested;
+      final tyre = pending ? _requestedTestCompound : _currentTestCompound;
+      final maps = pending ? _requestedTestStintMaps : _currentTestStintMaps;
+      // A stop on the way: the test's next stint (and its map), unless
+      // this one hasn't been driven yet.
+      final index = pending ? _requestedTestStintIndex : _currentTestStintIndex + (throughStopsNow ? 1 : 0);
+      final map = pending ? _requestedTestFuelMap : _currentTestFuelMap;
+      _newStintRequested = true;
+      _requestedTestNumber = active;
+      _requestedThroughStops = throughStopsNow;
+      _requestedTestCompound = tyre;
+      _requestedTestStintMaps = maps;
+      _requestedTestStintIndex = index;
+      _requestedTestFuelMap = maps != null && index < maps.length ? maps[index] : map;
+      return;
+    }
     _newStintRequested = true;
-    _requestedTestNumber = carryOn ? active : testNumber;
-    _requestedThroughStops = carryOn || (testNumber != null && throughStops);
+    _requestedTestNumber = testNumber;
+    _requestedThroughStops = testNumber != null && throughStops;
+    _requestedTestCompound = testNumber == null ? null : testCompound;
+    _requestedTestStintMaps = testNumber == null ? null : testStintMaps;
+    _requestedTestStintIndex = 0;
+    _requestedTestFuelMap = testNumber == null ? null : (testStintMaps?.firstOrNull ?? testFuelMap);
   }
 
   /// The running test has reached its target: marks the test's last
@@ -334,6 +420,10 @@ class PracticeLapLogger {
       _currentStint = highest + 1;
       _currentTestNumber = _requestedTestNumber;
       _currentThroughStops = _requestedThroughStops;
+      _currentTestCompound = _requestedTestCompound;
+      _currentTestFuelMap = _requestedTestFuelMap;
+      _currentTestStintMaps = _requestedTestStintMaps;
+      _currentTestStintIndex = _requestedTestStintIndex;
       _newStintRequested = false;
     }
     return _currentStint;
@@ -379,6 +469,14 @@ class PracticeLapLogger {
     _requestedTestNumber = null;
     _currentThroughStops = false;
     _requestedThroughStops = false;
+    _currentTestCompound = null;
+    _requestedTestCompound = null;
+    _currentTestFuelMap = null;
+    _requestedTestFuelMap = null;
+    _currentTestStintMaps = null;
+    _requestedTestStintMaps = null;
+    _currentTestStintIndex = 0;
+    _requestedTestStintIndex = 0;
     _pitLapNumbers.clear();
     _lastSeenLap = null;
     _fuelPercentAtLapStart = null;

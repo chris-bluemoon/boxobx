@@ -255,6 +255,6 @@ void main() {
     );
     expect(find.text('Round 5 Practice - Stint 1 - Fuel 100%, Tyre RS'), findsOneWidget);
     expect(find.text('Round 5 Practice - Stint 2 - Fuel 60%, Tyre RM'), findsOneWidget);
-    expect(find.text('3.00%'), findsWidgets); // fuel per lap
+    expect(find.text('3.0%'), findsWidgets); // fuel per lap
   });
 }

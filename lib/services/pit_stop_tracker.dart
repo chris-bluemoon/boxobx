@@ -91,6 +91,10 @@ class PitStopTracker {
   /// one after) -- excluded from degradation/fuel averages.
   Set<int> get pitLaps => Set.unmodifiable(_pitLaps);
 
+  /// The lap each stop this session was made on, in order.
+  List<int> get stopLaps => List.unmodifiable(_stopLaps);
+  final List<int> _stopLaps = [];
+
   /// [driving]: whether the car is being driven, if the caller knows
   /// better than GT7's flags -- in a replay GT7 says the car is never on
   /// track (see FusedRaceStateManager, which only trusts the flags once
@@ -178,6 +182,7 @@ class PitStopTracker {
   void _registerStop(int lap) {
     _armed = false;
     _stopCount++;
+    _stopLaps.add(lap);
     _lastStopLap = lap;
     _pitLaps
       ..add(lap)
@@ -195,5 +200,6 @@ class PitStopTracker {
     _tireJumpReadings = 0;
     _stoppedOnLap = null;
     _stopCount = 0;
+    _stopLaps.clear();
   }
 }

@@ -1,3 +1,6 @@
+import 'corner_delta.dart';
+import '../services/pit_stop_calculator.dart';
+
 /// A single completed practice lap, logged with everything needed to
 /// later compute real fuel-per-lap and tire-wear trends: the lap time,
 /// which tire compound was mounted (GT7's telemetry has NO field for
@@ -109,6 +112,15 @@ class PracticeLapRecord {
 
   int get spinCount => spinCorners?.length ?? 0;
 
+  /// Corner by corner against the round's time-trial best (see
+  /// CornerDelta); null when there was no time-trial reference, or the
+  /// lap wasn't clean enough to compare.
+  final List<CornerDelta>? cornerDeltas;
+
+  /// The fuel map the lap was run on, when known (a stint test names
+  /// one); null = Map 1, as the driver normally runs.
+  final int? fuelMap;
+
   const PracticeLapRecord({
     required this.lapNumber,
     required this.lapTimeMs,
@@ -134,6 +146,8 @@ class PracticeLapRecord {
     this.weather,
     this.waterPercent,
     this.spinCorners,
+    this.cornerDeltas,
+    this.fuelMap,
   });
 
   /// Fuel percent actually consumed over this lap -- negative values
@@ -141,6 +155,10 @@ class PracticeLapRecord {
   /// clamped, so callers can decide whether to exclude anomalous laps
   /// from an average rather than have bad data silently hidden here.
   double get fuelConsumedPercent => fuelPercentAtLapStart - fuelPercentAtLapEnd;
+
+  /// What the lap would have used on Map 1 -- the figure the strategy
+  /// works from (see PitStopCalculator.fuelMapFactor).
+  double get map1FuelConsumedPercent => fuelConsumedPercent / PitStopCalculator.fuelMapFactor(fuelMap ?? 1);
 
   String get formattedLapTime {
     final totalMs = lapTimeMs;
@@ -174,6 +192,8 @@ class PracticeLapRecord {
     weather: map['weather'] as String?,
     waterPercent: (map['waterPercent'] as num?)?.toDouble(),
     spinCorners: (map['spinCorners'] as List?)?.map((c) => (c as num).toInt()).toList(),
+    cornerDeltas: (map['cornerDeltas'] as List?)?.map((c) => CornerDelta.fromList(c as List)).toList(),
+    fuelMap: (map['fuelMap'] as num?)?.toInt(),
   );
 
   Map<String, dynamic> toMap() => {
@@ -201,6 +221,8 @@ class PracticeLapRecord {
     'weather': weather,
     'waterPercent': waterPercent,
     'spinCorners': spinCorners,
+    if (cornerDeltas != null) 'cornerDeltas': [for (final c in cornerDeltas!) c.toList()],
+    if (fuelMap != null) 'fuelMap': fuelMap,
   };
 
   /// Returns a copy with tireWearPercent set -- used by the Practice
@@ -232,6 +254,8 @@ class PracticeLapRecord {
     weather: weather,
     waterPercent: waterPercent,
     spinCorners: spinCorners,
+    cornerDeltas: cornerDeltas,
+    fuelMap: fuelMap,
   );
 
   /// Returns a copy marked as the lap on which its test was called
@@ -261,6 +285,8 @@ class PracticeLapRecord {
     weather: weather,
     waterPercent: waterPercent,
     spinCorners: spinCorners,
+    cornerDeltas: cornerDeltas,
+    fuelMap: fuelMap,
   );
 
   /// Returns a copy with a different lapNumber -- used by
@@ -292,5 +318,7 @@ class PracticeLapRecord {
     weather: weather,
     waterPercent: waterPercent,
     spinCorners: spinCorners,
+    cornerDeltas: cornerDeltas,
+    fuelMap: fuelMap,
   );
 }

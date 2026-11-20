@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/practice_lap_record.dart';
 import '../models/race_strategy.dart';
 import '../models/time_trial_lap.dart';
+import '../services/corner_losses.dart';
 import '../services/race_report.dart';
 import '../services/stint_summary.dart';
 
@@ -173,6 +174,64 @@ class RaceReportScreen extends StatelessWidget {
     ],
   );
 
+  /// The corners that cost the most against the time-trial best, typical
+  /// over the race's clean laps (see CornerLosses).
+  Widget _cornerLosses(TextStyle grey, TextStyle white) {
+    final losses = CornerLosses.fromLaps(report.laps);
+    if (losses.isEmpty) {
+      return _box([
+        Text(
+          'Needs a time-trial lap this round to compare with, and ${CornerLosses.minLaps}+ clean race laps '
+          'driven after it.',
+          style: grey,
+        ),
+      ]);
+    }
+    final worst = losses.worst.take(5).toList();
+    return _box([
+      Text(
+        'Typical over ${losses.laps} clean laps'
+        '${losses.medianLapGapMs == null ? '' : ', ${_gap(losses.medianLapGapMs! / 1000)} a lap off your TT best'}. '
+        'Race fuel and tyres cost time everywhere -- the corners taking the biggest share are where to look.',
+        style: grey,
+      ),
+      const SizedBox(height: 10),
+      if (worst.isEmpty) Text('No corner is consistently slower than your TT best.', style: white),
+      for (final c in worst)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 48,
+                child: Text(
+                  'C${c.corner}',
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+              SizedBox(
+                width: 92,
+                child: Text(
+                  '+${(c.medianMs / 1000).toStringAsFixed(2)} s',
+                  style: TextStyle(color: Colors.orange.shade300, fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  [
+                    if (c.shareOfGapPercent != null) '${c.shareOfGapPercent!.round()}% of the gap',
+                    ...c.whatsDifferent(),
+                  ].join(' · '),
+                  style: white,
+                ),
+              ),
+            ],
+          ),
+        ),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final white = const TextStyle(color: Colors.white, fontSize: 13);
@@ -210,8 +269,8 @@ class RaceReportScreen extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Fuel per lap: ${strategy!.assumedPercentPerLap.toStringAsFixed(2)}% planned, '
-                '${report.fuelPerLapPercent == null ? '--' : '${report.fuelPerLapPercent!.toStringAsFixed(2)}%'} actual',
+                'Fuel per lap: ${strategy!.assumedPercentPerLap.toStringAsFixed(1)}% planned, '
+                '${report.fuelPerLapPercent == null ? '--' : '${report.fuelPerLapPercent!.toStringAsFixed(1)}%'} actual',
                 style: white,
               ),
               const SizedBox(height: 10),
@@ -255,6 +314,8 @@ class RaceReportScreen extends StatelessWidget {
                   ),
                 ),
             ]),
+          _section('WHERE YOU LOSE TIME · VS TT BEST'),
+          _cornerLosses(grey, white),
           _section('STINTS'),
           for (final (i, stint) in report.stints.indexed) ...[
             _box([
@@ -266,7 +327,7 @@ class RaceReportScreen extends StatelessWidget {
               _stats([
                 (
                   'Fuel/lap',
-                  stint.fuelPerLapPercent == null ? '--' : '${stint.fuelPerLapPercent!.toStringAsFixed(2)}%',
+                  stint.fuelPerLapPercent == null ? '--' : '${stint.fuelPerLapPercent!.toStringAsFixed(1)}%',
                 ),
                 (
                   'Wear/lap',

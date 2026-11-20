@@ -3,15 +3,18 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
+import '../models/race_briefing.dart';
 import '../models/fused_race_state.dart';
 import '../models/connection_status.dart';
 import '../models/voice_engine_status.dart';
 import '../widgets/voice_status_badge.dart';
+import '../services/pit_stop_calculator.dart';
 import '../services/driver_profile.dart';
 import '../services/telemetry_udp_service.dart';
 import '../services/hud_ocr_service.dart';
 import '../services/sector_calculator.dart';
 import '../services/fuel_predictor.dart';
+import '../services/fuel_target.dart';
 import '../services/fused_race_state_manager.dart';
 import '../services/push_to_talk_service.dart';
 import '../services/groq_service.dart';
@@ -89,6 +92,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// from its briefing; null with no round saved.
   TestPlan? _testPlan;
 
+  /// The saved round's brief (null with none) -- what [_testPlan] is built on.
+  RaceBriefing? _briefing;
+
+  /// The laps logged when [_testPlan] was last built.
+  int _testPlanLapCount = -1;
+
+  /// (Re)builds the test plan on the fuel measured so far (see
+  /// TestPlan.forRound) -- after each lap logged with no test running, so
+  /// the next test's laps follow your real fuel use, but a test never
+  /// changes while it runs.
+  void _refreshTestPlan() {
+    final laps = _raceStateManager.practiceLapLogger.laps;
+    _testPlanLapCount = laps.length;
+    final briefing = _briefing;
+    _testPlan = briefing == null ? null : TestPlan.forRound(briefing, _savedStrategy, laps);
+  }
+
   /// Stops in the saved strategy, loaded with the round name (see
   /// _loadActiveRoundName) -- what PitCallAdvisor's planned-stop window
   /// is measured against.
@@ -96,6 +116,177 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   /// The saved round's strategy, for the race reports' plan comparison.
   RaceStrategy? _savedStrategy;
+
+  /// Race Mode: the plan being run -- 'A', or 'B' / 'C' once switched to
+  /// with the PLAN chip; back to Plan A with each new race or round.
+  String _activePlan = 'A';
+
+  /// The saved strategy's plan with [letter] (A is the strategy itself).
+  RaceStrategy? _planNamed(String letter) => letter == 'A'
+      ? _savedStrategy
+      : _savedStrategy?.alternatives.where((a) => a.$1 == letter).map((a) => a.$2).firstOrNull;
+
+  /// True if the strategy has a Plan B or C to switch to.
+  bool get _hasAlternatives => _savedStrategy?.alternatives.isNotEmpty ?? false;
+
+  static Color _planColour(String letter) => switch (letter) {
+    'B' => Colors.amber.shade300,
+    'C' => Colors.lightBlue.shade200,
+    _ => Colors.green.shade300,
+  };
+
+  /// "PLAN A", "PLAN B +24s".
+  String _planLabel(String letter) {
+    final behind = letter == 'A' ? null : _planNamed(letter)?.behindPlanALabel;
+    return 'PLAN $letter${behind == null ? '' : ' $behind'}';
+  }
+
+  /// The plan being run (Plan A, or one planned again from mid-race).
+  RaceStrategy? _livePlan;
+
+  /// The map the live plan starts on ([_plannedStops] name the rest).
+  int _liveStartFuelMap = 1;
+
+  /// The plan the live calls and fuel target work to: [plan]'s stops
+  /// and starting map.
+  void _applyLivePlan(RaceStrategy? plan) {
+    _livePlan = plan;
+    _plannedStops = plan?.pitStops ?? const [];
+    _liveStartFuelMap = plan?.fuelMap ?? 1;
+    _raceStateManager.setFuelPlan(stops: _plannedStops, startFuelMap: _liveStartFuelMap);
+  }
+
+  /// [target] (Plan A or Plan B) from where the car is now: the rest of
+  /// the race planned again (see PitStopCalculator.replan) -- the stops
+  /// made, then new ones to its stop count and tyres, from the fuel in
+  /// the tank and the tyres fitted. [target] as it is before the race.
+  RaceStrategy? _planFromNow(RaceStrategy target) {
+    final inputs = _savedStrategy?.inputs;
+    if (inputs == null) return target;
+    final lap = _state.telemetry.currentLap;
+    final lapsDone = lap > 0 ? lap - 1 : 0;
+    final logger = _raceStateManager.practiceLapLogger;
+    final stops = _raceStateManager.pitStopTracker.stopLaps;
+    final tyre = logger.currentTireCompound;
+    final race = logger.upcomingRaceNumber;
+    final mandatory = inputs.mandatoryTyre;
+    return PitStopCalculator.replan(
+      inputs,
+      target,
+      lapsDone: lapsDone,
+      fuelPercent: _raceStateManager.fuelPredictor.fuelAtLapStart ?? _state.telemetry.fuelPercent,
+      currentTyre: tyre,
+      lapsOnTyre: stops.isEmpty ? lapsDone : (lapsDone - stops.last).clamp(0, lapsDone),
+      tyreLeftPercent: logger.currentTireWearPercent,
+      stopLapsMade: stops,
+      mandatoryRun: mandatory != null &&
+          (tyre == mandatory || logger.laps.any((l) => l.raceNumber == race && l.tireCompound == mandatory)),
+    );
+  }
+
+  /// Checked once a race: the tyre you started on against Plan A's.
+  bool _startTyreChecked = false;
+
+  /// Race Mode, as lap 2 starts: started on the other tyre of Plan A's
+  /// (Mediums when it says Softs first -- the call lower down the grid,
+  /// see PitStopCalculator.startsNearFront)? Plan A then runs in that
+  /// order -- the same stops and race time, the tyre you're on first --
+  /// and Boxington says the new first stop. Only on a tyre read off the
+  /// HUD (not one never picked), before any stop.
+  void _followStartTyre(FusedRaceState state) {
+    if (_startTyreChecked || _mode != AppMode.race || state.telemetry.currentLap < 2) return;
+    _startTyreChecked = true;
+    final plan = _livePlan;
+    final fitted = _raceStateManager.practiceLapLogger.currentTireCompound;
+    if (plan == null || _activePlan != 'A' || _raceStateManager.pitStopTracker.stopCount > 0) return;
+    if (fitted == plan.startingTireCompound || _raceStateManager.hudTyre != fitted) return;
+    final swapped = [
+      for (final slowFirst in [true, false]) PitStopCalculator.withTyreOrder(plan, slowFirst: slowFirst),
+    ].where((p) => p.startingTireCompound == fitted).firstOrNull;
+    if (swapped == null) return;
+    setState(() => _applyLivePlan(swapped));
+    final next = swapped.pitStops.first;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Started on ${_shortTyre(fitted)}: Plan A in that order -- box lap ${next.lap} for ${_shortTyre(next.tireCompound)}'),
+      duration: const Duration(seconds: 4),
+    ));
+    _voiceEngine.speakProactively(
+      'The driver started the race on ${_shortTyre(fitted)}, not the ${_shortTyre(plan.startingTireCompound)} Plan A starts on. '
+      'Plan A now runs the same stops in that order: ${[for (final p in swapped.pitStops) 'box lap ${p.lap} for ${_shortTyre(p.tireCompound)}'].join(', ')}. '
+      'In one short sentence, confirm the new first stop (lap ${next.lap}, onto ${_shortTyre(next.tireCompound)}).',
+      state,
+    );
+  }
+
+  /// The PLAN chip: switch plan mid-race. Shows each other plan (A, B,
+  /// C) as it would run from here; the one picked becomes the live plan.
+  Future<void> _pickPlan() async {
+    final strategy = _savedStrategy;
+    if (strategy == null || !_hasAlternatives) return;
+    final made = _raceStateManager.pitStopTracker.stopCount;
+    final others = [
+      for (final letter in ['A', for (final a in strategy.alternatives) a.$1])
+        if (letter != _activePlan) (letter, _planNamed(letter)!, _planFromNow(_planNamed(letter)!)),
+    ];
+    List<String> linesOf(RaceStrategy target, RaceStrategy? fromNow) => fromNow == null
+        ? ['Can\'t work from here on the fuel and tyres the app sees.']
+        : [
+            if (fromNow.summary.startsWith('From lap')) fromNow.summary else target.summary,
+            if (fromNow.pitStops.length <= made)
+              'No more stops.'
+            else
+              for (final (i, p) in fromNow.pitStops.indexed.skip(made))
+                'Lap ${p.lap}: Box for ${_shortTyre(p.tireCompound)}'
+                    '${p.fuelMap != fromNow.stintMaps[i] ? ' · Map ${p.fuelMap}' : ''}',
+            if (fromNow.fuelMap > 1) 'Run Fuel Map ${fromNow.fuelMap} now.',
+          ];
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey.shade900,
+        title: Text('Switch plan? (on Plan $_activePlan)', style: const TextStyle(color: Colors.white)),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final (letter, target, fromNow) in others) ...[
+                  Text(
+                    _planLabel(letter),
+                    style: TextStyle(color: _planColour(letter), fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+                  ),
+                  const SizedBox(height: 6),
+                  for (final line in linesOf(target, fromNow))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(line, style: TextStyle(color: Colors.grey.shade300, fontSize: 16)),
+                    ),
+                  if (fromNow != null)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(onPressed: () => Navigator.pop(context, letter), child: Text('SWITCH TO PLAN $letter')),
+                    ),
+                  const SizedBox(height: 8),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL'))],
+      ),
+    );
+    final choice = others.where((o) => o.$1 == picked).firstOrNull;
+    if (choice == null || choice.$3 == null || !mounted) return;
+    setState(() {
+      _activePlan = choice.$1;
+      _applyLivePlan(choice.$3);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Now on Plan ${choice.$1}'), duration: const Duration(seconds: 2)),
+    );
+  }
 
   /// Practice or race (see AppMode) -- gates the race-only unprompted
   /// calls and widgets. Remembered between launches.
@@ -232,7 +423,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final plan = _testPlan;
     if (plan == null || !_mode.testPlan || _choosingMode) return;
     final logger = _raceStateManager.practiceLapLogger;
-    final prompt = _testPlanCaller.check(
+    final call = _testPlanCaller.check(
       plan,
       state.practiceLaps,
       activeTestNumber: logger.activeTestNumber,
@@ -240,7 +431,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       liveWearRemaining: logger.currentTireWearPercent,
       liveFuelPercent: state.sessionPhase == SessionPhase.driving ? state.telemetry.fuelPercent : null,
     );
-    if (prompt == null) return;
+    if (call == null) return;
+    if (!call.completesTest) {
+      _voiceEngine.speakProactively(call.prompt, state); // a heads-up: the test runs on
+      return;
+    }
 
     // Once Boxington has finished saying it (or after 15s, should the voice
     // fail), the test is closed off automatically -- nothing to tap --
@@ -257,7 +452,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() => _justCompletedTest = completed);
     }
 
-    _voiceEngine.speakProactively(prompt, state).whenComplete(closeTest);
+    _voiceEngine.speakProactively(call.prompt, state).whenComplete(closeTest);
     Timer(const Duration(seconds: 15), closeTest);
   }
 
@@ -375,36 +570,81 @@ class _DashboardScreenState extends State<DashboardScreen> {
     activeTestNumber: _raceStateManager.practiceLapLogger.activeTestNumber,
   );
 
+  /// Before the full race test: the saved strategy, if any stint test has
+  /// been done since it was generated (or there's none), needs
+  /// regenerating -- the race test runs it, so it should rest on every
+  /// test so far.
+  String? _raceTestStrategyWarning(PlannedTestStint test) {
+    if (test.kind != TestStintKind.race || _testPlan == null) return null;
+    final strategy = _savedStrategy;
+    if (strategy == null) return 'There\'s no strategy for this round yet. Generate one first, so the race test runs it.';
+    final progress = _testPlanProgress(_testPlan!);
+    final done = [
+      for (final (i, s) in _testPlan!.stints.indexed)
+        if (s.kind != TestStintKind.race && progress.statuses[i] == TestStatus.done) s,
+    ].length;
+    if (done <= strategy.testsDone) return null;
+    return 'The strategy was generated before your latest stint tests '
+        '(${strategy.testsDone} done then, $done now). Update it first, so the race test runs the plan your laps support.';
+  }
+
   Future<void> _confirmStartTest(PlannedTestStint test) async {
+    final stale = _raceTestStrategyWarning(test);
+    if (stale != null) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: Colors.grey.shade900,
+          title: const Text('Update the strategy first?', style: TextStyle(color: Colors.white)),
+          content: Text(stale, style: TextStyle(color: Colors.grey.shade300)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, 'cancel'), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context, 'anyway'), child: const Text('Start anyway')),
+            TextButton(onPressed: () => Navigator.pop(context, 'update'), child: const Text('Update strategy')),
+          ],
+        ),
+      );
+      if (!mounted || choice == null || choice == 'cancel') return;
+      if (choice == 'update') {
+        await _openRaceStrategy();
+        return;
+      }
+    }
+    if (!mounted) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.grey.shade900,
-        title: Text('Start stint test ${test.number}?', style: const TextStyle(color: Colors.white)),
-        content: Text(
+      barrierDismissible: false,
+      builder: (context) => _StartCountdown(
+        title: 'Stint test ${test.number}',
+        detail:
           '${_testPlanProgress(_testPlan!).targetFor(test)}\n\n'
           '${test.weather == null ? '' : 'Set the lobby weather to ${test.weatherName}. '}'
           'Your next lap starts this stint test. Fit ${test.compoundShort.endsWith('s') ? test.compoundShort : '${test.compoundShort}s'} with '
-          '${test.startFuelPercent.toStringAsFixed(0)}% fuel.',
-          style: TextStyle(color: Colors.grey.shade300),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Start')),
-        ],
+          '${test.startFuelPercent.toStringAsFixed(0)}% fuel, on Fuel Map ${test.fuelMap}.'
+          '${_hudStatus == ConnectionStatus.live ? '' : '\n\nThe HUD OCR relay isn\'t running, so tyre wear won\'t be recorded. '
+              'Start it on the laptop (laptop_ocr/start_relay.sh) first.'}',
       ),
     );
-    if (ok == true) _startTest(test);
+    if (ok == true && mounted) _startTest(test);
   }
 
   /// Starts [test]: a new stint tagged to it, with the tyre picker set to
   /// the planned compound. The app takes the driver's word for it.
   void _startTest(PlannedTestStint test) {
     _justCompletedTest = null;
+    _chosenTest = null;
     // The test's weather (a wet test's rain preset; dry otherwise) goes on
     // its laps -- no weather to pick.
     _raceStateManager.practiceLapLogger.setWeather(test.weather);
-    _raceStateManager.startTestStint(test.number, throughStops: test.kind == TestStintKind.race);
+    _raceStateManager.startTestStint(
+      test.number,
+      throughStops: test.kind == TestStintKind.race,
+      // The full race test changes tyres at its stops: any tyre goes.
+      compound: test.kind == TestStintKind.race ? null : test.compound,
+      fuelMap: test.fuelMap,
+      // The full race test: each stint on the strategy's map for it.
+      stintMaps: test.kind == TestStintKind.race ? test.stintMaps : null,
+    );
     _testPlanCaller.reset();
     if (_tireCompoundOptions.contains(test.compound)) {
       _raceStateManager.setPracticeTireCompound(test.compound);
@@ -463,8 +703,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
     );
-    if (picked != null) _startTest(picked);
+    // Choosing only selects it: START (and its countdown) starts it.
+    if (picked == null || !mounted) return;
+    setState(() => _chosenTest = picked);
   }
+
+  /// The test picked with CHOOSE STINT TEST, shown in place of the next
+  /// one until it's started -- null to show the next test to do.
+  PlannedTestStint? _chosenTest;
 
   /// e.g. "STINT 2 · 5 LAPS (23 TOTAL)" once stints exist.
   String _lapsChipLabel() {
@@ -482,6 +728,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ).showSnackBar(const SnackBar(content: Text('Your next lap starts a new stint'), duration: Duration(seconds: 2)));
   }
 
+  final _fuelCallAdvisor = FuelCallAdvisor();
+
+  /// Unprompted fuel call when the fuel target's advice changes (save a
+  /// map, room to push, can't make it) -- see FuelCallAdvisor.
+  void _maybeMakeFuelCall(FusedRaceState state) {
+    if (!_mode.pitCalls || _choosingMode || state.sessionPhase != SessionPhase.driving) return;
+    final call = _fuelCallAdvisor.check(state.fuelTarget, currentLap: state.telemetry.currentLap);
+    if (call != null) _voiceEngine.speakProactively(call.toCallPrompt(), state);
+  }
+
   /// Unprompted "box / stay out" call when a stop is due -- see
   /// PitCallAdvisor for when it fires and what it recommends.
   void _maybeMakePitCall(FusedRaceState state) {
@@ -490,6 +746,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       state,
       plannedStops: _plannedStops,
       pitLapsThisSession: _raceStateManager.pitStopTracker.pitLaps,
+      startFuelMap: _liveStartFuelMap,
     );
     if (call != null) _voiceEngine.speakProactively(call.toPrompt(), state);
   }
@@ -717,41 +974,68 @@ class _DashboardScreenState extends State<DashboardScreen> {
             )
           : ListView(
               children: [
+                // Plan A: heading, its stops, what it is.
                 Text(
-                  strategy.pitStops.isEmpty
-                      ? 'NO STOP'
-                      : '${strategy.pitStops.length}-STOP',
-                  style: TextStyle(color: Colors.amber.shade300, fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+                  '${strategy.alternatives.isEmpty ? '' : 'PLAN A · '}'
+                  '${strategy.pitStops.isEmpty ? 'NO STOP' : '${strategy.pitStops.length}-STOP'}',
+                  style: TextStyle(
+                    color: strategy.alternatives.isEmpty ? Colors.amber.shade300 : _planColour('A'),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.5,
+                  ),
                 ),
                 const SizedBox(height: 8),
-                Text('Start on ${short(strategy.startingTireCompound)}${strategy.validatedByPractice ? '' : ' ★'}', style: big),
-                for (final stop in strategy.pitStops)
+                Text(
+                  'Start on ${short(strategy.startingTireCompound)}'
+                  '${strategy.usesLeanMap ? ' · Map ${strategy.fuelMap}' : ''}${strategy.validatedByPractice ? '' : ' ★'}',
+                  style: big,
+                ),
+                for (final (i, stop) in strategy.pitStops.indexed)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
-                    child: Text('Lap ${stop.lap}: Box for ${short(stop.tireCompound)}', style: big),
+                    child: Text(
+                      'Lap ${stop.lap}: Box for ${short(stop.tireCompound)}'
+                      '${stop.fuelMap != strategy.stintMaps[i] ? ' · Map ${stop.fuelMap}' : ''}',
+                      style: big,
+                    ),
                   ),
-                const SizedBox(height: 10),
-                if (strategy.summary.isNotEmpty)
+                if (strategy.summary.isNotEmpty) ...[
+                  const SizedBox(height: 10),
                   Text(
                     strategy.summary,
                     maxLines: 4,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: Colors.grey.shade300, fontSize: 15),
                   ),
+                ],
+                const SizedBox(height: 8),
+                Text(
+                  'Fuel ${strategy.assumedPercentPerLap.toStringAsFixed(1)}%/lap'
+                  '${strategy.fuelMap > 1 ? ' on Map ${strategy.fuelMap}' : ''} · '
+                  '${strategy.totalEstimatedTimeLossSeconds.toStringAsFixed(0)} s in the pits',
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+                ),
+                // Then Plans B and C, one line each.
+                if (strategy.alternatives.isNotEmpty) const SizedBox(height: 6),
+                for (final (letter, b) in strategy.alternatives)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'PLAN $letter: ${b.pitStops.isEmpty ? 'NO STOP' : '${b.pitStops.length}-STOP'} · '
+                      '${[short(b.startingTireCompound), for (final p in b.pitStops) 'L${p.lap} ${short(p.tireCompound)}${p.fuelMap > 1 ? ' M${p.fuelMap}' : ''}'].join(' → ')}'
+                      '${b.fuelMap > 1 ? ' (start M${b.fuelMap})' : ''}'
+                      '${b.behindPlanALabel == null ? '' : ' · ${b.behindPlanALabel}'}',
+                      style: TextStyle(color: _planColour(letter), fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
+                  ),
                 if (!strategy.validatedByPractice) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   Text(
                     RaceStrategyScreen.notValidatedNote(strategy),
                     style: TextStyle(color: Colors.amber.shade300, fontSize: 14),
                   ),
                 ],
-                const SizedBox(height: 8),
-                Text(
-                  '${strategy.fuelMap > 1 ? 'Fuel Map ${strategy.fuelMap} · ' : ''}'
-                  'Fuel ${strategy.assumedPercentPerLap.toStringAsFixed(1)}%/lap · '
-                  '${strategy.totalEstimatedTimeLossSeconds.toStringAsFixed(0)} s in the pits',
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
-                ),
               ],
             ),
     );
@@ -877,8 +1161,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _raceStateManager.stream.listen((state) {
       if (!mounted) return;
       _trackPositionLoss(state.hud.gridPosition);
-      setState(() => _state = state);
+      setState(() {
+        _state = state;
+        final logger = _raceStateManager.practiceLapLogger;
+        if (logger.laps.length != _testPlanLapCount && logger.activeTestNumber == null) _refreshTestPlan();
+      });
       _maybeMakePitCall(state);
+      _followStartTyre(state);
+      _maybeMakeFuelCall(state);
       _maybeMakeTestPlanCall(state);
       _maybeMakeDropOffCall(state);
       _maybeMakeWetTyreCall(state);
@@ -994,11 +1284,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _loadActiveRoundName() async {
     final (name, briefing, strategy, _, _) = await SavedBriefingStore.load();
     if (!mounted) return;
-    _plannedStops = strategy?.pitStops ?? const [];
     _savedStrategy = strategy;
-    _testPlan = briefing == null
-        ? null
-        : TestPlan.fromBriefing(briefing, startCompound: strategy?.startingTireCompound);
+    _activePlan = 'A';
+    _startTyreChecked = false;
+    _applyLivePlan(strategy);
+    _briefing = briefing;
+    _refreshTestPlan();
     _raceStateManager.setPitStopTime(briefing?.pitStopTimeSeconds);
     _raceStateManager.setWeather(briefing?.weather);
     _raceStateManager.setRound(name);
@@ -1169,6 +1460,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _resetSessionTracking() {
+    // A new race starts on Plan A (in its own tyre order).
+    _startTyreChecked = false;
+    if (_activePlan != 'A' || !identical(_livePlan, _savedStrategy)) {
+      _activePlan = 'A';
+      _applyLivePlan(_savedStrategy);
+    }
     _shiftCoachTrigger.reset();
     // Clears tracked rival positions too -- otherwise a rival's LAST
     // position from a previous race would be compared against this
@@ -1176,6 +1473,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // callout purely from the session boundary, not a real on-track
     // change.
     _pitCallAdvisor.reset();
+    _fuelCallAdvisor.reset();
     _testPlanCaller.reset();
     _dropOffCaller.reset();
     _wetTyreCaller.reset();
@@ -1237,6 +1535,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return '--';
     }
     return 'L${prediction.predictedEmptyLap}';
+  }
+
+  /// Race Mode: the fuel each lap can use to reach the next stop or the
+  /// flag against what it's using, and the map change to make (see
+  /// FuelTarget). Red when it has to save, or can't make it.
+  Widget _fuelTargetTile() {
+    final target = _state.fuelTarget;
+    if (target == null) return const TelemetryCard(label: 'FUEL TARGET', value: '--');
+    return TelemetryCard(
+      label: 'FUEL · NEED ${target.needPerLap.toStringAsFixed(1)} · USING ${target.usingPerLap.toStringAsFixed(1)}',
+      value: target.tileValue,
+      alert: target.status != FuelTargetStatus.ok,
+    );
   }
 
   NextPitLap? _nextPitLap() => NextPitLap.of(
@@ -1307,7 +1618,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 emblemIcon: Icons.emoji_events,
                 pageTitle: 'APRL',
                 pageIcon: Icons.emoji_events,
-                statusDots: _connectionDots(),
               ),
             ),
             _ => _modePage(),
@@ -1432,23 +1742,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return onTap == null ? box : InkWell(onTap: onTap, borderRadius: BorderRadius.circular(16), child: box);
   }
 
+  /// Telemetry is live but the laptop OCR relay isn't, in a race or a
+  /// stint test: tyre wear, position and water aren't being read, so
+  /// laps go into the log without them.
+  bool get _hudMissing =>
+      _telemetryStatus == ConnectionStatus.live &&
+      _hudStatus != ConnectionStatus.live &&
+      (_mode == AppMode.race ||
+          (_mode == AppMode.practice && _raceStateManager.practiceLapLogger.activeTestNumber != null));
+
   Widget _statusBar() {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
+        if (_hudMissing) _chip('NO HUD · START OCR RELAY', color: Colors.red.shade800, border: Colors.red.shade300),
+        if (_mode == AppMode.practice && _raceStateManager.practiceLapLogger.onWrongTyreForTest)
+          _chip(
+            'WRONG TYRE · TEST IS ${_shortTyre(_raceStateManager.practiceLapLogger.activeTestCompound!).toUpperCase()}, '
+            'ON ${_shortTyre(_raceStateManager.practiceLapLogger.currentTireCompound).toUpperCase()}',
+            color: Colors.red.shade800,
+            border: Colors.red.shade300,
+          ),
         if (_mode.trafficChip && _state.rejoinForecast != null && !_state.hud.playerInPit)
           _rejoinChip(_state.rejoinForecast!),
-        if (_telemetryStatus == ConnectionStatus.live &&
-            (_state.sessionPhase == SessionPhase.paused || _state.sessionPhase == SessionPhase.offTrack))
-          _chip(_state.sessionPhase == SessionPhase.paused ? 'PAUSED' : 'OFF TRACK', color: Colors.grey.shade800),
+        // A fixed slot, empty while driving, so the chips after it don't
+        // jump about as it comes and goes.
+        _sessionPhaseChip(),
         if (_mode == AppMode.race) ...[
           _chip(_raceChipLabel(), color: Colors.red.shade900.withValues(alpha: 0.4), border: Colors.red.shade700),
+          if (_hasAlternatives)
+            _chip(
+              _planLabel(_activePlan),
+              color: _planColour(_activePlan).withValues(alpha: 0.25),
+              border: _planColour(_activePlan),
+              onTap: _pickPlan,
+            ),
           _chip('NEW RACE', color: Colors.grey.shade800, border: Colors.grey.shade600, onTap: _confirmNewRace),
         ],
         if (_mode == AppMode.race) ?_timeTrialComparisonChip(),
         if (_mode.rivalCallouts) _rivalChip(),
       ],
+    );
+  }
+
+  /// PAUSED / OFF TRACK, in a slot that keeps its size when hidden.
+  Widget _sessionPhaseChip() {
+    final phase = _state.sessionPhase;
+    final show = _telemetryStatus == ConnectionStatus.live && (phase == SessionPhase.paused || phase == SessionPhase.offTrack);
+    return Visibility(
+      visible: show,
+      maintainSize: true,
+      maintainAnimation: true,
+      maintainState: true,
+      child: SizedBox(
+        width: 120,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: _chip(phase == SessionPhase.paused ? 'PAUSED' : 'OFF TRACK', color: Colors.grey.shade800),
+        ),
+      ),
     );
   }
 
@@ -1479,7 +1832,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
     if (sure != true || !mounted) return;
-    setState(_raceStateManager.startNewRace);
+    setState(() {
+      _raceStateManager.startNewRace();
+      // A new race starts on Plan A.
+      _activePlan = 'A';
+      _startTyreChecked = false;
+      _applyLivePlan(_savedStrategy);
+    });
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('Your next lap starts Race $next'), duration: const Duration(seconds: 2)));
@@ -1637,6 +1996,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: TelemetryCard(label: _pitLapLabel(), value: _pitLapDisplayValue(), alert: _pitLapAlert()),
                     ),
                     const SizedBox(width: 12),
+                    Expanded(child: _fuelTargetTile()),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: TelemetryCard(
                         label: 'POSITION',
@@ -1670,15 +2031,77 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ),
         ],
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
+        _racePlanStrip(),
+        const SizedBox(height: 12),
         Expanded(
-          flex: 2,
           child: PushToTalkButton(
             onPressStart: _voiceEngine.onPushToTalkPressed,
             onPressEnd: () => _voiceEngine.onPushToTalkReleased(_state),
           ),
         ),
       ],
+    );
+  }
+
+  /// Race Mode: the plan being run in short -- the start tyre, then each
+  /// stop's lap and tyre (and map, where it changes): stops made greyed,
+  /// the next one picked out. Tap to switch to the other plan.
+  Widget _racePlanStrip() {
+    final plan = _livePlan;
+    final made = _raceStateManager.pitStopTracker.stopCount;
+    final label = _planLabel(_activePlan);
+    final accent = _planColour(_activePlan);
+    String tyre(String c) => _shortTyre(c);
+    final parts = <(String, Color, bool)>[];
+    if (plan != null) {
+      final maps = plan.stintMaps;
+      parts.add(('${tyre(plan.startingTireCompound)}${plan.usesLeanMap ? ' M${plan.fuelMap}' : ''}', made == 0 ? Colors.white : Colors.grey.shade600, false));
+      for (final (i, p) in plan.pitStops.indexed) {
+        final done = i < made;
+        parts.add((
+          'L${p.lap} ${tyre(p.tireCompound)}${p.fuelMap != maps[i] ? ' M${p.fuelMap}' : ''}',
+          done ? Colors.grey.shade600 : i == made ? Colors.amber.shade200 : Colors.white,
+          i == made,
+        ));
+      }
+    }
+    return GestureDetector(
+      onTap: _hasAlternatives ? _pickPlan : null,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade900,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade800),
+        ),
+        child: plan == null
+            ? Text('No strategy -- open the Race Brief to plan the stops.', style: TextStyle(color: Colors.grey.shade400, fontSize: 16))
+            : Row(
+                children: [
+                  Text(label, style: TextStyle(color: accent, fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          for (final (i, (text, colour, next)) in parts.indexed) ...[
+                            if (i > 0) TextSpan(text: '  →  ', style: TextStyle(color: Colors.grey.shade600)),
+                            TextSpan(text: next ? 'BOX $text' : text, style: TextStyle(color: colour, fontWeight: next ? FontWeight.w900 : FontWeight.bold)),
+                          ],
+                          if (plan.pitStops.isEmpty) TextSpan(text: '  ·  no stops', style: TextStyle(color: Colors.grey.shade400)),
+                        ],
+                      ),
+                      style: const TextStyle(fontSize: 20),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (_hasAlternatives) Icon(Icons.swap_horiz, color: Colors.grey.shade500),
+                ],
+              ),
+      ),
     );
   }
 
@@ -1955,13 +2378,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final running = progress?.running;
     final wear = logger.currentTireWearPercent;
     final fuel = _state.sessionPhase == SessionPhase.offTrack ? null : _state.telemetry.fuelPercent;
-    final expected = running == null ? null : progress!.expectedLaps[running.number - 1];
+    final expected = running == null ? null : progress!.lapsFor(running);
     final fuelPerLap = stint?.fuelPerLapPercent;
     final best = stint?.bestLapMs;
     final dropOff = stint?.dropOffMs;
     final wentOff = stint?.tyreDropOff != null;
     final onTrack = _state.sessionPhase == SessionPhase.driving && _telemetryStatus == ConnectionStatus.live;
-    final stintLapsDone = stint?.laps.length ?? 0;
+    // The full race test counts its laps across its stops.
+    final stintLapsDone = running?.kind == TestStintKind.race
+        ? TestPlanTracker.raceLapsSoFar(_state.practiceLaps, running!.number)
+        : stint?.laps.length ?? 0;
 
     Widget tile(String label, String value, {bool alert = false}) => Expanded(
       child: TelemetryCard(label: label, value: value, alert: alert),
@@ -1994,7 +2420,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         onTrack ? 'ON LAP' : 'LAPS',
                         if ((stint?.excludedLaps.length ?? 0) > 0) '${stint!.excludedLaps.length} OFF-PACE',
                       ].join(' · '),
-                      '${onTrack ? stintLapsDone + 1 : stintLapsDone}${expected == null ? '' : ' / ~$expected'}',
+                      '${onTrack ? stintLapsDone + 1 : stintLapsDone}${expected == null ? '' : ' / ${expected.$2 ? '~' : ''}${expected.$1}'}',
                     ),
                   ],
                 ),
@@ -2005,7 +2431,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   children: [
                     tile('FUEL', fuel == null || fuel <= 0 ? '--' : '${fuel.toStringAsFixed(0)}%'),
                     const SizedBox(width: 12),
-                    tile('FUEL / LAP', fuelPerLap == null ? '--' : '${fuelPerLap.toStringAsFixed(2)}%'),
+                    tile('FUEL / LAP', fuelPerLap == null ? '--' : '${fuelPerLap.toStringAsFixed(1)}%'),
                   ],
                 ),
               ),
@@ -2072,7 +2498,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ]);
     }
 
-    final justDone = _justCompletedTest;
+    // Only while it still counts: deleting its stint in the log un-does it.
+    final justDone = _justCompletedTest == null ||
+            progress.statuses[plan.stints.indexWhere((s) => s.number == _justCompletedTest!.number).clamp(0, plan.stints.length - 1)] ==
+                TestStatus.done
+        ? _justCompletedTest
+        : null;
     final doneLine = justDone == null
         ? null
         : Text(
@@ -2080,7 +2511,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             style: const TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold),
           );
 
-    final next = progress.next;
+    final chosen = _chosenTest == null ? null : plan.stints.where((s) => s.number == _chosenTest!.number).firstOrNull;
+    final next = chosen ?? progress.next;
     if (next == null) {
       return _panel(Colors.green.shade900, Colors.green.shade400, [
         ?doneLine,
@@ -2100,7 +2532,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return _panel(Colors.grey.shade900, justDone == null ? Colors.grey.shade600 : Colors.greenAccent, [
       ?doneLine,
-      Text('NEXT: STINT TEST ${next.number}/$count', style: big),
+      Text('${chosen == null ? 'NEXT' : 'CHOSEN'}: STINT TEST ${next.number}/$count', style: big),
       const SizedBox(height: 4),
       Text(progress.targetFor(next), style: small),
       Text(next.purpose, style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
@@ -2174,3 +2606,67 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
 /// The bottom bar's tabs, in order.
 enum _Tab { home, race, practice, timeTrial, aprl }
+
+/// Starting a stint test: 3-2-1, then it starts (true) -- CANCEL stops it
+/// (false). Shows what to fit while it counts.
+class _StartCountdown extends StatefulWidget {
+  final String title;
+  final String detail;
+  const _StartCountdown({required this.title, required this.detail});
+
+  @override
+  State<_StartCountdown> createState() => _StartCountdownState();
+}
+
+class _StartCountdownState extends State<_StartCountdown> {
+  int _left = 3;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      if (_left <= 1) {
+        timer.cancel();
+        Navigator.pop(context, true);
+      } else {
+        setState(() => _left--);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.grey.shade900,
+      title: Text(widget.title, style: const TextStyle(color: Colors.white)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$_left',
+            style: TextStyle(color: Colors.greenAccent.shade400, fontSize: 96, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          Text(widget.detail, style: TextStyle(color: Colors.grey.shade300)),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            _timer?.cancel();
+            Navigator.pop(context, false);
+          },
+          child: const Text('CANCEL'),
+        ),
+      ],
+    );
+  }
+}

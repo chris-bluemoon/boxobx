@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:boxbox/models/practice_lap_record.dart';
 import 'package:boxbox/models/race_briefing.dart';
+import 'package:boxbox/models/race_strategy.dart';
 import 'package:boxbox/models/telemetry_frame.dart';
 import 'package:boxbox/models/test_plan.dart';
 import 'package:boxbox/screens/practice_log_screen.dart';
@@ -56,20 +57,70 @@ TelemetryFrame _frame(int lap, double fuel) => TelemetryFrame(
 
 void main() {
   group('building the plan', () {
-    test('one full-tank stint per dry compound, start compound first, then a low-fuel run on the softest', () {
+    test('one full-tank stint per dry compound, hardest first, then a low-fuel run on the softest', () {
       final plan = TestPlan.fromBriefing(_briefing(['Racing Hard', 'Racing Medium', 'Racing Soft']));
       expect(plan.stints.map((s) => s.target), [
-        'Medium · 100% fuel · until 70% worn',
-        'Soft · 100% fuel · until 70% worn',
-        'Hard · 100% fuel · until 70% worn',
-        'Soft · 20% fuel · 4 laps',
-        'Full race · 26 laps · start on Hard · 100% fuel · change tyres when the track calls for it',
+        'Hard · 100% fuel · Map 1 · until 90% worn or fuel < 5%',
+        'Soft · 100% fuel · Map 1 · until 90% worn or fuel < 5%',
+        'Medium · 100% fuel · Map 1 · until 90% worn or fuel < 5%',
+        'Soft · 20% fuel · Map 1 · 4 laps',
+        // No stop needed at x1, and assumed Softs don't last 26 laps: Mediums.
+        'Full race · 26 laps · start on Medium · 100% fuel · Map 1 · change tyres when the track calls for it',
       ]);
     });
 
-    test("the saved strategy's starting tyre goes first", () {
+    test('a heavy fuel round: each long stint is one tank, the low-fuel run sized to it', () {
+      // 18% a lap: a tank is 5 laps (half a lap kept back).
+      final plan = TestPlan.fromBriefing(_briefing(['Racing Hard', 'Racing Soft']), fuelPerLapPercent: 18);
+      expect(plan.stints.map((s) => s.target).take(3), [
+        'Hard · 100% fuel · Map 1 · 5 laps (or until 90% worn or fuel < 5%)',
+        'Soft · 100% fuel · Map 1 · 5 laps (or until 90% worn or fuel < 5%)',
+        'Soft · 55% fuel · Map 1 · 2 laps',
+      ]);
+      // A wear rate that won't last the tank: then the tyres are the limit.
+      expect(plan.stints.first.targetWith(17), 'Hard · 100% fuel · Map 1 · 5 laps (or until 90% worn or fuel < 5%)');
+      expect(plan.stints.first.targetWith(4), 'Hard · 100% fuel · Map 1 · until 90% worn or fuel < 5%, about 4 laps');
+      // The laps tile: the tank, unless the tyres go first (~).
+      final p = TestPlanTracker.progress(plan, const []);
+      expect(p.lapsFor(plan.stints.first), (5, false));
+      expect(p.lapsFor(plan.stints[2]), (2, false), reason: 'the low-fuel run');
+      final long = plan.stints.first;
+      final stint = StintSummary.fromLaps(_stint(1, test: 1, tyre: 'Racing Hard', count: 4)).first;
+      expect(TestPlanTracker.stopReason(long, stint, liveWearRemaining: 80, liveFuelPercent: 20), isNull);
+      final tank = StintSummary.fromLaps(_stint(1, test: 1, tyre: 'Racing Hard', count: 5)).first;
+      expect(TestPlanTracker.stopReason(long, tank, liveWearRemaining: 80, liveFuelPercent: 20), 'a full tank done (5 laps)');
+    });
+
+    test('every test names its fuel map: Map 1, the race test the strategy\'s', () {
+      // The strategy's 12% a lap on Map 4 is 15.8% on Map 1: 5 laps a tank.
+      final plan = TestPlan.fromBriefing(_briefing(['Racing Medium', 'Racing Soft']), fuelPerLapPercent: 12, fuelMap: 4);
+      expect(plan.stints.where((s) => s.kind != TestStintKind.race).map((s) => s.fuelMap).toSet(), {1});
+      expect(plan.stints.last.fuelMap, 4);
+      expect(plan.stints.first.target, 'Medium · 100% fuel · Map 1 · 5 laps (or until 90% worn or fuel < 5%)');
+      // A done test shows the map its laps were run on.
+      final done = TestPlanTracker.progress(plan, [
+        for (final l in _stint(1, test: 1, count: 25)) PracticeLapRecord.fromMap({...l.toMap(), 'fuelMap': 2}),
+      ]);
+      expect(done.targetFor(plan.stints.first), contains('Map 2'));
+      final logger = PracticeLapLogger()..startNewStint(testNumber: 1, testCompound: 'Racing Medium', testFuelMap: 4);
+      logger.update(_frame(1, 100));
+      logger.update(_frame(2, 88));
+      logger.startNewStint(); // NEW STINT: not a test, so Map 1
+      logger.update(_frame(3, 76));
+      expect(logger.laps.map((l) => l.fuelMap), [4, null]);
+      // Map 4 uses 76% of Map 1's fuel (24% saved): 12% is 15.8%.
+      expect(logger.laps.first.map1FuelConsumedPercent, closeTo(12 / 0.76, 0.01));
+    });
+
+    test('a light fuel round: a long stint goes no further than the race distance', () {
+      final plan = TestPlan.fromBriefing(_briefing(['Racing Medium']), fuelPerLapPercent: 2); // a tank: 49 laps
+      expect(plan.stints.first.target, 'Medium · 100% fuel · Map 1 · 26 laps (or until 90% worn or fuel < 5%)');
+      expect(plan.stints[1].target, 'Medium · 20% fuel · Map 1 · 4 laps');
+    });
+
+    test("hardest tyre first whatever the strategy starts on -- the race test starts on the strategy's", () {
       final plan = TestPlan.fromBriefing(_briefing(['Racing Medium', 'Racing Soft']), startCompound: 'Racing Soft');
-      expect(plan.stints.first.compound, 'Racing Soft');
+      expect(plan.stints.first.compound, 'Racing Medium');
       expect(plan.stints, hasLength(4));
       expect(plan.stints.last.compound, 'Racing Soft', reason: 'the race test starts on it too');
     });
@@ -152,15 +203,43 @@ void main() {
   group('progress', () {
     final plan = TestPlan.fromBriefing(_briefing(['Racing Medium', 'Racing Soft']));
 
-    test('a tagged stint that reached 30% tyres left is done', () {
-      final p = TestPlanTracker.progress(plan, _stint(1, test: 1, count: 25));
+    test('a tagged stint that reached 10% tyres left (90% worn) is done', () {
+      final p = TestPlanTracker.progress(plan, _stint(1, test: 1, count: 30));
       expect(p.statuses, [TestStatus.done, TestStatus.toDo, TestStatus.toDo, TestStatus.toDo]);
       expect(p.next!.compound, 'Racing Soft');
     });
 
-    test('the user is trusted: tyre and fuel do not matter, only the tag', () {
-      final onHardsHalfFuel = _stint(1, test: 1, tyre: 'Racing Hard', fuelStart: 50, count: 17);
-      expect(TestPlanTracker.progress(plan, onHardsHalfFuel).statuses.first, TestStatus.done);
+    test('the user is trusted on fuel, but laps on another tyre than the test\'s don\'t count', () {
+      final halfFuel = _stint(1, test: 1, tyre: 'Racing Medium', fuelStart: 50, count: 25);
+      expect(TestPlanTracker.progress(plan, halfFuel).statuses.first, TestStatus.done);
+      final onHards = _stint(1, test: 1, tyre: 'Racing Hard', count: 25);
+      expect(TestPlanTracker.progress(plan, onHards).statuses.first, TestStatus.toDo);
+    });
+
+    test('on the wrong tyre: one call, and a stop to fit the right one carries the test on', () {
+      final caller = TestPlanCaller();
+      final wrong = _stint(1, test: 1, tyre: 'Racing Hard', count: 2);
+      final call = caller.check(plan, wrong, activeTestNumber: 1, currentStintNumber: 1, liveWearRemaining: 8);
+      expect(call!.completesTest, isFalse, reason: 'worn tyres on the wrong compound do not complete it');
+      expect(call.prompt, contains("don't count"));
+      expect(caller.check(plan, wrong, activeTestNumber: 1, currentStintNumber: 1, liveWearRemaining: 8), isNull);
+
+      final logger = PracticeLapLogger()
+        ..startNewStint(testNumber: 1, testCompound: 'Racing Medium')
+        ..currentTireCompound = 'Racing Medium';
+      logger.update(_frame(1, 100));
+      logger.currentTireCompound = 'Racing Hard'; // the HUD reads Hards
+      expect(logger.onWrongTyreForTest, isTrue);
+      logger.update(_frame(2, 97));
+      logger.update(_frame(3, 94));
+      logger.startNewStint(automatic: true, pitStop: true); // box, fit Mediums
+      expect(logger.activeTestNumber, 1, reason: 'the test carries on');
+      logger.currentTireCompound = 'Racing Medium';
+      expect(logger.onWrongTyreForTest, isFalse);
+      logger.update(_frame(4, 100));
+      logger.update(_frame(5, 97));
+      logger.startNewStint(automatic: true, pitStop: true); // on the right tyre, a stop ends it
+      expect(logger.activeTestNumber, isNull);
     });
 
     test('untagged stints never count, even if they match the plan exactly', () {
@@ -210,14 +289,14 @@ void main() {
     test('unknown until the compound has a measured wear rate', () {
       final p = TestPlanTracker.progress(plan, const []);
       expect(p.expectedLaps, [null, null, null, null]);
-      expect(p.targetFor(plan.stints.first), 'Medium · 100% fuel · until 70% worn');
+      expect(p.targetFor(plan.stints.first), 'Medium · 100% fuel · Map 1 · until 90% worn or fuel < 5%');
     });
 
-    test('from the latest stint on that compound: 70 points of wear at its rate', () {
-      // Medium wears 3%/lap -> 70 / 3 = 23 laps; any stint counts, test or not.
+    test('from the latest stint on that compound: 90 points of wear at its rate', () {
+      // Medium wears 3%/lap -> 90 / 3 = 30 laps; any stint counts, test or not.
       final p = TestPlanTracker.progress(plan, _stint(1, count: 6));
-      expect(p.expectedLaps.first, 23);
-      expect(p.targetFor(plan.stints.first), 'Medium · 100% fuel · until 70% worn (about 23 laps)');
+      expect(p.expectedLaps.first, 30);
+      expect(p.targetFor(plan.stints.first), 'Medium · 100% fuel · Map 1 · until 90% worn or fuel < 5% (about 30 laps)');
       expect(p.expectedLaps[1], isNull, reason: 'no Soft data yet');
       expect(p.expectedLaps.last, isNull, reason: 'low-fuel stints are a fixed lap count');
     });
@@ -225,8 +304,8 @@ void main() {
     test('Boxington names the next test with its estimate when known', () {
       final caller = TestPlanCaller();
       final laps = [..._stint(1, tyre: 'Racing Soft', count: 4), ..._stint(2, test: 1, count: 10)];
-      final call = caller.check(plan, laps, activeTestNumber: 1, currentStintNumber: 2, liveWearRemaining: 25);
-      expect(call, contains('next stint test: Soft · 100% fuel · until 70% worn (about 23 laps)'));
+      final call = caller.check(plan, laps, activeTestNumber: 1, currentStintNumber: 2, liveWearRemaining: 8)?.prompt;
+      expect(call, contains('next stint test: Soft · 100% fuel · Map 1 · until 90% worn or fuel < 5% (about 30 laps)'));
     });
   });
 
@@ -237,29 +316,29 @@ void main() {
       final caller = TestPlanCaller();
       final laps = _stint(1, test: 1, count: 10);
       String? check(double wear) =>
-          caller.check(plan, laps, activeTestNumber: 1, currentStintNumber: 1, liveWearRemaining: wear);
-      expect(check(40), isNull);
-      final call = check(26);
-      expect(call, contains('Stint Test 1 complete: tyres at 26% left'));
+          caller.check(plan, laps, activeTestNumber: 1, currentStintNumber: 1, liveWearRemaining: wear)?.prompt;
+      expect(check(20), isNull);
+      final call = check(11);
+      expect(call, contains('Stint Test 1 complete: tyres at 11% left'));
       expect(call, contains('move on to the next stint test'));
       expect(call, isNot(contains('box')));
-      expect(call, contains('next stint test: Soft · 100% fuel · until 70% worn'));
-      expect(check(24), isNull, reason: 'once only');
+      expect(call, contains('next stint test: Soft · 100% fuel · Map 1 · until 90% worn or fuel < 5%'));
+      expect(check(9), isNull, reason: 'once only');
     });
 
     test('a worn reading left over from the previous stint does not end a test that has just started', () {
       final caller = TestPlanCaller();
       final previous = _stint(1, count: 25); // ended on worn tyres
-      // Test 1 started in the garage: no lap of it yet, last reading 25%.
+      // Test 1 started in the garage: no lap of it yet, last reading 8%.
       expect(
-        caller.check(plan, previous, activeTestNumber: 1, currentStintNumber: 1, liveWearRemaining: 25),
+        caller.check(plan, previous, activeTestNumber: 1, currentStintNumber: 1, liveWearRemaining: 8)?.prompt,
         isNull,
       );
-      expect(TestPlanTracker.stopReason(plan.stints.first, null, liveWearRemaining: 25), isNull);
+      expect(TestPlanTracker.stopReason(plan.stints.first, null, liveWearRemaining: 8), isNull);
       // Once a lap of the test is done, the live reading counts.
       final withLap = [...previous, ..._stint(2, test: 1, count: 1)];
       expect(
-        caller.check(plan, withLap, activeTestNumber: 1, currentStintNumber: 2, liveWearRemaining: 29),
+        caller.check(plan, withLap, activeTestNumber: 1, currentStintNumber: 2, liveWearRemaining: 11)?.prompt,
         contains('complete'),
       );
     });
@@ -267,7 +346,7 @@ void main() {
     test('says nothing when no test is running', () {
       final caller = TestPlanCaller();
       expect(
-        caller.check(plan, _stint(1, count: 30), activeTestNumber: null, currentStintNumber: 1, liveWearRemaining: 10),
+        caller.check(plan, _stint(1, count: 30), activeTestNumber: null, currentStintNumber: 1, liveWearRemaining: 10)?.prompt,
         isNull,
       );
     });
@@ -291,7 +370,7 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Stint Test 1: Medium · 100% fuel · until 70% worn (about 23 laps)'), findsOneWidget);
+    expect(find.text('Stint Test 1: Medium · 100% fuel · Map 1 · until 90% worn or fuel < 5% (about 30 laps)'), findsOneWidget);
     expect(find.byIcon(Icons.check_circle), findsOneWidget);
     expect(find.byIcon(Icons.play_circle), findsOneWidget);
     expect(find.byIcon(Icons.radio_button_unchecked), findsNWidgets(2));
@@ -320,7 +399,7 @@ void main() {
       ]);
       expect(plan.stints.last.kind, TestStintKind.race);
       expect(plan.stints.take(6).every((s) => s.kind == TestStintKind.wet && s.laps == TestPlan.wetLaps), isTrue);
-      expect(plan.stints.first.target, 'Wets · R06 rain · 100% fuel · 4 laps');
+      expect(plan.stints.first.target, 'Wets · R06 rain · 100% fuel · Map 1 · 4 laps');
       expect(plan.stints.first.purpose, 'Wets vs Inters in R06 Thick Cloud with Rain');
     });
 
@@ -383,9 +462,47 @@ void main() {
 
       final caller = TestPlanCaller();
       expect(
-        caller.check(plan, logger.laps, activeTestNumber: race.number, currentStintNumber: logger.currentStint),
+        caller.check(plan, logger.laps, activeTestNumber: race.number, currentStintNumber: logger.currentStint)?.prompt,
         contains('full race distance done'),
       );
+    });
+
+    test("runs the strategy: its stops, each stint on that stint's map", () {
+      // Round 6: Softs all race, Map 2 for the middle stint only.
+      const stops = [
+        PlannedPitStop(lap: 4, tireCompound: 'Racing Soft', reasoning: '', fuelMap: 2),
+        PlannedPitStop(lap: 9, tireCompound: 'Racing Soft', reasoning: '', fuelMap: 1),
+      ];
+      final plan = TestPlan.fromBriefing(_briefing(['Racing Hard', 'Racing Soft']), startCompound: 'Racing Soft', raceStops: stops);
+      final race = plan.stints.last;
+      expect(race.target, 'Full race · 26 laps · start on Soft · 100% fuel · Map 1 · lap 4: box for Softs · Map 2 · lap 9: box for Softs · Map 1');
+      expect(race.stintMaps, [1, 2, 1]);
+
+      // Each stint's laps are logged on its map.
+      final logger = PracticeLapLogger()
+        ..startNewStint(testNumber: race.number, throughStops: true, testStintMaps: race.stintMaps);
+      var lap = 1;
+      void drive(int n) {
+        for (var i = 0; i < n; i++) {
+          logger.update(_frame(lap++, 100 - lap * 2.0));
+        }
+      }
+
+      drive(5); // the first lap boundary only starts the count: 4 laps
+      logger.startNewStint(automatic: true, pitStop: true);
+      drive(5);
+      logger.startNewStint(automatic: true, pitStop: true);
+      drive(4);
+      final byStint = <int, Set<int?>>{};
+      for (final l in logger.laps.where((l) => l.testNumber == race.number)) {
+        byStint.putIfAbsent(l.stintNumber, () => {}).add(l.fuelMap);
+      }
+      expect(byStint.values.toList(), [{1}, {2}, {1}]);
+    });
+
+    test('with a strategy of no stops it says so', () {
+      final plan = TestPlan.fromBriefing(_briefing(['Racing Soft']), startCompound: 'Racing Soft', raceStops: const []);
+      expect(plan.stints.last.target, endsWith('· no stops'));
     });
 
     test('a pit stop still ends any other test', () {
@@ -406,5 +523,37 @@ void main() {
       logger.startNewStint(); // gave up: NEW STINT
       expect(TestPlanTracker.progress(plan, logger.laps).statuses.last, TestStatus.toDo);
     });
+  });
+
+  test('the tests resize to the fuel measured, without regenerating the strategy', () {
+    final brief = RaceBriefing(
+      trackName: 'Circuit de Sainte-Croix - C',
+      totalLaps: 13,
+      startingFuelPercent: 100,
+      fuelConsumptionMultiplier: 4,
+      availableTireCompounds: const ['Racing Hard', 'Racing Soft'],
+    );
+    // The strategy from scratch assumed 14.63%/lap: 6-lap long stints.
+    const strategy = RaceStrategy(pitStops: [], startingTireCompound: 'Racing Soft', summary: '', assumedPercentPerLap: 14.63);
+    List<int?> longLaps(TestPlan p) => [for (final s in p.stints) if (s.kind == TestStintKind.long) s.laps];
+    expect(longLaps(TestPlan.forRound(brief, strategy, const [])), [6, 6]);
+    // Test 1's Hard laps measure 19.3%/lap: a tank is 4 laps (half a lap kept back).
+    final laps = [
+      for (var i = 0; i < 5; i++)
+        PracticeLapRecord(
+          lapNumber: i + 1,
+          lapTimeMs: 224000,
+          tireCompound: 'Racing Hard',
+          fuelPercentAtLapStart: 100 - i * 19.3,
+          fuelPercentAtLapEnd: 100 - (i + 1) * 19.3,
+          recordedAt: DateTime(2026),
+          stintNumber: 1,
+          testNumber: 1,
+        ),
+    ];
+    final plan = TestPlan.forRound(brief, strategy, laps);
+    expect(longLaps(plan), [4, 4]);
+    final low = plan.stints.firstWhere((s) => s.kind == TestStintKind.lowFuel);
+    expect(low.laps, 2);
   });
 }

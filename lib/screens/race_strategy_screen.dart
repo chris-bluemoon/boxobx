@@ -15,6 +15,7 @@ import '../services/race_strategist_service.dart';
 import '../services/track_database.dart';
 import '../services/saved_briefing_store.dart';
 import '../services/practice_fuel_calculator.dart';
+import '../services/fuel_map_measurement.dart';
 import '../services/race_lap_estimator.dart';
 import '../services/time_trial_store.dart';
 import '../models/time_trial_lap.dart';
@@ -23,6 +24,7 @@ import '../services/test_plan_tracker.dart';
 import '../services/strategy_changes.dart';
 import '../services/wet_pace_table.dart';
 import '../services/base_rates.dart';
+import '../services/dry_tyre_pace.dart';
 
 /// Pre-race strategy planning screen: enter this week's APRL driver
 /// briefing and get an AI-generated pit-stop strategy, informed by
@@ -145,6 +147,11 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   /// including service), saved with the briefing.
   final _pitStopTimeController = TextEditingController();
 
+  /// Where you start, from qualifying, and the cars on the grid (blank:
+  /// 16) -- the tyre order (see PitStopCalculator.startsNearFront).
+  final _gridPositionController = TextEditingController();
+  final _gridSizeController = TextEditingController();
+
   /// The brief saves itself: every edit is written shortly after it's
   /// made (no Save button). Held off until the saved brief has loaded,
   /// and while switching rounds, so defaults never overwrite a saved one.
@@ -190,6 +197,8 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       _fuelController,
       _weatherController,
       _pitStopTimeController,
+      _gridPositionController,
+      _gridSizeController,
     ]) {
       c.addListener(_scheduleSave);
     }
@@ -261,6 +270,12 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     );
   }
 
+  /// A whole-number field (grid position, cars), or null if empty/invalid.
+  static int? _enteredCount(TextEditingController c) {
+    final value = int.tryParse(c.text.trim());
+    return value != null && value > 0 ? value : null;
+  }
+
   /// The pit stop time field as a number, or null if empty/invalid.
   double? _enteredPitStopTime() {
     final value = double.tryParse(_pitStopTimeController.text.trim());
@@ -275,6 +290,8 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     _fuelController.dispose();
     _weatherController.dispose();
     _pitStopTimeController.dispose();
+    _gridPositionController.dispose();
+    _gridSizeController.dispose();
     super.dispose();
   }
 
@@ -305,6 +322,8 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     _fuelConsumptionMultiplier = briefing.fuelConsumptionMultiplier;
     _refuelingSpeed = briefing.refuelingSpeedLitersPerSec;
     _pitStopTimeController.text = briefing.pitStopTimeSeconds?.toString() ?? '';
+    _gridPositionController.text = briefing.gridPosition?.toString() ?? '';
+    _gridSizeController.text = briefing.gridSize?.toString() ?? '';
     _fuelController.text = briefing.startingFuelPercent.toString();
     _selectedTireCompounds
       ..clear()
@@ -322,6 +341,9 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   /// enduros. (The weather comes from the weekly brief.)
   void _applyCalendarRound(String name) {
     _roundNameController.text = name;
+    // Last round's grid isn't this one's.
+    _gridPositionController.clear();
+    _gridSizeController.clear();
     final round = LeagueCalendar.byName(name);
     if (round == null) return;
     _trackName = round.gt7Track;
@@ -391,6 +413,8 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       // Wet if any slot rains; the brief's slots are the only weather input.
       wetOrChangeableWeather: weather?.slots.any((slot) => slot.isRain) ?? false,
       weatherSlots: weather?.code ?? '',
+      gridPosition: _enteredCount(_gridPositionController),
+      gridSize: _enteredCount(_gridSizeController),
     );
   }
 
@@ -450,9 +474,21 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
         // Your wet testing decides each wet spell's tyre, where it covers it.
         wetPace: WetPaceTable.fromLaps(practiceLaps),
         baseRates: baseRates,
+        // Your typical lap here (median, pit laps out): what a fuel map's
+        // pace cost is a share of.
+        lapTimeSeconds: () {
+          final times = [for (final l in practiceLaps) if (!l.isPitLap && l.lapTimeMs > 0 && (l.fuelMap ?? 1) == 1) l.lapTimeMs]..sort();
+          return times.isEmpty ? null : times[times.length ~/ 2] / 1000;
+        }(),
+        // A fuel map stint test's laps: what that map really saves and costs.
+        measuredMaps: FuelMapMeasurement.fromLaps(practiceLaps),
+        // Each dry tyre's pace here, and how soon it went off: which tyre
+        // each stint goes on.
+        dryPace: DryTyrePace.fromLaps(practiceLaps),
       );
       // How much of the round's practice stint testing it rests on.
-      final plan = TestPlan.fromBriefing(briefing, startCompound: generated.startingTireCompound);
+      // (sized on the fuel measured, as the dashboard's -- see TestPlan.forRound)
+      final plan = TestPlan.forRound(briefing, generated, practiceLaps);
       final progress = TestPlanTracker.progress(plan, widget.getPracticeLaps());
       final strategy = generated.withPractice(
         done: progress.statuses.where((s) => s == TestStatus.done).length,
@@ -716,6 +752,22 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                 'Pit stop time (seconds, e.g. 24.5)',
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
               ),
+              const SizedBox(height: 12),
+              _sectionLabel('GRID'),
+              const SizedBox(height: 4),
+              Text(
+                'After qualifying, enter where you start and Generate again. From the front third of the grid '
+                'the plan runs the faster tyre first; lower down, the slower one first, with the faster tyre at the end.',
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(child: _textField(_gridPositionController, 'Grid position (e.g. 9)', keyboardType: TextInputType.number)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _textField(_gridSizeController, 'Cars on the grid (blank: 16)', keyboardType: TextInputType.number)),
+                ],
+              ),
               const SizedBox(height: 8),
               ...[
                 TextField(
@@ -929,6 +981,10 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (strategy.alternatives.isNotEmpty) ...[
+            Text('PLAN A', style: TextStyle(color: Colors.green.shade300, fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+            const SizedBox(height: 6),
+          ],
           Text(
             'Starting tire: ${strategy.startingTireCompound}${strategy.validatedByPractice ? '' : ' ★'}',
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
@@ -947,7 +1003,7 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
             children: [
               Text(
                 '${_usedMeasuredFuelData ? 'Measured' : 'Assumed'} fuel use: '
-                '${strategy.assumedPercentPerLap.toStringAsFixed(2)}%/lap'
+                '${strategy.assumedPercentPerLap.toStringAsFixed(1)}%/lap'
                 '${strategy.fuelMap > 1 ? ' on Fuel Map ${strategy.fuelMap}' : ''}',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
               ),
@@ -1003,15 +1059,64 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '${stop.tireCompound} -- ${stop.reasoning}',
+                      '${stop.tireCompound}${stop.fuelMap > 1 ? ' · Fuel Map ${stop.fuelMap}' : ''} -- ${stop.reasoning}',
                       style: TextStyle(color: Colors.grey.shade300, fontSize: 13),
                     ),
                   ),
                 ],
               ),
             ),
+          for (final (letter, b) in strategy.alternatives) _planBSection(b, letter),
         ],
       ),
+    );
+  }
+
+  /// Plan B (or C) under Plan A: a plan to switch to mid-race (from the
+  /// race dashboard's PLAN chip), and how much slower it is.
+  Widget _planBSection(RaceStrategy b, String letter) {
+    final colour = letter == 'C' ? Colors.lightBlue.shade200 : Colors.amber.shade300;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Divider(color: Colors.grey.shade800, height: 24),
+        Text(
+          'PLAN $letter${b.behindPlanALabel == null ? '' : '  ${b.behindPlanALabel}'}',
+          style: TextStyle(color: colour, fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Starting tire: ${b.startingTireCompound}${b.fuelMap > 1 ? ' · Fuel Map ${b.fuelMap}' : ''}',
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(b.summary, style: TextStyle(color: Colors.grey.shade300)),
+        const SizedBox(height: 10),
+        for (final (i, stop) in b.pitStops.indexed)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(color: letter == 'C' ? Colors.blue.shade900 : Colors.amber.shade900, borderRadius: BorderRadius.circular(6)),
+                  child: Text('LAP ${stop.lap}', style: const TextStyle(color: Colors.white, fontSize: 14)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${stop.tireCompound}${stop.fuelMap != b.stintMaps[i] ? ' · Fuel Map ${stop.fuelMap}' : ''}',
+                    style: TextStyle(color: Colors.grey.shade300, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        Text(
+          'In the race, tap the PLAN chip to switch: the rest of the race is planned again from where you are.',
+          style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+        ),
+      ],
     );
   }
 }

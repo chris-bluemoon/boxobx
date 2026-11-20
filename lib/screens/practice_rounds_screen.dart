@@ -93,7 +93,14 @@ class _PracticeRoundsScreenState extends State<PracticeRoundsScreen> {
         builder: (context) => PracticeLogScreen(
           laps: laps,
           roundName: round,
-          testPlan: briefing == null ? null : TestPlan.fromBriefing(briefing),
+          testPlan: briefing == null
+              ? null
+              : TestPlan.fromBriefing(
+                  briefing,
+                  // That round's fuel use, from its own laps, sizes the stints.
+                  fuelPerLapPercent: StintSummary.fromLaps(laps).map((s) => s.fuelPerLapPercent).nonNulls.firstOrNull,
+                  fuelMapToTest: TestPlan.fuelMapTested(laps),
+                ),
           weather: briefing?.weather,
           pitStopTimeSeconds: briefing?.pitStopTimeSeconds,
           onClear: () async {

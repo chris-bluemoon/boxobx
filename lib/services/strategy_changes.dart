@@ -20,10 +20,12 @@ class StrategyChanges {
             : '${old.pitStops.length} → ${updated.pitStops.length} stops: ${stops(updated)} (was ${stops(old)})',
       );
     }
-    if (old.fuelMap != updated.fuelMap) changes.add('Fuel Map: ${old.fuelMap} → ${updated.fuelMap}');
-    if ((old.assumedPercentPerLap - updated.assumedPercentPerLap).abs() >= 0.01) {
+    if (old.stintMaps.join('/') != updated.stintMaps.join('/')) {
+      changes.add('Fuel maps: ${old.stintMaps.join('/')} → ${updated.stintMaps.join('/')}');
+    }
+    if ((old.assumedPercentPerLap - updated.assumedPercentPerLap).abs() >= 0.05) {
       changes.add(
-        'Fuel: ${old.assumedPercentPerLap.toStringAsFixed(2)} → ${updated.assumedPercentPerLap.toStringAsFixed(2)}%/lap',
+        'Fuel: ${old.assumedPercentPerLap.toStringAsFixed(1)} → ${updated.assumedPercentPerLap.toStringAsFixed(1)}%/lap',
       );
     }
     if ((old.totalEstimatedTimeLossSeconds - updated.totalEstimatedTimeLossSeconds).abs() >= 0.5) {

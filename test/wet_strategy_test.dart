@@ -21,19 +21,19 @@ RaceBriefing _brief(String weather, {int laps = 26, double fuel = 100}) => RaceB
 );
 
 void main() {
-  test('R06/R05/C03/S14/S04/R03/R04/R05 over 26 laps: Inters, Hards about lap 8, Inters about lap 17', () {
+  test('R06/R05/C03/S14/S04/R03/R04/R05 over 26 laps: Inters, Softs about lap 8, Inters about lap 17', () {
     final plan = PitStopCalculator.calculate(_brief('R06/R05/C03/S14/S04/R03/R04/R05'));
     // R06 (Wets, laps 1-3) then R05 (Inters, 4-7) is one wet spell on the
     // tyre covering more of it -- no extra Wets -> Inters stop.
     expect(plan.startingTireCompound, 'Intermediate');
-    expect([for (final s in plan.pitStops) '${s.lap} ${s.tireCompound}'], ['8 Racing Hard', '17 Intermediate']);
+    expect([for (final s in plan.pitStops) '${s.lap} ${s.tireCompound}'], ['8 Racing Soft', '17 Intermediate']);
     expect(plan.summary, contains('water gauge'));
   });
 
   test('a mostly-wet opening on Wets starts on Wets', () {
     final plan = PitStopCalculator.calculate(_brief('R07/R06/R04/C02', laps: 20));
     expect(plan.startingTireCompound, 'Heavy Wet');
-    expect([for (final s in plan.pitStops) s.tireCompound], ['Racing Hard']);
+    expect([for (final s in plan.pitStops) s.tireCompound], ['Racing Soft'], reason: 'the fastest slick, for the dry spell');
   });
 
   test('a wet spell longer than a tank gets a fuel stop on the same tyre', () {
@@ -127,7 +127,7 @@ void main() {
     ).withPractice(done: 2, planned: 7);
     final changes = StrategyChanges.between(before, after);
     expect(changes, contains('Start tyre: Inters → Wets'));
-    expect(changes, contains('Fuel: 1.70 → 3.10%/lap'));
+    expect(changes, contains('Fuel: 1.7 → 3.1%/lap'));
     expect(changes, contains('Stint tests done: 0 → 2 of 7'));
     expect(StrategyChanges.between(before, before), isEmpty);
   });

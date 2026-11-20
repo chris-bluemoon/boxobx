@@ -59,15 +59,13 @@ void main() {
     expect(plan.basis.first, contains('from your laps in earlier rounds (Nürburgring Sprint) scaled to x4 and 10.8 km'));
   });
 
-  test('a leaner fuel map that saves stops is picked, and says what it costs', () {
+  test('with no fuel map measured, Map 1 -- and a map that might save a stop is put up for a test', () {
     final rates = BaseRates.fromRounds([_nurburgring([for (var n = 1; n <= 10; n++) _lap(n)])]);
     final plan = PitStopCalculator.calculate(_sainteCroix(), trackLengthMeters: 10760, baseRates: rates);
-    expect(plan.fuelMap, greaterThan(1));
-    expect(plan.pitStops.length, lessThan(3));
-    expect(plan.summary, startsWith('Run Fuel Map ${plan.fuelMap}.'));
-    expect(plan.basis[1], startsWith('Fuel Map ${plan.fuelMap}: about'));
-    expect(plan.basis[1], contains('fewer than Map 1'));
-    expect(RaceStrategy.fromMap(plan.toMap()).fuelMap, plan.fuelMap, reason: 'kept through saving');
+    expect(plan.fuelMap, 1);
+    expect(plan.fuelMapToTest, isNotNull);
+    expect(plan.basis.last, contains('run the Map ${plan.fuelMapToTest} stint test'));
+    expect(RaceStrategy.fromMap(plan.toMap()).fuelMapToTest, plan.fuelMapToTest, reason: 'kept through saving');
   });
 
   test('when the fuel lasts anyway, Map 1 (full power) it is', () {
@@ -108,10 +106,32 @@ void main() {
     final rates = BaseRates(wear: {'Racing Soft': BaseRate(perXPerKm: 12 / 2 / 10.76, tracks: const ['Test'], laps: 10)});
     final withoutWear = PitStopCalculator.calculate(brief, trackLengthMeters: 10760);
     final plan = PitStopCalculator.calculate(brief, trackLengthMeters: 10760, baseRates: rates);
-    expect(withoutWear.pitStops, isEmpty, reason: "a tank lasts the race at x1");
+    // With none of your own laps, the assumed figure: about 14% a lap at
+    // x2 on 10.8 km, so 5 laps -- two stops, though a tank lasts the race.
+    expect(withoutWear.pitStops, hasLength(2), reason: 'the assumed wear, not the fuel, sets the stops');
+    expect(withoutWear.basis.any((b) => b.startsWith('Softs: about 14.0% wear a lap, so 5 laps') && b.contains('assumed')), isTrue);
     expect(plan.pitStops, hasLength(2));
     expect(plan.summary, contains('capped by tyre wear (5 laps)'));
     expect(plan.basis.any((b) => b.startsWith('Softs: about 12.0% wear a lap, so 5 laps')), isTrue);
   });
-}
 
+  test('a first plan with no laps at all: the assumed wear ends the Soft stints, not only the fuel', () {
+    // Alsace Village (Reverse), 32 laps at x2: a tank is about 16 laps, but
+    // assumed Softs wear about 7% a lap there (x2 wear) -- 10 laps to 30% left,
+    // as the driver found: 70% gone after 10 laps.
+    final brief = RaceBriefing(
+      trackName: 'Alsace - Village (Reverse)',
+      totalLaps: 32,
+      startingFuelPercent: 100,
+      fuelConsumptionMultiplier: 2,
+      tyreWearMultiplier: 2,
+      availableTireCompounds: const ['Racing Medium', 'Racing Soft'],
+    );
+    final plan = PitStopCalculator.calculate(brief, trackLengthMeters: 5345);
+    expect(plan.basis.any((b) => b.startsWith('Softs: about 6.9% wear a lap, so 10 laps') && b.contains('assumed')), isTrue);
+    expect(plan.basis.any((b) => b.startsWith('Mediums: about 2.4% wear a lap') && b.contains('assumed')), isTrue);
+    expect(plan.basis.any((b) => b.contains('wear not measured yet')), isTrue, reason: 'still says the stint test checks it');
+    expect(plan.startingTireCompound, 'Racing Soft');
+    expect(plan.pitStops.first.lap, lessThanOrEqualTo(10), reason: 'the Softs come off by lap 10, not at the fuel stop on 16');
+  });
+}
