@@ -6,7 +6,7 @@ enum StrategyStyle {
   aggressive,
 
   /// By the grid: the faster tyre first from the front row, the slower
-  /// one first from P3 down (see PitStopCalculator.startsNearFront).
+  /// one first from P4 down (see PitStopCalculator.startsNearFront).
   passive;
 
   String get label => switch (this) {
@@ -16,7 +16,7 @@ enum StrategyStyle {
 
   String get description => switch (this) {
     aggressive => 'The faster tyre first wherever you start -- attack from the off.',
-    passive => 'By the grid: the faster tyre first from the front row (P1-P2), the slower one first from P3 down.',
+    passive => 'By the grid: the faster tyre first from P1-P3, the slower one first from P4 down.',
   };
 
   static StrategyStyle fromName(String? name) =>

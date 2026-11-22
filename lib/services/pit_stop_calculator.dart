@@ -354,7 +354,7 @@ class PitStopCalculator {
 
     final (planned, fewest) = plan(real)!;
 
-    // The grid: from the front row, the faster tyre first (to hold
+    // The grid: from the front (P1-P3), the faster tyre first (to hold
     // track position); lower down, the slower one first. A stint's time
     // doesn't depend on where it runs, so the order costs nothing on the
     // plan's figures. Not entered: as planned. An aggressive style runs
@@ -533,11 +533,11 @@ class PitStopCalculator {
     );
   }
 
-  /// The front row: from P1-P[frontPositions] a start runs the faster
+  /// The front of the grid: from P1-P[frontPositions] a start runs the faster
   /// tyre first, to hold track position. From further back, the slower
   /// tyre first -- run long while the cars ahead stop, get clear air, then
   /// attack on the faster tyre while they're on worn ones.
-  static const int frontPositions = 2;
+  static const int frontPositions = 3;
 
   static bool startsNearFront(int position) => position <= frontPositions;
 
@@ -552,10 +552,10 @@ class PitStopCalculator {
     const same = 'Same stops, the same race time on the plan\'s figures';
     if (aggressive) {
       return 'Aggressive style (Profile): the $fast first wherever you start -- attack from the off and make places '
-          'early. From P3 down the $slow first would be the passive call -- run long while the cars ahead stop. $same.';
+          'early. From P${frontPositions + 1} down the $slow first would be the passive call -- run long while the cars ahead stop. $same.';
     }
     if (position == null) {
-      return 'Grid not entered: from the front row (P1-P$cut), run the $fast first to hold track position; '
+      return 'Grid not entered: from the front (P1-P$cut), run the $fast first to hold track position; '
           'from P${cut + 1} down, the $slow first -- you run long while the cars ahead stop, get clear air, then attack '
           'on fresh $fast while they\'re on worn tyres. $same. Enter your grid position after qualifying and generate again.';
     }

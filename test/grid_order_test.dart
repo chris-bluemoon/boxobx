@@ -26,10 +26,10 @@ double _raceSeconds(RaceStrategy p) {
 }
 
 void main() {
-  test('the front row: P1 and P2; from P3 down, the slower tyre first', () {
+  test('the front: P1-P3; from P4 down, the slower tyre first', () {
     expect(PitStopCalculator.startsNearFront(1), isTrue);
-    expect(PitStopCalculator.startsNearFront(2), isTrue);
-    expect(PitStopCalculator.startsNearFront(3), isFalse);
+    expect(PitStopCalculator.startsNearFront(3), isTrue);
+    expect(PitStopCalculator.startsNearFront(4), isFalse);
   });
 
   test('starting P2: Softs first', () {
@@ -49,17 +49,18 @@ void main() {
     expect(back.summary, contains('starting on Racing Medium'));
   });
 
-  test('starting P3: already the Mediums first', () {
-    expect(_plan(grid: 3).startingTireCompound, 'Racing Medium');
-    expect(_plan(grid: 3).basis.any((b) => b.startsWith('Starting P3: Mediums first')), isTrue);
+  test('starting P3: still the Softs first; P4: the Mediums', () {
+    expect(_plan(grid: 3).startingTireCompound, 'Racing Soft');
+    expect(_plan(grid: 4).startingTireCompound, 'Racing Medium');
+    expect(_plan(grid: 4).basis.any((b) => b.startsWith('Starting P4: Mediums first')), isTrue);
   });
 
   test('grid not entered: the plan as before, with both cases spelt out', () {
     final plan = _plan();
     expect(plan.startingTireCompound, 'Racing Soft');
     final note = plan.basis.singleWhere((b) => b.startsWith('Grid not entered'));
-    expect(note, contains('front row (P1-P2)'));
-    expect(note, contains('from P3 down, the Mediums first'));
+    expect(note, contains('(P1-P3)'));
+    expect(note, contains('from P4 down, the Mediums first'));
   });
 
   test('one tyre all race: no grid line', () {
@@ -96,7 +97,7 @@ void main() {
     final plan = _plan();
     final swapped = PitStopCalculator.withTyreOrder(plan, slowFirst: true);
     final caveat = PitStopCalculator.gridCaveat(plan)!;
-    expect(caveat, startsWith('Grid: this order from P1-P2. From P3 down, start on Medium and box lap ${swapped.pitStops.first.lap}'));
+    expect(caveat, startsWith('Grid: this order from P1-P3. From P4 down, start on Medium and box lap ${swapped.pitStops.first.lap}'));
     expect(caveat, contains('Enter your grid after qualifying'));
     expect(PitStopCalculator.gridCaveat(_plan(grid: 9)), startsWith('Starting P9: Mediums first'));
     expect(PitStopCalculator.gridCaveat(_plan(grid: 2)), 'Starting P2: Softs first to hold track position');

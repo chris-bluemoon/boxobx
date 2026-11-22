@@ -753,8 +753,8 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
               _sectionLabel('GRID'),
               const SizedBox(height: 4),
               Text(
-                'After qualifying, enter where you start and Generate again. From the front row (P1-P2) '
-                'the plan runs the faster tyre first; from P3 down, the slower one first, with the faster tyre at the end.',
+                'After qualifying, enter where you start and Generate again. From P1-P3 '
+                'the plan runs the faster tyre first; from P4 down, the slower one first, with the faster tyre at the end.',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
               ),
               const SizedBox(height: 8),
