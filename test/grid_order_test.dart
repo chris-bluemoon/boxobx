@@ -1,4 +1,4 @@
-// The grid decides the tyre order: from the front third, the faster tyre
+// The grid decides the tyre order: from the front row, the faster tyre
 // first (hold track position); lower down, the slower one first (run long
 // while the cars ahead stop, attack on fresh tyres at the end).
 import 'package:flutter_test/flutter_test.dart';
@@ -7,7 +7,7 @@ import 'package:boxbox/models/race_briefing.dart';
 import 'package:boxbox/models/race_strategy.dart';
 import 'package:boxbox/services/pit_stop_calculator.dart';
 
-RaceBriefing _alsace({int? grid, int? cars}) => RaceBriefing(
+RaceBriefing _alsace({int? grid}) => RaceBriefing(
   trackName: 'Alsace - Village (Reverse)',
   totalLaps: 32,
   startingFuelPercent: 100,
@@ -15,10 +15,9 @@ RaceBriefing _alsace({int? grid, int? cars}) => RaceBriefing(
   tyreWearMultiplier: 2,
   availableTireCompounds: const ['Racing Medium', 'Racing Soft'],
   gridPosition: grid,
-  gridSize: cars,
 );
 
-RaceStrategy _plan({int? grid, int? cars}) => PitStopCalculator.calculate(_alsace(grid: grid, cars: cars), trackLengthMeters: 5345);
+RaceStrategy _plan({int? grid}) => PitStopCalculator.calculate(_alsace(grid: grid), trackLengthMeters: 5345);
 
 double _raceSeconds(RaceStrategy p) {
   final inputs = p.inputs!;
@@ -27,13 +26,10 @@ double _raceSeconds(RaceStrategy p) {
 }
 
 void main() {
-  test('the front third: P1-P5 of 16, P1-P4 of 12, P1 of 2', () {
-    expect(PitStopCalculator.startsNearFront(5, 16), isTrue);
-    expect(PitStopCalculator.startsNearFront(6, 16), isFalse);
-    expect(PitStopCalculator.startsNearFront(4, 12), isTrue);
-    expect(PitStopCalculator.startsNearFront(5, 12), isFalse);
-    expect(PitStopCalculator.startsNearFront(1, 2), isTrue);
-    expect(PitStopCalculator.startsNearFront(2, 2), isFalse);
+  test('the front row: P1 and P2; from P3 down, the slower tyre first', () {
+    expect(PitStopCalculator.startsNearFront(1), isTrue);
+    expect(PitStopCalculator.startsNearFront(2), isTrue);
+    expect(PitStopCalculator.startsNearFront(3), isFalse);
   });
 
   test('starting P2: Softs first', () {
@@ -53,17 +49,17 @@ void main() {
     expect(back.summary, contains('starting on Racing Medium'));
   });
 
-  test('the cars on the grid set the cut-off, and are named when entered', () {
-    expect(_plan(grid: 5, cars: 12).startingTireCompound, 'Racing Medium');
-    expect(_plan(grid: 5, cars: 12).basis.any((b) => b.startsWith('Starting P5 of 12:')), isTrue);
+  test('starting P3: already the Mediums first', () {
+    expect(_plan(grid: 3).startingTireCompound, 'Racing Medium');
+    expect(_plan(grid: 3).basis.any((b) => b.startsWith('Starting P3: Mediums first')), isTrue);
   });
 
   test('grid not entered: the plan as before, with both cases spelt out', () {
     final plan = _plan();
     expect(plan.startingTireCompound, 'Racing Soft');
     final note = plan.basis.singleWhere((b) => b.startsWith('Grid not entered'));
-    expect(note, contains('P1-P5 of 16'));
-    expect(note, contains('from P6 down, the Mediums first'));
+    expect(note, contains('front row (P1-P2)'));
+    expect(note, contains('from P3 down, the Mediums first'));
   });
 
   test('one tyre all race: no grid line', () {
@@ -94,5 +90,15 @@ void main() {
     expect(_raceSeconds(swapped), closeTo(_raceSeconds(front), 1e-6));
     expect(swapped.summary, contains('the slower tyre first'));
     expect(swapped.planB?.summary, front.planB?.summary);
+  });
+
+  test('the home page caveat: the other order, where it applies and its stops', () {
+    final plan = _plan();
+    final swapped = PitStopCalculator.withTyreOrder(plan, slowFirst: true);
+    final caveat = PitStopCalculator.gridCaveat(plan)!;
+    expect(caveat, startsWith('Grid: this order from P1-P2. From P3 down, start on Medium and box lap ${swapped.pitStops.first.lap}'));
+    expect(caveat, contains('Enter your grid after qualifying'));
+    expect(PitStopCalculator.gridCaveat(_plan(grid: 9)), startsWith('Starting P9: Mediums first'));
+    expect(PitStopCalculator.gridCaveat(_plan(grid: 2)), 'Starting P2: Softs first to hold track position');
   });
 }

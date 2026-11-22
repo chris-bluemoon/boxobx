@@ -92,11 +92,12 @@ void main() {
     });
 
     test('every test names its fuel map: Map 1, the race test the strategy\'s', () {
-      // The strategy's 12% a lap on Map 4 is 15.8% on Map 1: 5 laps a tank.
+      // The strategy's 12% a lap on Map 4 is 15.8% on Map 1: 6 laps a tank
+      // (5% kept back -- less than half a lap's 7.9%).
       final plan = TestPlan.fromBriefing(_briefing(['Racing Medium', 'Racing Soft']), fuelPerLapPercent: 12, fuelMap: 4);
       expect(plan.stints.where((s) => s.kind != TestStintKind.race).map((s) => s.fuelMap).toSet(), {1});
       expect(plan.stints.last.fuelMap, 4);
-      expect(plan.stints.first.target, 'Medium · 100% fuel · Map 1 · 5 laps (or until 90% worn or fuel < 5%)');
+      expect(plan.stints.first.target, 'Medium · 100% fuel · Map 1 · 6 laps (or until 90% worn or fuel < 5%)');
       // A done test shows the map its laps were run on.
       final done = TestPlanTracker.progress(plan, [
         for (final l in _stint(1, test: 1, count: 25)) PracticeLapRecord.fromMap({...l.toMap(), 'fuelMap': 2}),
@@ -320,8 +321,10 @@ void main() {
       expect(check(20), isNull);
       final call = check(11);
       expect(call, contains('Stint Test 1 complete: tyres at 11% left'));
-      expect(call, contains('move on to the next stint test'));
-      expect(call, isNot(contains('box')));
+      expect(call, contains('the next stint test:'));
+      // The clip has said "Box, box": Boxington isn't told to say it again.
+      expect(call, contains('do not say it again'));
+      expect(call, isNot(contains('come in')));
       expect(call, contains('next stint test: Soft · 100% fuel · Map 1 · until 90% worn or fuel < 5%'));
       expect(check(9), isNull, reason: 'once only');
     });
@@ -343,12 +346,11 @@ void main() {
       );
     });
 
-    test('says nothing when no test is running', () {
+    test('calls nothing complete when no test is running -- only that none was Started', () {
       final caller = TestPlanCaller();
-      expect(
-        caller.check(plan, _stint(1, count: 30), activeTestNumber: null, currentStintNumber: 1, liveWearRemaining: 10)?.prompt,
-        isNull,
-      );
+      final call = caller.check(plan, _stint(1, count: 30), activeTestNumber: null, currentStintNumber: 1, liveWearRemaining: 10);
+      expect(call?.completesTest, isFalse);
+      expect(call?.prompt, contains('no stint test was started'));
     });
   });
 
@@ -370,7 +372,8 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Stint Test 1: Medium · 100% fuel · Map 1 · until 90% worn or fuel < 5% (about 30 laps)'), findsOneWidget);
+    // Done: the laps it ran.
+    expect(find.text('Stint Test 1: Medium · 100% fuel · Map 1 · 25 laps run'), findsOneWidget);
     expect(find.byIcon(Icons.check_circle), findsOneWidget);
     expect(find.byIcon(Icons.play_circle), findsOneWidget);
     expect(find.byIcon(Icons.radio_button_unchecked), findsNWidgets(2));

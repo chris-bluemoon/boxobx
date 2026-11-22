@@ -500,6 +500,14 @@ class PracticeLapLogger {
   /// with a stale number from a deleted one.
   void removeLap(DateTime recordedAt) => removeLaps({recordedAt});
 
+  /// Counts laps already logged (a stint run without Starting its test)
+  /// towards stint test [testNumber] -- the driver says it was that test.
+  void countLapsAsTest(Set<DateTime> recordedAts, int testNumber) {
+    for (var i = 0; i < _laps.length; i++) {
+      if (recordedAts.contains(_laps[i].recordedAt)) _laps[i] = _laps[i].withTestNumber(testNumber);
+    }
+  }
+
   /// Deletes several laps at once (a whole stint), renumbering the rest
   /// as removeLap does.
   void removeLaps(Set<DateTime> recordedAts) {

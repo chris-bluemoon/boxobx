@@ -131,8 +131,11 @@ class StintSummary {
     final assumed = fuelGainShareOfLapPerPercent * _median(allTimes);
     final slopes = <double>[];
     for (final stint in stints) {
+      // Not the first lap: out of the pits on cold tyres, it's slow for
+      // that, not the fuel -- and on a short heavy-fuel stint it would
+      // make the fuel look worth far more than it is.
       final laps = [
-        for (final l in stint)
+        for (final l in stint.skip(1))
           if (!l.isPitLap && l.lapTimeMs > 0 && !l.isRaceLap) l,
       ];
       if (laps.length < 3 || laps.map((l) => l.fuelMap ?? 1).toSet().length > 1) continue;

@@ -9,7 +9,8 @@ import '../models/shift_event.dart';
 /// driver can tell whether they're *consistently* over-revving or
 /// short-shifting, not just what to do right this second.
 class ShiftCard extends StatelessWidget {
-  final int gear;
+  /// Null with no live telemetry: shown as --.
+  final int? gear;
   final List<ShiftEvent> recentShifts;
 
   const ShiftCard({super.key, required this.gear, required this.recentShifts});
@@ -119,7 +120,7 @@ class ShiftCard extends StatelessWidget {
                 FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
-                    gear.toString(),
+                    gear?.toString() ?? '--',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 56,

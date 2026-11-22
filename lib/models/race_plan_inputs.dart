@@ -63,7 +63,7 @@ class RacePlanInputs {
   /// Fuel after a stop (the brief's starting fuel), percent.
   final double tankPercent;
 
-  /// The brief's finish reserve, percent (0: half a lap on the map run).
+  /// The brief's finish reserve, percent (0: half a lap on the map run, at most 5%).
   final double finishReservePercent;
 
   const RacePlanInputs({

@@ -8,7 +8,10 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:boxbox/widgets/shift_card.dart';
+import 'package:boxbox/widgets/telemetry_card.dart';
 import 'package:boxbox/screens/dashboard_screen.dart';
+import 'package:boxbox/services/profile_settings.dart';
 import 'package:boxbox/widgets/status_badge.dart';
 import 'package:boxbox/widgets/track_header.dart';
 import 'package:boxbox/widgets/voice_status_badge.dart';
@@ -138,6 +141,43 @@ void main() {
     expect(find.textContaining('LAPS LOGGED'), findsNothing);
     expect(find.text('ENGAGE TELEMETRY'), findsNothing, reason: 'connects on launch');
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('race mode with no telemetry: every tile --, no gear 0 or P0', (tester) async {
+    await pumpDashboard(tester, mode: 'race');
+    expect(find.text('P0'), findsNothing);
+    expect(find.text('0'), findsNothing, reason: 'the gear');
+    expect(find.textContaining(RegExp(r'^L\d')), findsNothing, reason: 'no pit lap off the plan');
+    expect(find.descendant(of: find.byType(TelemetryCard), matching: find.text('--')), findsNWidgets(3));
+    expect(find.descendant(of: find.byType(ShiftCard), matching: find.text('--')), findsOneWidget);
+  });
+
+  testWidgets('telemetry only: no position, cars around or HUD dot -- and the tyre is picked on a tile', (tester) async {
+    ProfileSettings.current = const ProfileSettings(hudReader: false);
+    addTearDown(() => ProfileSettings.current = const ProfileSettings());
+    await pumpDashboard(tester, mode: 'race');
+    expect(find.text('POSITION'), findsNothing);
+    expect(find.text('AHEAD'), findsNothing);
+    expect(find.byType(StatusBadge), findsOneWidget, reason: 'telemetry only');
+    await tester.tap(find.byKey(const Key('race_tyre_tile')));
+    await tester.pumpAndSettle();
+    expect(find.text('Which tyre are you on?'), findsOneWidget);
+    await tester.tap(find.text('Racing Soft').last);
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byKey(const Key('race_tyre_tile')), matching: find.text('Soft')), findsOneWidget);
+  });
+
+  testWidgets('telemetry only, practice: the tyre is a chip to pick', (tester) async {
+    ProfileSettings.current = const ProfileSettings(hudReader: false);
+    addTearDown(() => ProfileSettings.current = const ProfileSettings());
+    await pumpDashboard(tester, mode: 'practice');
+    final chip = find.textContaining('▾');
+    expect(chip, findsOneWidget);
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Racing Medium').last);
+    await tester.pumpAndSettle();
+    expect(find.text('RACING MEDIUM ▾'), findsOneWidget);
   });
 
   testWidgets('time trial shows the lap-time screen only', (tester) async {

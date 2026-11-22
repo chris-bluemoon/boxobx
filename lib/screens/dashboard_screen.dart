@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
+import '../models/hud_overlay_data.dart';
 import '../models/race_briefing.dart';
 import '../models/fused_race_state.dart';
 import '../models/connection_status.dart';
 import '../models/voice_engine_status.dart';
 import '../widgets/voice_status_badge.dart';
+import '../services/profile_settings.dart';
 import '../services/pit_stop_calculator.dart';
 import '../services/driver_profile.dart';
 import '../services/telemetry_udp_service.dart';
@@ -41,6 +43,7 @@ import '../models/app_mode.dart';
 import '../models/sector_state.dart';
 import '../models/time_trial_lap.dart';
 import '../models/race_strategy.dart';
+import 'profile_screen.dart';
 import 'race_strategy_screen.dart';
 import 'practice_log_screen.dart';
 import 'practice_rounds_screen.dart';
@@ -430,6 +433,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       currentStintNumber: logger.currentStint,
       liveWearRemaining: logger.currentTireWearPercent,
       liveFuelPercent: state.sessionPhase == SessionPhase.driving ? state.telemetry.fuelPercent : null,
+      chosenTestNumber: _chosenTest?.number,
     );
     if (call == null) return;
     if (!call.completesTest) {
@@ -437,9 +441,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return;
     }
 
-    // Once Boxington has finished saying it (or after 15s, should the voice
+    // Said at once (a cached clip), then Boxington's line on the next
+    // test. Once the clip has played (or after 15s, should the voice
     // fail), the test is closed off automatically -- nothing to tap --
-    // and the panel moves on to the next test.
+    // and the panel moves on to the next test as he names it.
     final testNumber = logger.activeTestNumber;
     final completed = plan.stints.where((s) => s.number == testNumber).firstOrNull;
     var closed = false;
@@ -452,7 +457,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() => _justCompletedTest = completed);
     }
 
-    _voiceEngine.speakProactively(call.prompt, state).whenComplete(closeTest);
+    _voiceEngine.speakClipThen(TestPlanCaller.completeClip, call.prompt, state, onClipDone: closeTest).whenComplete(closeTest);
     Timer(const Duration(seconds: 15), closeTest);
   }
 
@@ -465,7 +470,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _dropOffCheckedLaps = state.practiceLaps.length;
     if (_raceStateManager.practiceLapLogger.activeTestNumber != null) return;
     final prompt = _dropOffCaller.check(_currentStintSummary());
-    if (prompt != null) _voiceEngine.speakProactively(prompt, state);
+    if (prompt != null) _sayIf(CallPriority.info, prompt, state);
   }
 
   /// Race Mode, wet race: once a lap, whether to change tyres for the
@@ -487,7 +492,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         currentCompound: _raceStateManager.practiceLapLogger.currentTireCompound,
         laps: state.practiceLaps,
       );
-      if (prompt != null) _voiceEngine.speakProactively(prompt, state);
+      if (prompt != null) _sayIf(CallPriority.info, prompt, state);
       return;
     }
 
@@ -522,7 +527,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final worst = report.biggestLoss;
     if (worst == null || worst.timeDeltaMs < _cornerCallMinLossMs) return;
     final gap = report.lapDeltaMs / 1000;
-    _voiceEngine.speakProactively(
+    _sayIf(
+      CallPriority.info,
       'Time-trial lap done, ${gap >= 0 ? '+' : ''}${gap.toStringAsFixed(2)} seconds to the reference lap. '
       'Biggest loss against the reference: ${worst.describe()}. '
       'In one short sentence, tell the driver which corner cost the most and the one thing to change there. '
@@ -532,6 +538,91 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   CornerReport? _lastCalledCornerReport;
+
+  /// An unprompted call, if the talk level (Profile) lets it through --
+  /// the essentials (pit, fuel, stint test, crash, rejoin) always do and
+  /// aren't sent through here.
+  void _sayIf(CallPriority priority, String prompt, FusedRaceState state) {
+    if (!ProfileSettings.current.talkLevel.allows(priority)) return;
+    _voiceEngine.speakProactively(prompt, state);
+  }
+
+  /// A HUD reader (HDMI splitter and laptop) is part of the setup
+  /// (Profile); false: telemetry only.
+  static bool get _hudOn => ProfileSettings.current.hudReader;
+
+  /// Telemetry only: the tyre, picked by hand (nothing reads it) -- from
+  /// the round's tyres.
+  Future<void> _pickTyre() async {
+    final options = _briefing?.availableTireCompounds.isNotEmpty == true
+        ? _briefing!.availableTireCompounds
+        : const ['Racing Hard', 'Racing Medium', 'Racing Soft', 'Intermediate', 'Heavy Wet'];
+    final current = _raceStateManager.practiceLapLogger.currentTireCompound;
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        backgroundColor: Colors.grey.shade900,
+        title: const Text('Which tyre are you on?', style: TextStyle(color: Colors.white)),
+        children: [
+          for (final tyre in options)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, tyre),
+              child: Text(
+                tyre,
+                style: TextStyle(color: tyre == current ? Colors.amber.shade300 : Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _raceStateManager.setPracticeTireCompound(picked));
+  }
+
+  /// Stops seen so far (telemetry only: see [_followStopTyre]).
+  int _stopsFollowed = 0;
+
+  /// Telemetry only, in a race: a stop was spotted (from the refuel), and
+  /// nothing reads the tyre fitted -- take it to be the plan's for that
+  /// stop, and say so, with the tile to change it.
+  void _followStopTyre(FusedRaceState state) {
+    final stops = _raceStateManager.pitStopTracker.stopCount;
+    if (stops < _stopsFollowed) _stopsFollowed = stops; // a new session
+    if (stops == _stopsFollowed) return;
+    _stopsFollowed = stops;
+    if (_hudOn || _mode != AppMode.race || stops > _plannedStops.length) return;
+    final tyre = _plannedStops[stops - 1].tireCompound;
+    if (tyre.isEmpty) return;
+    setState(() => _raceStateManager.setPracticeTireCompound(tyre));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Stop $stops: on ${_shortTyre(tyre)}, as planned -- tap the TYRE tile if not'),
+      duration: const Duration(seconds: 5),
+    ));
+  }
+
+  /// The last lap given a lap update (Chatty).
+  int _lapUpdateLap = 0;
+
+  /// Chatty (Profile): a short word as each lap is done -- in a race the
+  /// lap and the gaps, in practice the lap against the stint.
+  void _maybeMakeLapUpdate(FusedRaceState state) {
+    final lap = state.telemetry.currentLap;
+    if (lap < _lapUpdateLap) _lapUpdateLap = 0; // a new session
+    if (lap <= _lapUpdateLap) return;
+    final firstSeen = _lapUpdateLap == 0;
+    _lapUpdateLap = lap;
+    if (firstSeen || lap < 2 || _choosingMode || state.sessionPhase != SessionPhase.driving) return;
+    if (_mode != AppMode.race && _mode != AppMode.practice) return;
+    _sayIf(
+      CallPriority.chat,
+      _mode == AppMode.race
+          ? 'Lap ${lap - 1} done. One short line on how it went: the lap time if it was a good one, and the car ahead or '
+                'behind if the gap is moving. Encouragement is fine. Don\'t repeat a call you have just made.'
+          : 'Lap ${lap - 1} done. One short line on the lap against the stint so far -- quicker, steady or dropping off. '
+                'Encouragement is fine. Don\'t repeat a call you have just made.',
+      state,
+    );
+  }
 
   /// "Wait... wait... GO" after a spin or an off (see RejoinCoach).
   final _rejoinCoach = RejoinCoach();
@@ -621,7 +712,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           '${test.weather == null ? '' : 'Set the lobby weather to ${test.weatherName}. '}'
           'Your next lap starts this stint test. Fit ${test.compoundShort.endsWith('s') ? test.compoundShort : '${test.compoundShort}s'} with '
           '${test.startFuelPercent.toStringAsFixed(0)}% fuel, on Fuel Map ${test.fuelMap}.'
-          '${_hudStatus == ConnectionStatus.live ? '' : '\n\nThe HUD OCR relay isn\'t running, so tyre wear won\'t be recorded. '
+          '${_hudStatus == ConnectionStatus.live || !_hudOn ? '' : '\n\nThe HUD OCR relay isn\'t running, so tyre wear won\'t be recorded. '
               'Start it on the laptop (laptop_ocr/start_relay.sh) first.'}',
       ),
     );
@@ -785,10 +876,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // The splash page's wordmark: tyres for the O's.
-        const Align(
-          alignment: Alignment.centerLeft,
-          child: BoxBoxWheelWordmark(size: 52, tagline: 'YOUR GT7 ENGINEER'),
+        // The splash page's wordmark: tyres for the O's -- and the
+        // driver's Profile.
+        Row(
+          children: [
+            const BoxBoxWheelWordmark(size: 52, tagline: 'YOUR GT7 ENGINEER'),
+            const Spacer(),
+            OutlinedButton.icon(
+              key: const Key('open_profile'),
+              onPressed: _openProfile,
+              icon: const Icon(Icons.person, color: Colors.white),
+              label: Text(
+                ProfileSettings.current.nickname ?? 'PROFILE',
+                style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                side: const BorderSide(color: Colors.white38),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 16),
         _trackHeader(accent: Colors.blueGrey.shade600, large: true, onTap: _pickRound),
@@ -1009,6 +1116,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     style: TextStyle(color: Colors.grey.shade300, fontSize: 15),
                   ),
                 ],
+                // The grid can turn the tyre order round: said here, not
+                // only in the brief's basis.
+                if (PitStopCalculator.gridCaveat(strategy) case final grid?) ...[
+                  const SizedBox(height: 10),
+                  Text(grid, style: TextStyle(color: Colors.lightBlue.shade200, fontSize: 15)),
+                ],
                 const SizedBox(height: 8),
                 Text(
                   'Fuel ${strategy.assumedPercentPerLap.toStringAsFixed(1)}%/lap'
@@ -1131,7 +1244,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     _voiceEngine = VoiceEngine(
       pushToTalk: PushToTalkService(),
-      groqService: GroqService(dotenv.env['GROQ_API_KEY'] ?? ''),
+      groqService: GroqService(dotenv.env['GROQ_API_KEY'] ?? '')
+        ..psnId = ProfileSettings.current.psnId
+        ..nickname = ProfileSettings.current.nickname
+        ..talkLevel = ProfileSettings.current.talkLevel
+        ..hudReader = ProfileSettings.current.hudReader,
       ttsService: TtsStreamingService(
         apiKey: dotenv.env['TTS_API_KEY'] ?? '',
         voiceId: dotenv.env['TTS_VOICE_ID'] ?? '',
@@ -1143,7 +1260,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     _voiceEngine.initialize();
     // Rejoin words play instantly from cache (no AI or TTS round trip).
-    if (widget.connectOnStart) _voiceEngine.precacheClips(_rejoinWords.values);
+    if (widget.connectOnStart) _voiceEngine.precacheClips([..._rejoinWords.values, TestPlanCaller.completeClip]);
 
     // Can Boxington reach Groq from this network? Checked now, so a
     // blocked network shows before the race -- and again every 30s
@@ -1168,12 +1285,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
       _maybeMakePitCall(state);
       _followStartTyre(state);
+      _followStopTyre(state);
       _maybeMakeFuelCall(state);
       _maybeMakeTestPlanCall(state);
       _maybeMakeDropOffCall(state);
       _maybeMakeWetTyreCall(state);
       _maybeMakeCornerCall(state);
       _maybeMakeRejoinCall(state);
+      _maybeMakeLapUpdate(state);
       // Temporarily disabled -- proactive shift-habit voice callouts
       // aren't behaving correctly yet (reported live, not yet root
       // caused). Re-enable once fixed; the underlying trigger/advisor
@@ -1190,7 +1309,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // second, so this goes live whenever the PS5/GT7 is ready -- even if
     // the app was opened first.
     if (widget.connectOnStart) {
-      _raceStateManager.start(dotenv.env['CONSOLE_IP'] ?? '192.168.1.100');
+      _raceStateManager.start(_consoleIp, hudPort: ProfileSettings.current.hudPort, hud: _hudOn);
     }
 
     // Leaving the track (race over, exiting to the menu, loading the
@@ -1205,12 +1324,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _raceStateManager.opponentPitted.listen((stops) {
       // Stops are logged in both modes; only called out in a race.
       if (!_mode.opponentPitCallouts || _choosingMode) return;
-      _voiceEngine.speakProactively(_opponentPitCalloutPrompt(stops), _state);
+      _sayIf(CallPriority.info, _opponentPitCalloutPrompt(stops), _state);
     });
 
     _raceStateManager.rivalEvents.listen((event) {
       if (!_mode.rivalCallouts || _choosingMode) return;
-      _voiceEngine.speakProactively(event.prompt, _state);
+      _sayIf(CallPriority.info, event.prompt, _state);
     });
 
     _raceStateManager.crashes.listen((crash) {
@@ -1221,7 +1340,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _raceStateManager.spins.listen((event) {
       if (!DriverProfile.boxingtonUsesIt || !_mode.incidentCalls || _choosingMode) return;
       final (spin, corner) = event;
-      _voiceEngine.speakProactively(spin.toPrompt(corner: corner), _state);
+      _sayIf(CallPriority.info, spin.toPrompt(corner: corner), _state);
     });
 
     _raceStateManager.telemetryStatusStream.listen((status) {
@@ -1418,6 +1537,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           },
           onDeleteLap: (recordedAt) => _raceStateManager.removePracticeLap(recordedAt),
           onDeleteStint: (recordedAts) => _raceStateManager.removePracticeLaps(recordedAts),
+          onCountStintAsTest: (recordedAts, test) => _raceStateManager.countPracticeLapsAsTest(recordedAts, test),
         ),
       ),
     );
@@ -1428,6 +1548,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// to the SAME live data this dashboard is already tracking (when
   /// not enough clean practice laps exist for the shift-aware average)
   /// without needing its own telemetry connection.
+  /// The PS5's address: the Profile's, else the .env's.
+  static String get _consoleIp => ProfileSettings.current.consoleIp ?? dotenv.env['CONSOLE_IP'] ?? '192.168.1.100';
+
+  /// The Profile page: the PSN ID, nickname, strategy style, talk level
+  /// and connections -- passed on as they're changed.
+  Future<void> _openProfile() async {
+    var console = _consoleIp;
+    var hudPort = ProfileSettings.current.hudPort;
+    var hud = _hudOn;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProfileScreen(
+          envConsoleIp: dotenv.env['CONSOLE_IP'],
+          onChanged: (settings) {
+            _voiceEngine.groqService
+              ..psnId = settings.psnId
+              ..nickname = settings.nickname
+              ..talkLevel = settings.talkLevel
+              ..hudReader = settings.hudReader;
+            final newConsole = _consoleIp, newPort = settings.hudPort, newHud = settings.hudReader;
+            if (!widget.connectOnStart || (newConsole == console && newPort == hudPort && newHud == hud)) return;
+            _raceStateManager.reconnect(
+              consoleIp: newConsole == console ? null : newConsole,
+              hudPort: newPort == hudPort || !newHud ? null : newPort,
+              hud: newHud == hud ? null : newHud,
+            );
+            console = newConsole;
+            hudPort = newPort;
+            hud = newHud;
+          },
+        ),
+      ),
+    );
+    if (mounted) setState(() {}); // the nickname on the button
+  }
+
   Future<void> _openRaceStrategy() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -1466,6 +1622,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _activePlan = 'A';
       _applyLivePlan(_savedStrategy);
     }
+    // Telemetry only: nothing reads the tyre, so a race starts on the
+    // plan's (the TYRE tile changes it).
+    final start = _livePlan?.startingTireCompound ?? '';
+    if (!_hudOn && _mode == AppMode.race && start.isNotEmpty) _raceStateManager.setPracticeTireCompound(start);
+    _stopsFollowed = 0;
     _shiftCoachTrigger.reset();
     // Clears tracked rival positions too -- otherwise a rival's LAST
     // position from a previous race would be compared against this
@@ -1692,7 +1853,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// Telemetry and HUD OCR as dots for the page headings.
   List<Widget> _connectionDots() => [
     StatusBadge(label: 'TELEMETRY', status: _telemetryStatus, dotOnly: true),
-    StatusBadge(label: 'HUD OCR', status: _hudStatus, dotOnly: true),
+    if (_hudOn) StatusBadge(label: 'HUD OCR', status: _hudStatus, dotOnly: true),
   ];
 
   /// The current mode's page: header (with the connection dots), status
@@ -1746,6 +1907,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// stint test: tyre wear, position and water aren't being read, so
   /// laps go into the log without them.
   bool get _hudMissing =>
+      _hudOn &&
       _telemetryStatus == ConnectionStatus.live &&
       _hudStatus != ConnectionStatus.live &&
       (_mode == AppMode.race ||
@@ -1911,11 +2073,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         const SizedBox(width: 8),
         Expanded(
-          child: Text(
-            // What the laps are being logged on (the HUD tyre label, the
-            // pit stop, or a test's tyre -- see FusedRaceStateManager).
-            _raceStateManager.practiceLapLogger.currentTireCompound,
-            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: _hudOn
+                ? Text(
+                    // What the laps are being logged on (the HUD tyre label, the
+                    // pit stop, or a test's tyre -- see FusedRaceStateManager).
+                    _raceStateManager.practiceLapLogger.currentTireCompound,
+                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                  )
+                // Telemetry only: nothing reads the tyre -- pick it.
+                : _chip(
+                    '${_raceStateManager.practiceLapLogger.currentTireCompound.toUpperCase()} ▾',
+                    color: Colors.grey.shade800,
+                    border: Colors.grey.shade500,
+                    onTap: _pickTyre,
+                  ),
           ),
         ),
         const SizedBox(width: 8),
@@ -1959,6 +2132,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _raceBody() {
     final telemetry = _state.telemetry;
+    // With no live telemetry nothing on screen is live: every tile shows
+    // -- (not the last reading, or the plan's next stop as if racing).
+    // The plan strip below is the plan, so it stays.
+    final live = _telemetryStatus == ConnectionStatus.live;
+    final hudLive = live && _hudStatus == ConnectionStatus.live;
     // No tyre picker in a race: the tyre comes from the HUD reading and
     // the compound shown next to our row during a pit stop.
     return Column(
@@ -1972,18 +2150,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   children: [
                     Expanded(
                       child: TireTempCard(
-                        tireTemps: telemetry.tireTemps,
-                        tireWearPercents: [
-                          _state.hud.tireWearFrontLeftPercent,
-                          _state.hud.tireWearFrontRightPercent,
-                          _state.hud.tireWearRearLeftPercent,
-                          _state.hud.tireWearRearRightPercent,
-                        ],
+                        tireTemps: live ? telemetry.tireTemps : const [0.0, 0.0, 0.0, 0.0],
+                        tireWearPercents: hudLive
+                            ? [
+                                _state.hud.tireWearFrontLeftPercent,
+                                _state.hud.tireWearFrontRightPercent,
+                                _state.hud.tireWearRearLeftPercent,
+                                _state.hud.tireWearRearRightPercent,
+                              ]
+                            : const [null, null, null, null],
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: ShiftCard(gear: telemetry.gear, recentShifts: _state.recentShifts),
+                      child: ShiftCard(gear: live ? telemetry.gear : null, recentShifts: live ? _state.recentShifts : const []),
                     ),
                   ],
                 ),
@@ -1993,17 +2173,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Row(
                   children: [
                     Expanded(
-                      child: TelemetryCard(label: _pitLapLabel(), value: _pitLapDisplayValue(), alert: _pitLapAlert()),
+                      child: live
+                          ? TelemetryCard(label: _pitLapLabel(), value: _pitLapDisplayValue(), alert: _pitLapAlert())
+                          : const TelemetryCard(label: 'PIT LAP', value: '--'),
                     ),
                     const SizedBox(width: 12),
-                    Expanded(child: _fuelTargetTile()),
+                    Expanded(child: live ? _fuelTargetTile() : const TelemetryCard(label: 'FUEL TARGET', value: '--')),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: TelemetryCard(
-                        label: 'POSITION',
-                        value: 'P${_state.hud.gridPosition}',
-                        alert: _positionAlert,
-                      ),
+                      // Telemetry only: no position to read -- the tyre
+                      // instead, which nothing reads either: tap to set it.
+                      child: _hudOn
+                          ? TelemetryCard(
+                              label: 'POSITION',
+                              value: hudLive && _state.hud.gridPosition > 0 ? 'P${_state.hud.gridPosition}' : '--',
+                              alert: hudLive && _positionAlert,
+                            )
+                          : InkWell(
+                              key: const Key('race_tyre_tile'),
+                              onTap: _pickTyre,
+                              borderRadius: BorderRadius.circular(16),
+                              child: TelemetryCard(
+                                label: 'TYRE · TAP TO CHANGE',
+                                value: _shortTyre(_raceStateManager.practiceLapLogger.currentTireCompound),
+                              ),
+                            ),
                     ),
                   ],
                 ),
@@ -2011,8 +2205,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
         ),
-        const SizedBox(height: 12),
-        OpponentOverlay(hud: _state.hud),
+        // The cars around us come off the HUD: none without the reader.
+        if (_hudOn) ...[
+          const SizedBox(height: 12),
+          OpponentOverlay(hud: hudLive ? _state.hud : const HudOverlayData()),
+        ],
         if (_lastTranscript != null) ...[
           const SizedBox(height: 8),
           Container(
@@ -2381,8 +2578,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final expected = running == null ? null : progress!.lapsFor(running);
     final fuelPerLap = stint?.fuelPerLapPercent;
     final best = stint?.bestLapMs;
-    final dropOff = stint?.dropOffMs;
-    final wentOff = stint?.tyreDropOff != null;
+    // Once the tyres have gone off: how much a lap they've lost since
+    // (so a red tile always has its figure); until then, the stint's
+    // last laps against its first.
+    final wentOffAt = stint?.tyreDropOff;
+    final wentOff = wentOffAt != null;
+    final dropOff = wentOffAt?.lossMs ?? stint?.dropOffMs;
     final onTrack = _state.sessionPhase == SessionPhase.driving && _telemetryStatus == ConnectionStatus.live;
     // The full race test counts its laps across its stops.
     final stintLapsDone = running?.kind == TestStintKind.race

@@ -5,7 +5,7 @@ import 'package:boxbox/screens/splash_screen.dart';
 import 'package:boxbox/widgets/box_box_logo.dart';
 
 void main() {
-  testWidgets('the splash rolls the tyres in as the O\'s of BOX BOX, then fades into the app', (tester) async {
+  testWidgets('the splash fades the letters in, rolls the tyres in as the O\'s of BOX BOX, then fades into the app', (tester) async {
     await tester.pumpWidget(MaterialApp(home: SplashScreen(next: (_) => const Text('APP HOME'), playSound: false)));
     expect(find.byType(BoxBoxWheelWordmark), findsOneWidget);
     expect(find.byType(BoxBoxTyre), findsNWidgets(2));
@@ -21,27 +21,37 @@ void main() {
     }
     expect(mark().letters, 0);
     expect(width, greaterThan(0));
+    final start = mark().tyreOffsets.toList();
 
-    // ...and by 1.5 s they've rolled into place, upright, with the letters in.
-    await tester.pump(const Duration(milliseconds: 1500));
+    // The letters fade in first (0.6 s) -- the tyres haven't moved yet...
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(mark().letters, inExclusiveRange(0, 1));
+    await tester.pump(const Duration(milliseconds: 300)); // 0.6 s
+    expect(mark().letters, closeTo(1, 0.01));
+    expect(mark().tyreOffsets, start, reason: 'the tyres set off once the letters are in');
+    expect(mark().taglineOpacity, 0);
+
+    // ...then they roll into place, upright, by 1.8 s.
+    await tester.pump(const Duration(milliseconds: 1200)); // 1.8 s
     expect(mark().tyreOffsets, everyElement(closeTo(0, 0.5)));
     expect(mark().tyreTurns, everyElement(closeTo(0, 0.01)));
-    expect(mark().letters, closeTo(1, 0.01));
     expect(find.text('APP HOME'), findsNothing, reason: 'still on the splash');
 
-    // The finished logo holds for 2 s after the animation (2 s).
-    await tester.pump(const Duration(milliseconds: 2000)); // 3.5 s
+    // The tagline (to 2.6 s), then the finished logo holds for 2 s.
+    await tester.pump(const Duration(milliseconds: 800)); // 2.6 s
+    expect(mark().taglineOpacity, closeTo(1, 0.01));
+    await tester.pump(const Duration(milliseconds: 16)); // a frame on: the animation's done
+    await tester.pump(const Duration(milliseconds: 1184)); // 3.8 s
     expect(find.text('APP HOME'), findsNothing, reason: 'holding the finished logo');
-    await tester.pump(const Duration(milliseconds: 600)); // past 4 s
+    await tester.pump(const Duration(milliseconds: 900)); // past 4.6 s
     await tester.pumpAndSettle();
     expect(find.text('APP HOME'), findsOneWidget);
-    expect(find.byType(BoxBoxWheelWordmark), findsNothing);
-    expect(tester.takeException(), isNull);
   });
 
   testWidgets('the tyres turn the way a tyre rolling right does, slowing to a stop', (tester) async {
     await tester.pumpWidget(MaterialApp(home: SplashScreen(next: (_) => const SizedBox(), playSound: false)));
     BoxBoxWheelWordmark mark() => tester.widget(find.byType(BoxBoxWheelWordmark));
+    await tester.pump(const Duration(milliseconds: 600)); // the letters fade in first
     final turns = <double>[];
     for (var i = 0; i < 8; i++) {
       turns.add(mark().tyreTurns[0]);

@@ -9,6 +9,7 @@ import 'base_rates.dart';
 import 'dry_tyre_pace.dart';
 import 'pit_stop_calculator.dart';
 import 'wet_pace_table.dart';
+import 'profile_settings.dart';
 
 /// Pre-race strategy planning: takes a weekly APRL driver briefing
 /// (track, lap count, starting fuel, available tires, etc.) and
@@ -71,6 +72,7 @@ Race briefing: {BRIEFING}
     double? lapTimeSeconds,
     Map<int, FuelMapMeasurement> measuredMaps = const {},
     Map<String, DryTyrePace> dryPace = const {},
+    StrategyStyle style = StrategyStyle.passive,
   }) async {
     final plan = PitStopCalculator.calculate(
       briefing,
@@ -82,6 +84,7 @@ Race briefing: {BRIEFING}
       lapTimeSeconds: lapTimeSeconds,
       measuredMaps: measuredMaps,
       dryPace: dryPace,
+      style: style,
     );
     if (plan.pitStops.isEmpty) {
       // Nothing for the AI to add reasoning to beyond the summary

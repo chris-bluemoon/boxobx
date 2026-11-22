@@ -26,11 +26,26 @@ class TestPlanProgress {
   /// The planned stint's target, with the tyres' expected laps when
   /// they're the limit (see PlannedTestStint.targetWith), e.g.
   /// "Soft · 100% fuel · Map 1 · 5 laps (or until 90% worn or fuel < 5%)".
+  ///
+  /// Done: what was run -- the laps driven, not the plan's laps, which
+  /// are resized as fuel is measured (see TestPlan.forRound).
   String targetFor(PlannedTestStint planned) {
     final i = planned.number - 1;
     // Done: the map its laps were run on (Map 1 when they don't say).
     final ran = statuses[i] == TestStatus.done ? (matchedStints[i]?.laps.first.fuelMap ?? 1) : null;
+    if (ranLaps(planned) case final laps?) {
+      return '${planned.compoundShort} · ${planned.startFuelPercent.toStringAsFixed(0)}% fuel · Map $ran · '
+          '$laps lap${laps == 1 ? '' : 's'} run';
+    }
     return planned.targetWith(expectedLaps[i], ranOnMap: ran);
+  }
+
+  /// A done test's laps driven (not the full race test, which runs to
+  /// the race distance); null if it isn't done.
+  int? ranLaps(PlannedTestStint planned) {
+    final i = planned.number - 1;
+    if (planned.kind == TestStintKind.race || statuses[i] != TestStatus.done) return null;
+    return matchedStints[i]?.lapsDriven;
   }
 
   /// The laps [planned] runs to, and whether that's only an estimate:
@@ -38,6 +53,7 @@ class TestPlanProgress {
   /// when the tyres should go first -- their expected laps (~). Null
   /// when neither is known.
   (int, bool)? lapsFor(PlannedTestStint planned) {
+    if (ranLaps(planned) case final laps?) return (laps, false);
     final wear = expectedLaps[planned.number - 1];
     final laps = planned.laps;
     if (laps != null && (wear == null || wear >= laps)) return (laps, false);
@@ -222,15 +238,46 @@ class TestPlanCall {
 /// the running test reaches its target, and once a stint when it's on
 /// the wrong tyre.
 class TestPlanCaller {
+  /// Said the moment a test completes, before Boxington's own line (the
+  /// reason and the next test) is ready: a fixed clip, cached at start-up.
+  static const completeClip = 'Box, box. Stint test complete.';
+
   /// The (test, stint) last called, so each run is called once.
   (int, int)? _called;
 
   /// The (test, stint) last told it's on the wrong tyre.
   (int, int)? _wrongTyreCalled;
 
+  /// The stint last told no test is running.
+  int? _notStartedCalled;
+
   void reset() {
     _called = null;
     _wrongTyreCalled = null;
+    _notStartedCalled = null;
+  }
+
+  /// No test running, but a lap just done on the tyre of a test still to
+  /// do ([chosenTestNumber] first, the one picked but not Started): its
+  /// laps don't count -- say so once a stint, so the driver can Start it.
+  TestPlanCall? _notStarted(TestPlan plan, List<PracticeLapRecord> laps, int currentStintNumber, int? chosenTestNumber) {
+    final last = laps.lastOrNull;
+    if (last == null || last.testNumber != null || last.isRaceLap || last.stintNumber != currentStintNumber) return null;
+    if (_notStartedCalled == currentStintNumber) return null;
+    final progress = TestPlanTracker.progress(plan, laps);
+    final toDo = [
+      for (final (i, s) in plan.stints.indexed)
+        if (progress.statuses[i] == TestStatus.toDo && s.kind != TestStintKind.race && s.compound == last.tireCompound) s,
+    ];
+    if (toDo.isEmpty) return null;
+    final test = toDo.where((s) => s.number == chosenTestNumber).firstOrNull ?? toDo.first;
+    _notStartedCalled = currentStintNumber;
+    return TestPlanCall(
+      "The driver has done a lap on ${test.compoundShort} but no stint test was started, so this stint isn't counting "
+      'towards Stint Test ${test.number}. Tell the driver to tap START on Stint Test ${test.number} if this stint is meant '
+      'to be it -- or count these laps towards it afterwards from the Practice Log. One short transmission.',
+      completesTest: false,
+    );
   }
 
   TestPlanCall? check(
@@ -240,8 +287,9 @@ class TestPlanCaller {
     required int currentStintNumber,
     double? liveWearRemaining,
     double? liveFuelPercent,
+    int? chosenTestNumber,
   }) {
-    if (activeTestNumber == null) return null;
+    if (activeTestNumber == null) return _notStarted(plan, laps, currentStintNumber, chosenTestNumber);
     final progress = TestPlanTracker.progress(plan, laps, activeTestNumber: activeTestNumber);
     final index = progress.statuses.indexOf(TestStatus.inProgress);
     if (index < 0) return null;
@@ -282,7 +330,8 @@ class TestPlanCaller {
     final nextTest = following < 0 ? null : plan.stints[following];
     return TestPlanCall(
       'Stint Test ${planned.number} complete: $reason. The data is logged. '
-      '${nextTest == null ? 'Tell the driver that completes the stint tests -- come in.' : 'Tell the driver to come in and move on to the next stint test: ${progress.targetFor(nextTest)}.'}'
+      'You have just said "$completeClip" -- do not say it again. '
+      '${nextTest == null ? 'Tell the driver that completes the stint tests.' : 'Tell the driver the next stint test: ${progress.targetFor(nextTest)}.'}'
       ' One short transmission.',
       completesTest: true,
     );

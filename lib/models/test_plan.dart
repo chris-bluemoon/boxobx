@@ -189,8 +189,6 @@ class TestPlan {
   static const double lowFuelStartPercent = 20;
   static const int lowFuelLaps = 4;
 
-  /// Fuel kept back on a planned stint: half a lap (as the strategy).
-  static const double reserveLaps = 0.5;
   static const int wetLaps = 4;
   static const int fuelMapTestLaps = 3;
   static const double wetStartFuelPercent = 100;
@@ -261,7 +259,7 @@ class TestPlan {
     final perLap = fuelPerLapPercent != null && fuelPerLapPercent > 0
         ? fuelPerLapPercent / PitStopCalculator.fuelMapFactor(fuelMap)
         : null;
-    final tankLaps = perLap == null ? null : ((longStintStartFuelPercent - reserveLaps * perLap) / perLap).floor().clamp(1, 999);
+    final tankLaps = perLap == null ? null : ((longStintStartFuelPercent - PitStopCalculator.reserveFor(perLap)) / perLap).floor().clamp(1, 999);
     final raceLaps = briefing.totalLaps > 0 ? briefing.totalLaps : null;
     final longLaps = tankLaps == null ? null : (raceLaps != null && raceLaps < tankLaps ? raceLaps : tankLaps);
     final longIsRace = longLaps != null && longLaps != tankLaps;

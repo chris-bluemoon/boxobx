@@ -225,6 +225,10 @@ class PracticeLapRecord {
     if (fuelMap != null) 'fuelMap': fuelMap,
   };
 
+  /// Returns a copy counted towards stint test [number] (see
+  /// PracticeLapLogger.countLapsAsTest).
+  PracticeLapRecord withTestNumber(int number) => PracticeLapRecord.fromMap({...toMap(), 'testNumber': number});
+
   /// Returns a copy with tireWearPercent set -- used by the Practice
   /// Log screen's "log tire wear" action to attach a reading to an
   /// already-recorded lap after the fact (the driver typically checks

@@ -6,6 +6,7 @@ import 'base_rates.dart';
 import 'dry_tyre_pace.dart';
 import 'fuel_map_measurement.dart';
 import 'wet_pace_table.dart';
+import 'profile_settings.dart';
 
 /// Deterministically computes a pit-stop plan from a RaceBriefing --
 /// pure arithmetic, no AI involved, so the SAME briefing always
@@ -83,10 +84,22 @@ class PitStopCalculator {
   /// the user's own measured average across GT3/Gr.3 pit stops).
   static const double _tyreChangeLossSeconds = 3.5;
 
-  /// Fuel left in the tank at the finish, in laps' worth, when the brief
+  /// Fuel kept back on each stint (and at the finish) when the brief
   /// doesn't set a reserve: half a lap, so running slightly heavier than
-  /// the figure doesn't run dry on the last lap.
+  /// the figure doesn't run dry -- but no more than [reserveCapPercent],
+  /// where the fuel tests end (TestPlan.fuelOutPercent): at heavy fuel
+  /// use half a lap would cost a lap a tank, and a stop, that the tests
+  /// show isn't needed (Sainte-Croix x4: 18.4% a lap, 5 laps a tank with
+  /// 7.8% left).
   static const double finishReserveLaps = 0.5;
+  static const double reserveCapPercent = 5;
+
+  /// The fuel kept back on a stint burning [perLap] percent a lap (see
+  /// [finishReserveLaps]).
+  static double reserveFor(double perLap) {
+    final halfLap = finishReserveLaps * perLap;
+    return halfLap < reserveCapPercent ? halfLap : reserveCapPercent;
+  }
 
   /// Dry tyre wear before the driver has any laps of their own on a
   /// compound: percent of the tyre a lap, per 1x wear multiplier per km
@@ -156,6 +169,7 @@ class PitStopCalculator {
     double? lapTimeSeconds,
     Map<int, FuelMapMeasurement> measuredMaps = const {},
     Map<String, DryTyrePace> dryPace = const {},
+    StrategyStyle style = StrategyStyle.passive,
   }) {
     final totalLaps = briefing.totalLaps < 1 ? 1 : briefing.totalLaps;
 
@@ -289,7 +303,7 @@ class PitStopCalculator {
           _FuelMapOption(m, map1PerLap * (1 - fuelMapSavingBest[_mapIndex(m)]), fuelMapLapTimeLossBest[_mapIndex(m)], measured: false),
     ];
     int tankLaps(_FuelMapOption m) {
-      final reserve = briefing.finishFuelReservePercent > 0 ? briefing.finishFuelReservePercent : finishReserveLaps * m.perLap;
+      final reserve = briefing.finishFuelReservePercent > 0 ? briefing.finishFuelReservePercent : reserveFor(m.perLap);
       final usable = (briefing.startingFuelPercent - reserve).clamp(m.perLap, briefing.startingFuelPercent);
       return (usable / m.perLap).floor().clamp(1, totalLaps);
     }
@@ -340,13 +354,14 @@ class PitStopCalculator {
 
     final (planned, fewest) = plan(real)!;
 
-    // The grid: from the front third, the faster tyre first (to hold
+    // The grid: from the front row, the faster tyre first (to hold
     // track position); lower down, the slower one first. A stint's time
     // doesn't depend on where it runs, so the order costs nothing on the
-    // plan's figures. Not entered: as planned.
+    // plan's figures. Not entered: as planned. An aggressive style runs
+    // the faster tyre first wherever it starts.
     final gridPosition = briefing.gridPosition != null && briefing.gridPosition! > 0 ? briefing.gridPosition : null;
-    final gridCars = briefing.gridSize ?? RaceBriefing.defaultGridSize;
-    final slowFirst = gridPosition == null ? null : !startsNearFront(gridPosition, gridCars);
+    final aggressive = style == StrategyStyle.aggressive;
+    final slowFirst = aggressive ? false : gridPosition == null ? null : !startsNearFront(gridPosition);
     _Plan forGrid(_Plan p) => slowFirst == null ? p : p.ordered(pace, slowFirst: slowFirst);
     final chosen = forGrid(planned);
 
@@ -380,7 +395,7 @@ class PitStopCalculator {
     }
 
     // The grid, when the plan runs a faster and a slower tyre.
-    if (_gridNote(chosen, pace, gridPosition, gridCars, briefing.gridSize != null) case final note?) basis.add(note);
+    if (_gridNote(chosen, pace, gridPosition, aggressive: aggressive) case final note?) basis.add(note);
 
     // A leaner map, where it runs.
     final lean = {for (final m in chosen.maps) if (m.map > 1) m.map: m};
@@ -473,9 +488,9 @@ class PitStopCalculator {
               : ' Stint length is capped by tyre wear ($longestLife laps), not fuel range.'
         : '';
     final lastMap = chosen.maps.last;
-    final reservePercent = briefing.finishFuelReservePercent > 0 ? briefing.finishFuelReservePercent : finishReserveLaps * lastMap.perLap;
+    final reservePercent = briefing.finishFuelReservePercent > 0 ? briefing.finishFuelReservePercent : reserveFor(lastMap.perLap);
     final reserveNote = ' Keeps ${reservePercent.toStringAsFixed(1)}% fuel '
-        '${briefing.finishFuelReservePercent > 0 ? '' : '(half a lap) '}in reserve at the finish.';
+        '${briefing.finishFuelReservePercent > 0 || reservePercent < finishReserveLaps * lastMap.perLap - 1e-9 ? '' : '(half a lap) '}in reserve at the finish.';
     final mapNote = lean.isEmpty
         ? ''
         : 'Run ${[
@@ -518,31 +533,36 @@ class PitStopCalculator {
     );
   }
 
-  /// The front third of the grid (P1 at least): a start there runs the
-  /// faster tyre first, to hold track position. Lower down, the slower
+  /// The front row: from P1-P[frontPositions] a start runs the faster
+  /// tyre first, to hold track position. From further back, the slower
   /// tyre first -- run long while the cars ahead stop, get clear air, then
   /// attack on the faster tyre while they're on worn ones.
-  static bool startsNearFront(int position, int cars) => position <= (cars ~/ 3 < 1 ? 1 : cars ~/ 3);
+  static const int frontPositions = 2;
+
+  static bool startsNearFront(int position) => position <= frontPositions;
 
   /// The grid line in the plan's reasoning: which tyre first, and why --
   /// for [position] if entered, else both cases. Null when [plan] runs one
   /// tyre (or tyres of the same pace).
-  static String? _gridNote(_Plan plan, Map<String, double> pace, int? position, int cars, bool carsEntered) {
+  static String? _gridNote(_Plan plan, Map<String, double> pace, int? position, {bool aggressive = false}) {
     final run = plan.tyres.toSet().toList()..sort((a, b) => pace[a]!.compareTo(pace[b]!));
     if (run.length < 2 || pace[run.last]! - pace[run.first]! < _Search._same) return null;
     final fast = _shortTyre(run.first), slow = _shortTyre(run.last);
-    final cut = cars ~/ 3 < 1 ? 1 : cars ~/ 3;
+    const cut = frontPositions;
     const same = 'Same stops, the same race time on the plan\'s figures';
+    if (aggressive) {
+      return 'Aggressive style (Profile): the $fast first wherever you start -- attack from the off and make places '
+          'early. From P3 down the $slow first would be the passive call -- run long while the cars ahead stop. $same.';
+    }
     if (position == null) {
-      return 'Grid not entered: from the front third (P1-P$cut of $cars), run the $fast first to hold track position; '
+      return 'Grid not entered: from the front row (P1-P$cut), run the $fast first to hold track position; '
           'from P${cut + 1} down, the $slow first -- you run long while the cars ahead stop, get clear air, then attack '
           'on fresh $fast while they\'re on worn tyres. $same. Enter your grid position after qualifying and generate again.';
     }
-    final of = carsEntered ? ' of $cars' : '';
-    return startsNearFront(position, cars)
-        ? 'Starting P$position$of: $fast first to hold track position. The $slow first would be the same stops and '
+    return startsNearFront(position)
+        ? 'Starting P$position: $fast first to hold track position. The $slow first would be the same stops and '
               'the same race time on the plan\'s figures, if you\'d rather go long.'
-        : 'Starting P$position$of: $slow first -- you run long while the cars ahead stop, get clear air, then attack on '
+        : 'Starting P$position: $slow first -- you run long while the cars ahead stop, get clear air, then attack on '
               'fresh $fast while they\'re on worn tyres. $same.';
   }
 
@@ -611,6 +631,35 @@ class PitStopCalculator {
   /// Would [plan] run in another order for [slowFirst]? (see withTyreOrder)
   static bool tyreOrderDiffers(RaceStrategy plan, {required bool slowFirst}) =>
       !identical(withTyreOrder(plan, slowFirst: slowFirst), plan);
+
+  /// The grid caveat in brief, for the home page: with no grid entered,
+  /// the other tyre order and where on the grid it's the one to run, with
+  /// its stops; with one entered, why this order. Null if the order
+  /// doesn't depend on the grid (one tyre all race, or no grid line).
+  static String? gridCaveat(RaceStrategy plan) {
+    final note = plan.basis
+        .where((b) => b.startsWith('Grid not entered') || b.startsWith('Starting P') || b.startsWith('Aggressive style'))
+        .firstOrNull;
+    if (note == null) return null;
+    if (note.startsWith('Aggressive style')) {
+      return 'Aggressive style: the faster tyre first wherever you start (Profile).';
+    }
+    if (note.startsWith('Starting P')) {
+      final cut = note.indexOf(RegExp(r' -- |\. '));
+      return cut < 0 ? note : note.substring(0, cut);
+    }
+    const front = frontPositions;
+    final fastFirst = tyreOrderDiffers(plan, slowFirst: true);
+    final other = withTyreOrder(plan, slowFirst: fastFirst);
+    if (identical(other, plan)) return null;
+    String short(String c) => c.replaceFirst('Racing ', '');
+    final stops = [for (final p in other.pitStops) 'box lap ${p.lap} for ${short(p.tireCompound)}'].join(', ');
+    return fastFirst
+        ? 'Grid: this order from P1-P$front. From P${front + 1} down, start on ${short(other.startingTireCompound)} and $stops. '
+              'Enter your grid after qualifying.'
+        : 'Grid: this order from P${front + 1} down. From P1-P$front, start on ${short(other.startingTireCompound)} and $stops. '
+              'Enter your grid after qualifying.';
+  }
 
   /// A plan's stops: each one's lap, tyre and the map for the stint after.
   static List<PlannedPitStop> _stopsOf(_Plan plan, String? mandatory, {int lapOffset = 0}) {
@@ -718,7 +767,7 @@ class PitStopCalculator {
     pace.putIfAbsent(currentTyre, () => inputs.tyres.isEmpty ? inputs.lapSeconds : inputs.tyres.last.lapSeconds);
     int lifeOf(String c) => inputs.tyre(c)?.lifeLaps ?? 999;
     int reserveTank(_FuelMapOption m, double fuel) {
-      final reserve = inputs.finishReservePercent > 0 ? inputs.finishReservePercent : finishReserveLaps * m.perLap;
+      final reserve = inputs.finishReservePercent > 0 ? inputs.finishReservePercent : reserveFor(m.perLap);
       return ((fuel - reserve) / m.perLap).floor();
     }
 

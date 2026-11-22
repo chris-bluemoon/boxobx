@@ -11,6 +11,7 @@ import '../models/race_strategy.dart';
 import '../models/fuel_prediction.dart';
 import '../models/track_info.dart';
 import '../models/practice_lap_record.dart';
+import '../services/profile_settings.dart';
 import '../services/race_strategist_service.dart';
 import '../services/track_database.dart';
 import '../services/saved_briefing_store.dart';
@@ -147,10 +148,9 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
   /// including service), saved with the briefing.
   final _pitStopTimeController = TextEditingController();
 
-  /// Where you start, from qualifying, and the cars on the grid (blank:
-  /// 16) -- the tyre order (see PitStopCalculator.startsNearFront).
+  /// Where you start, from qualifying -- the tyre order (see
+  /// PitStopCalculator.startsNearFront).
   final _gridPositionController = TextEditingController();
-  final _gridSizeController = TextEditingController();
 
   /// The brief saves itself: every edit is written shortly after it's
   /// made (no Save button). Held off until the saved brief has loaded,
@@ -198,7 +198,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       _weatherController,
       _pitStopTimeController,
       _gridPositionController,
-      _gridSizeController,
     ]) {
       c.addListener(_scheduleSave);
     }
@@ -291,7 +290,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     _weatherController.dispose();
     _pitStopTimeController.dispose();
     _gridPositionController.dispose();
-    _gridSizeController.dispose();
     super.dispose();
   }
 
@@ -323,7 +321,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     _refuelingSpeed = briefing.refuelingSpeedLitersPerSec;
     _pitStopTimeController.text = briefing.pitStopTimeSeconds?.toString() ?? '';
     _gridPositionController.text = briefing.gridPosition?.toString() ?? '';
-    _gridSizeController.text = briefing.gridSize?.toString() ?? '';
     _fuelController.text = briefing.startingFuelPercent.toString();
     _selectedTireCompounds
       ..clear()
@@ -343,7 +340,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
     _roundNameController.text = name;
     // Last round's grid isn't this one's.
     _gridPositionController.clear();
-    _gridSizeController.clear();
     final round = LeagueCalendar.byName(name);
     if (round == null) return;
     _trackName = round.gt7Track;
@@ -414,7 +410,6 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
       wetOrChangeableWeather: weather?.slots.any((slot) => slot.isRain) ?? false,
       weatherSlots: weather?.code ?? '',
       gridPosition: _enteredCount(_gridPositionController),
-      gridSize: _enteredCount(_gridSizeController),
     );
   }
 
@@ -468,6 +463,8 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
 
       final generated = await _strategist.generateStrategy(
         briefing,
+        // Aggressive: the faster tyre first wherever you start (Profile).
+        style: ProfileSettings.current.strategyStyle,
         trackLengthMeters: trackLengthMeters,
         measuredPercentPerLap: measuredPercentPerLap,
         measuredPitStopTimeLossSeconds: measuredPitStopTimeLossSeconds,
@@ -756,18 +753,12 @@ class _RaceStrategyScreenState extends State<RaceStrategyScreen> {
               _sectionLabel('GRID'),
               const SizedBox(height: 4),
               Text(
-                'After qualifying, enter where you start and Generate again. From the front third of the grid '
-                'the plan runs the faster tyre first; lower down, the slower one first, with the faster tyre at the end.',
+                'After qualifying, enter where you start and Generate again. From the front row (P1-P2) '
+                'the plan runs the faster tyre first; from P3 down, the slower one first, with the faster tyre at the end.',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
               ),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(child: _textField(_gridPositionController, 'Grid position (e.g. 9)', keyboardType: TextInputType.number)),
-                  const SizedBox(width: 8),
-                  Expanded(child: _textField(_gridSizeController, 'Cars on the grid (blank: 16)', keyboardType: TextInputType.number)),
-                ],
-              ),
+              _textField(_gridPositionController, 'Grid position (e.g. 9)', keyboardType: TextInputType.number),
               const SizedBox(height: 8),
               ...[
                 TextField(

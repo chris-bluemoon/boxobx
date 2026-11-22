@@ -232,6 +232,38 @@ class VoiceEngine {
     await pushToTalk.startRecording();
   }
 
+  /// Says [phrase] at once (as [speakClip]), then Boxington's reply to
+  /// [syntheticPrompt] (as [speakProactively]) -- the reply generated
+  /// while the clip plays, so it follows straight on: the news without
+  /// the AI model and TTS's few seconds, then the detail. [onClipDone]
+  /// runs once the clip has played.
+  Future<void> speakClipThen(String phrase, String syntheticPrompt, FusedRaceState raceState, {void Function()? onClipDone}) async {
+    final clip = speakClip(phrase); // bumps [_generation] before its first await
+    final generation = _generation;
+    final reply = _withTts(() => _generateResponseAudio(syntheticPrompt, raceState, generation));
+    await clip;
+    onClipDone?.call();
+    try {
+      final path = await reply;
+      if (path == null) return;
+      final file = File(path);
+      try {
+        if (generation != _generation) return; // cut off by another clip
+        // The clip's end let the ducking and status go.
+        _setStatus(VoiceEngineStatus.responding);
+        await audioSession.setDucking(true);
+        await _play(path, generation);
+      } finally {
+        await file.delete().catchError((_) => file);
+      }
+    } catch (error, stackTrace) {
+      debugPrint('VoiceEngine.speakClipThen failed: $error\n$stackTrace');
+      _setProblem(describeProblem(error));
+      _setStatus(VoiceEngineStatus.error);
+      Timer(const Duration(seconds: 2), () => _setStatus(VoiceEngineStatus.idle));
+    }
+  }
+
   /// Has Boxington speak up UNPROMPTED -- no push-to-talk, no Whisper
   /// transcription step -- triggered by the app detecting a sustained
   /// problem (e.g. a consistent short-shifting/over-revving habit; see

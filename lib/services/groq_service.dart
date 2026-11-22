@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
 import '../models/fused_race_state.dart';
+import 'profile_settings.dart';
 
 /// Component B (Section 4): Groq Whisper STT + the uncensored "Boxington"
 /// personality streamed from a Groq-hosted chat model (openai/gpt-oss-120b
@@ -15,7 +17,49 @@ class GroqService {
   final String apiKey;
   static const String _baseUrl = 'https://api.groq.com/openai/v1';
 
-  GroqService(this.apiKey, {http.Client? client}) : _client = client;
+  GroqService(this.apiKey, {http.Client? client, Random? random}) : _client = client, _random = random ?? Random();
+
+  final Random _random;
+
+  /// The driver's PSN ID (Profile): their name on the leaderboard and
+  /// the HUD, so Boxington knows which car is ours.
+  String? psnId;
+
+  /// What Boxington calls the driver (Profile) -- now and then, not every
+  /// call: on about [nicknameShare] of them, picked at random.
+  String? nickname;
+
+  static const double nicknameShare = 1 / 3;
+
+  /// How much the driver wants on the radio (Profile).
+  TalkLevel talkLevel = TalkLevel.normal;
+
+  /// False: telemetry only (Profile) -- no HUD reader, so nothing from
+  /// the leaderboard, the other cars, tyre wear or the water gauge.
+  bool hudReader = true;
+
+  /// Who the driver is, and whether to use their name this time.
+  String addressSection() {
+    final lines = <String>[
+      switch (talkLevel) {
+        TalkLevel.quiet => 'The driver wants a quiet radio: the bare facts, as few words as possible, no banter.',
+        TalkLevel.normal => '',
+        TalkLevel.chatty => 'The driver likes a chatty radio: a little banter and encouragement is welcome (still within the word limit).',
+      },
+      if (!hudReader)
+        'This driver runs on GT7 telemetry only -- no HUD reader. You can\'t see their position, the gaps, rivals, '
+            'other cars or their stops, tyre wear or the water gauge: never make those calls, and if asked, say you can\'t '
+            'see it from here. You do have speed, fuel, lap times, tyre temperatures and the plan.',
+      if (psnId != null && psnId!.isNotEmpty)
+        'Your driver is $psnId on PSN: that name on the leaderboard or HUD is us, never a rival.',
+      if (nickname != null && nickname!.isNotEmpty)
+        _random.nextDouble() < nicknameShare
+            ? 'Call the driver "$nickname" in this transmission -- never their PSN name.'
+            : 'Don\'t use the driver\'s name in this transmission.',
+    ];
+    lines.removeWhere((l) => l.isEmpty);
+    return lines.isEmpty ? '' : '${lines.join('\n')}\n\n';
+  }
 
   final http.Client? _client;
 
@@ -102,7 +146,7 @@ Pit rejoin: rejoinForecast is where we'd come out if we pitted now -- rejoinTraf
   }) async* {
     final uri = Uri.parse('$_baseUrl/chat/completions');
     final systemPrompt = _systemPromptTemplate
-        .replaceFirst('{DRIVER_PROFILE}', _profileSection(driverProfile))
+        .replaceFirst('{DRIVER_PROFILE}', '${addressSection()}${_profileSection(driverProfile)}')
         .replaceFirst('{RACE_STATE}', jsonEncode(raceState.toPromptContext()));
 
     final request = http.Request('POST', uri)

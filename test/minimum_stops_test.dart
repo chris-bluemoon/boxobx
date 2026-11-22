@@ -22,7 +22,7 @@ RaceBriefing _brief({int minStops = 0, String weather = '', int laps = 13}) => R
   weatherSlots: weather,
 );
 
-PracticeLapRecord _lap(int n, {int? map, double used = 18.3, int ms = 224000, double fuelStart = 100}) => PracticeLapRecord(
+PracticeLapRecord _lap(int n, {int? map, double used = 20.0, int ms = 224000, double fuelStart = 100}) => PracticeLapRecord(
   lapNumber: n,
   lapTimeMs: ms,
   tireCompound: 'Racing Hard',
@@ -35,9 +35,10 @@ PracticeLapRecord _lap(int n, {int? map, double used = 18.3, int ms = 224000, do
 );
 
 void main() {
-  // 18.3% a lap on Map 1: 4 laps a tank, 3 stops.
+  // 20% a lap on Map 1: 4 laps a tank (5% kept back), 3 stops -- Map 2's
+  // 12% saving makes it 5 laps.
   RaceStrategy strategyFor(int minStops, {Map<int, FuelMapMeasurement> maps = const {}}) =>
-      PitStopCalculator.calculate(_brief(minStops: minStops), measuredPercentPerLap: 18.3, lapTimeSeconds: 224, measuredMaps: maps);
+      PitStopCalculator.calculate(_brief(minStops: minStops), measuredPercentPerLap: 20.0, lapTimeSeconds: 224, measuredMaps: maps);
 
   test('nothing measured on a leaner map: Map 1, and Map 2 put up for a test', () {
     final plan = strategyFor(0);
@@ -48,8 +49,8 @@ void main() {
 
   test('Map 2 measured saving 12% for 0.6% a lap: saves a stop and is worth it', () {
     final laps = [
-      for (var n = 1; n <= 4; n++) _lap(n, fuelStart: 100 - (n - 1) * 18.3),
-      for (var n = 5; n <= 7; n++) _lap(n, map: 2, used: 18.3 * 0.88, ms: 225300, fuelStart: 100 - (n - 5) * 16.1),
+      for (var n = 1; n <= 4; n++) _lap(n, fuelStart: 100 - (n - 1) * 20.0),
+      for (var n = 5; n <= 7; n++) _lap(n, map: 2, used: 20.0 * 0.88, ms: 225300, fuelStart: 100 - (n - 5) * 17.6),
     ];
     final maps = FuelMapMeasurement.fromLaps(laps);
     expect(maps[2]!.fuelFactor, closeTo(0.88, 0.001));
@@ -86,7 +87,7 @@ void main() {
   });
 
   test('the test plan gets a Map 2 stint, and it keeps its map', () {
-    final plan = TestPlan.fromBriefing(_brief(), startCompound: 'Racing Hard', fuelPerLapPercent: 18.3, fuelMapToTest: 2);
+    final plan = TestPlan.fromBriefing(_brief(), startCompound: 'Racing Hard', fuelPerLapPercent: 20.0, fuelMapToTest: 2);
     final test = plan.stints.firstWhere((s) => s.kind == TestStintKind.fuelMap);
     expect(test.target, 'Hard · 100% fuel · Map 2 · 3 laps');
     expect(plan.stints.where((s) => s.kind != TestStintKind.fuelMap).map((s) => s.fuelMap).toSet(), {1});
@@ -94,7 +95,7 @@ void main() {
   });
 
   test("the fuel map test's 3 laps complete it, and the quickest isn't off pace (19 Nov)", () {
-    final plan = TestPlan.fromBriefing(_brief(), startCompound: 'Racing Hard', fuelPerLapPercent: 18.3, fuelMapToTest: 2);
+    final plan = TestPlan.fromBriefing(_brief(), startCompound: 'Racing Hard', fuelPerLapPercent: 20.0, fuelMapToTest: 2);
     final test = plan.stints.firstWhere((s) => s.kind == TestStintKind.fuelMap);
     final laps = [
       for (final (i, ms) in [223948, 223789, 222770].indexed) _lap(i + 1, map: 2, ms: ms, fuelStart: 98.3 - i * 17.2),

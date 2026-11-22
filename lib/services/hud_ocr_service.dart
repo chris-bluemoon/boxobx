@@ -16,7 +16,10 @@ import '../models/connection_status.dart';
 /// This service just binds a UDP listener socket and decodes those JSON
 /// datagrams.
 class HudOcrService {
-  static const int listenPort = 33746;
+  static const int defaultPort = 33746;
+
+  /// The port the laptop's HUD reader sends to (Profile).
+  int port = defaultPort;
 
   /// OCR relay samples at ~5Hz (every 200ms); allow a couple of missed
   /// samples before flagging the laptop relay as stale.
@@ -38,11 +41,12 @@ class HudOcrService {
     _statusController.add(status);
   }
 
-  Future<void> start() async {
+  Future<void> start({int? port}) async {
+    if (port != null) this.port = port;
     if (_socket != null) return;
     _setStatus(ConnectionStatus.connecting);
 
-    _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, listenPort);
+    _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, this.port);
     _socket!.listen((RawSocketEvent event) {
       if (event != RawSocketEvent.read) return;
       final datagram = _socket!.receive();

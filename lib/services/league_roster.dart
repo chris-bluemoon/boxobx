@@ -1,3 +1,5 @@
+import 'profile_settings.dart';
+
 /// Apex Point Racing League, GT3 Clubman Division -- the same fixed
 /// roster of PSN gamertags used by the laptop OCR relay to CORRECT
 /// driver-name misreads (see laptop_ocr/driver_roster.py's
@@ -14,8 +16,9 @@
 /// laptop_ocr/driver_roster.py's LEAGUE_ROSTER to match, or OCR
 /// correction and in-app driver selection (standings entry, rival
 /// picking) will silently drift out of sync with each other.
-/// Our own gamertag (the driver using the app) -- never a rival.
-const String playerName = 'Willy-SwerveX';
+/// Our own gamertag (the driver using the app, from the Profile page)
+/// -- never a rival.
+String get playerName => ProfileSettings.current.psnId;
 
 const List<String> leagueRoster = [
   'Salty-067',

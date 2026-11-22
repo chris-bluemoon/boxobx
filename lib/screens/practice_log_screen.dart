@@ -32,6 +32,10 @@ class PracticeLogScreen extends StatefulWidget {
   /// Deletes every lap of one stint (their recordedAt timestamps).
   final ValueChanged<Set<DateTime>>? onDeleteStint;
 
+  /// Counts a stint run without Starting its test towards that test:
+  /// its laps' recordedAt timestamps and the test's number.
+  final void Function(Set<DateTime> recordedAts, int testNumber)? onCountStintAsTest;
+
   /// The saved round's name (e.g. "Round 5"), used in stint labels.
   final String? roundName;
 
@@ -59,6 +63,7 @@ class PracticeLogScreen extends StatefulWidget {
     required this.onClear,
     required this.onDeleteLap,
     this.onDeleteStint,
+    this.onCountStintAsTest,
   });
 
   @override
@@ -143,6 +148,59 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
       if (_laps[i].lapNumber != i + 1) _laps[i] = _laps[i].withLapNumber(i + 1);
     }
     widget.onDeleteStint?.call(gone);
+  }
+
+  /// The tests still to do that [stint] could count towards: on its tyre
+  /// (not the full race test) -- for a stint run without Starting a test.
+  List<PlannedTestStint> _testsFor(StintSummary stint) {
+    final plan = widget.testPlan;
+    if (plan == null || widget.onCountStintAsTest == null) return const [];
+    if (stint.testNumber != null || stint.isRace || stint.stintNumber == 0) return const [];
+    final progress = TestPlanTracker.progress(plan, _laps, activeTestNumber: widget.activeTestNumber);
+    return [
+      for (final (i, t) in plan.stints.indexed)
+        if (progress.statuses[i] == TestStatus.toDo && t.kind != TestStintKind.race && t.compound == stint.tyreCompound) t,
+    ];
+  }
+
+  Future<void> _countAsTest(StintSummary stint) async {
+    final tests = _testsFor(stint);
+    if (tests.isEmpty) return;
+    final plan = widget.testPlan!;
+    final progress = TestPlanTracker.progress(plan, _laps, activeTestNumber: widget.activeTestNumber);
+    final picked = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey.shade900,
+        title: Text('Count stint ${stint.stintNumber} as a stint test?', style: const TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Its ${stint.laps.length} laps on ${stint.tyreCompound} were logged without Starting a test. '
+              'Count them towards:',
+              style: TextStyle(color: Colors.grey.shade400),
+            ),
+            const SizedBox(height: 8),
+            for (final t in tests)
+              TextButton(
+                onPressed: () => Navigator.pop(context, t.number),
+                child: Text('Stint Test ${t.number}: ${progress.targetFor(t)}', textAlign: TextAlign.left),
+              ),
+          ],
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel'))],
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final these = {for (final lap in stint.laps) lap.recordedAt};
+    setState(() {
+      for (var i = 0; i < _laps.length; i++) {
+        if (these.contains(_laps[i].recordedAt)) _laps[i] = _laps[i].withTestNumber(picked);
+      }
+    });
+    widget.onCountStintAsTest!(these, picked);
   }
 
   @override
@@ -488,6 +546,11 @@ class _PracticeLogScreenState extends State<PracticeLogScreen> {
                   style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
                 ),
               ),
+              if (_testsFor(stint).isNotEmpty)
+                TextButton(
+                  onPressed: () => _countAsTest(stint),
+                  child: const Text('COUNT AS TEST'),
+                ),
               if (widget.onDeleteStint != null)
                 IconButton(
                   icon: const Icon(Icons.delete_outline, size: 22),

@@ -128,11 +128,6 @@ class RaceBriefing {
   /// first (see PitStopCalculator.startsNearFront).
   final int? gridPosition;
 
-  /// Cars on the grid (null: [defaultGridSize] assumed).
-  final int? gridSize;
-
-  static const int defaultGridSize = 16;
-
   const RaceBriefing({
     required this.trackName,
     this.carClass = 'Gr.3',
@@ -155,7 +150,6 @@ class RaceBriefing {
     this.weatherSlots = '',
     this.additionalNotes = '',
     this.gridPosition,
-    this.gridSize,
   });
 
   factory RaceBriefing.fromMap(Map<String, dynamic> map) => RaceBriefing(
@@ -180,7 +174,6 @@ class RaceBriefing {
         weatherSlots: map['weatherSlots'] as String? ?? '',
         additionalNotes: map['additionalNotes'] as String? ?? '',
         gridPosition: (map['gridPosition'] as num?)?.toInt(),
-        gridSize: (map['gridSize'] as num?)?.toInt(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -205,7 +198,6 @@ class RaceBriefing {
         'weatherSlots': weatherSlots,
         'additionalNotes': additionalNotes,
         if (gridPosition != null) 'gridPosition': gridPosition,
-        if (gridSize != null) 'gridSize': gridSize,
       };
 }
 

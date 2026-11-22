@@ -247,7 +247,8 @@ class FusedRaceStateManager {
     }
   }
 
-  Future<void> start(String consoleIp) async {
+  /// [hud] false: telemetry only -- no HUD reader to listen for.
+  Future<void> start(String consoleIp, {int? hudPort, bool hud = true}) async {
     await sectorCalculator.loadSectorMaps();
     await loadPersistedData();
 
@@ -256,7 +257,29 @@ class FusedRaceStateManager {
     _hudSub = hudService.stream.listen(handleHudData);
 
     await telemetryService.start(consoleIp);
-    await hudService.start();
+    if (hud) await hudService.start(port: hudPort);
+  }
+
+  /// Points telemetry at a new console address, or the HUD listener at a
+  /// new port (Profile) -- the race state carries on.
+  /// [hud] false stops listening for the HUD reader (telemetry only);
+  /// true starts it again.
+  Future<void> reconnect({String? consoleIp, int? hudPort, bool? hud}) async {
+    if (consoleIp != null) {
+      await telemetryService.stop();
+      await telemetryService.start(consoleIp);
+    }
+    if (hud == false) {
+      await hudService.stop();
+      // Nothing the reader last said stays on screen.
+      _state = _state.copyWith(hud: HudOverlayData.empty());
+      _controller.add(_state);
+      return;
+    }
+    if (hud == true || (hudPort != null && hudPort != hudService.port)) {
+      await hudService.stop();
+      await hudService.start(port: hudPort);
+    }
   }
 
   /// Processes one telemetry frame. Public so the session/pit logic can
@@ -798,6 +821,15 @@ class FusedRaceStateManager {
   /// up by traffic) without wiping the whole practice log.
   Future<void> removePracticeLap(DateTime recordedAt) async {
     practiceLapLogger.removeLap(recordedAt);
+    await _persistLaps((laps, round) => PracticeLogStore.save(laps, round: round));
+    _state = _state.copyWith(practiceLaps: practiceLapLogger.laps);
+    _controller.add(_state);
+  }
+
+  /// Counts one stint's laps (by their recordedAt timestamps) towards
+  /// stint test [testNumber] and persists them.
+  Future<void> countPracticeLapsAsTest(Set<DateTime> recordedAts, int testNumber) async {
+    practiceLapLogger.countLapsAsTest(recordedAts, testNumber);
     await _persistLaps((laps, round) => PracticeLogStore.save(laps, round: round));
     _state = _state.copyWith(practiceLaps: practiceLapLogger.laps);
     _controller.add(_state);

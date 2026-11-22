@@ -47,7 +47,7 @@ void main() {
     expect(rates.fuel!.perLap(4, 10760), closeTo(4.4 / 3 / 3.335 * 4 * 10.76, 0.01));
   });
 
-  test('a 13-lap Sainte-Croix C at x4 on Map 1: 3 stops from your Nurburgring fuel (the guess says 2)', () {
+  test('a 13-lap Sainte-Croix C at x4 on Map 1: 19%/lap from your Nurburgring fuel, so 5-lap tanks (the guess: 14.6%)', () {
     final brief = _sainteCroix();
     // 1.7% at x1 on 5 km: 14.6%/lap here.
     final guess = PitStopCalculator.calculate(brief, trackLengthMeters: 10760, maxFuelMap: 1);
@@ -55,14 +55,21 @@ void main() {
     expect(guess.pitStops, hasLength(2));
     final rates = BaseRates.fromRounds([_nurburgring([for (var n = 1; n <= 10; n++) _lap(n)])]);
     final plan = PitStopCalculator.calculate(brief, trackLengthMeters: 10760, baseRates: rates, maxFuelMap: 1);
-    expect(plan.pitStops, hasLength(3));
+    expect(plan.assumedPercentPerLap, closeTo(18.9, 0.1));
+    // 5% kept back (less than half a lap's 9.5%): 95/18.9 is 5 laps a tank,
+    // as Sainte-Croix ran (5 laps with 7.8% left) -- stints of 4, 5 and 4.
+    expect([for (final p in plan.pitStops) p.lap], [4, 9]);
     expect(plan.basis.first, contains('from your laps in earlier rounds (Nürburgring Sprint) scaled to x4 and 10.8 km'));
   });
 
   test('with no fuel map measured, Map 1 -- and a map that might save a stop is put up for a test', () {
     final rates = BaseRates.fromRounds([_nurburgring([for (var n = 1; n <= 10; n++) _lap(n)])]);
-    final plan = PitStopCalculator.calculate(_sainteCroix(), trackLengthMeters: 10760, baseRates: rates);
+    // 11 laps at 18.9%/lap: 2 stops on Map 1 (5 laps a tank); a leaner map
+    // lasting 6 would make it 1.
+    final eleven = RaceBriefing.fromMap({..._sainteCroix().toMap(), 'totalLaps': 11});
+    final plan = PitStopCalculator.calculate(eleven, trackLengthMeters: 10760, baseRates: rates);
     expect(plan.fuelMap, 1);
+    expect(plan.pitStops, hasLength(2));
     expect(plan.fuelMapToTest, isNotNull);
     expect(plan.basis.last, contains('run the Map ${plan.fuelMapToTest} stint test'));
     expect(RaceStrategy.fromMap(plan.toMap()).fuelMapToTest, plan.fuelMapToTest, reason: 'kept through saving');
